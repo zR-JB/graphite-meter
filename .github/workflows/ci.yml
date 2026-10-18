@@ -80,6 +80,9 @@ jobs:
           - name: Check the browser client
             if: needs.plan.outputs.code == 'true'
             run: mise run client-ci
+          # A warning only: the stable release request is what refuses stale screenshots.
+          - name: Note stale README screenshots
+            run: python3 scripts/ci/screenshots.py warn
 
   rust:
     name: Rust checks

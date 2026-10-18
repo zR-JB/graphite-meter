@@ -181,7 +181,8 @@ clock (`client/scripts/screenshots`), and the terminal client draws a simulated 
 (`rust/client/examples/screenshot.rs`), so the same code in the same browser gives the same pixels.
 `docs/assets/screenshots.json` records the version and a hash of the sources that draw them, and the same stamp writes
 that version into the README captions. A stable release request refuses screenshots of another version, of changed
-sources or under captions naming another version (`python3 scripts/ci/screenshots.py check vX.Y.Z`).
+sources or under captions naming another version (`python3 scripts/ci/screenshots.py check vX.Y.Z`). Before that, CI warns on
+any pull request whose UI sources changed since the images were rendered, without failing it.
 
 ## Toolchain pins
 
