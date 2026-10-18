@@ -22,19 +22,17 @@ A self-hosted speed and latency test, in one container, for the browser and the 
 
 ## Why Graphite Meter
 
-| Property             | What the code does                                                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Receiver-timed       | The receiver times every transfer: the browser times downloads and the server times uploads, so queued bytes never count. |
-| Latency under load   | Idle and loaded latency are separate populations, each with median, P95, jitter and timeouts; their difference is the added latency. |
-| Honest gaps          | Missing data shows as missing, never as zero, and no result is graded.                                                    |
-| Every web transport  | Throughput over HTTP/1.1, HTTP/2, HTTP/3 or WebTransport and latency over WebSocket or WebTransport, picked automatically or by hand. |
-| Several servers      | One run measures one to four servers on one stage schedule and shows them combined or one at a time.                      |
-| Terminal client      | `graphite-meter-client` runs the same stages and statistics, and shared test vectors pin its number formats and failure labels to the browser's. |
-| Built for throughput | Release images and clients use fat LTO and a PGO profile per architecture. The server runs one runtime per CPU and, on Linux, one HTTP/3 endpoint per two of them on a shared port. |
-| Smooth page          | Web workers time bytes, probes and the run clock off the main thread, rates update live, and animation is skipped when the system asks for reduced motion. |
-| Adjustable           | Settings choose the servers, paths, stage times and warmup, early finish, probe cadence, stream count, units and History; the theme is light, dark or automatic. |
-| Self-hosted          | One image for amd64 and arm64 holding one static binary, with no database. Password or OIDC sign-in is optional.          |
-| Private              | The server stores no results and connects out only to an OIDC provider. The page loads nothing from a third party.       |
+- **Receiver-timed.** The receiver times every transfer: your browser times downloads and the server times uploads, so bytes still queued never count.
+- **Latency under load.** Idle and loaded latency are measured separately, each with median, P95, jitter and timeouts, so you see exactly how much a busy line adds.
+- **Honest gaps.** Missing data shows as missing, never as zero, and no result is graded.
+- **Every web transport.** Throughput over HTTP/1.1, HTTP/2, HTTP/3 or WebTransport, latency over WebSocket or WebTransport, picked automatically or by hand.
+- **Several servers.** One run measures one to four servers on one schedule and shows them combined or one at a time.
+- **Terminal client.** `graphite-meter-client` runs the same stages and statistics, and shared test vectors keep its numbers and wording identical to the browser's.
+- **Built for throughput.** Release builds use fat LTO and a PGO profile per architecture; the server runs one runtime per CPU and, on Linux, one HTTP/3 endpoint per two of them on a shared port.
+- **Smooth page.** Web workers time bytes, probes and the run clock off the main thread, rates update live, and animation steps aside when your system asks for reduced motion.
+- **Adjustable.** Choose servers, paths, stage times and warmup, early finish, probe cadence, stream count, units and History; light, dark or automatic theme.
+- **Self-hosted.** One image for amd64 and arm64 holding one static binary, with no database. Password or OIDC sign-in is optional.
+- **Private.** The server stores no results and connects out only to an OIDC provider; the page loads nothing from a third party.
 
 The [measurement definitions](docs/MEASUREMENTS.md) define every result.
 
