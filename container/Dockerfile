@@ -13,7 +13,7 @@ ARG TUI_PLATFORM
 FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.0-slim-trixie@sha256:d802f03223b9e00604cd54574bcac1a4638914c43683d3f0afd6ebee35f25313 AS python
 
 # The reviewed builder: legal/rust-platform-debian-trixie.json records what it links into each target.
-FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.0-trixie@sha256:81015672d6939b0265f09adf96d5de125482bb1330106076956b0518e74edc90 AS rust-amd64
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.1-trixie@sha256:e259494b14672950a909b4c54527e19d29cae6ebf980672114c8bb85e5594e4a AS rust-amd64
 COPY --from=python /usr/local /usr/local
 ENV LD_LIBRARY_PATH=/usr/local/lib \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
