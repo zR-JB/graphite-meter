@@ -100,7 +100,7 @@ check leaves the test, and the test continues and ends Partial.
 | -------------------------- | ------------- | ------------------------------------------------------------------ |
 | enter, space, r            | console       | Start a test, or run again.                                        |
 | esc                        | during a test | Stop the test.                                                     |
-| 1–4                        | console       | Switch latency, download, upload or bidirectional on or off.       |
+| 1, 2, 3, 4                 | console       | Switch latency, download, upload or bidirectional on or off.       |
 | s, d, ?                    | console       | Settings, Details, Keys; esc or the same key closes them.          |
 | l                          | console       | With several test servers, the server whose latency is shown.      |
 | v                          | console       | Check the server again.                                            |

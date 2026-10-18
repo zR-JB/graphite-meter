@@ -103,7 +103,7 @@ DELETE has returned. An establish-only `/wt/download?bytes=0` session, whose ans
 5 s linger; a `/wt/upload` refused at connect sends its `error` record on a server stream and closes after a 2 s
 linger.
 
-Every lane shares one 30 s idle bound. WebSocket buses and WebTransport sessions close after 30–45 s without traffic
+Every lane shares one 30 s idle bound. WebSocket buses and WebTransport sessions close after 30 to 45 s without traffic
 from the peer (a progress heartbeat or datagram flood is the server's own, so a `/wt/download?datagrams=` session the
 peer never speaks on closes too); an HTTP upload that stops sending is answered `408` ([upload](upload.md)); an HTTP
 download the peer stops draining is closed. The native client derives its 15 s fixed-cadence ceiling from this bound.
