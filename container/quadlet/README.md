@@ -6,8 +6,7 @@ Encrypt certificate, and the third runs an isolated server that is reachable onl
 [deployment guide](../../docs/DEPLOYMENT.md) covers variables, sign-in and reverse proxies.
 
 Generated Quadlet services are started, never enabled, because their `[Install]` sections already apply at
-generation. `loginctl enable-linger "$USER"` keeps a user's services running after logout. Upgrade the image and the
-terminal clients together, then reload browser tabs ([upgrading](../../docs/DEPLOYMENT.md#upgrading)).
+generation. `loginctl enable-linger "$USER"` keeps a user's services running after logout.
 
 ## The published image
 

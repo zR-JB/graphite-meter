@@ -325,24 +325,6 @@ Clients use the catalog as follows:
 See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace networking can cap throughput.
 `Network=host` avoids that but gives up the network namespace, so apply host firewall policy.
 
-## Upgrading
-
-Upgrade the server and the terminal clients together and reload open tabs. Existing deployments stay
-single-server until you add a [server catalog](#server-catalog). Unknown or obsolete browser preferences fall back
-to defaults, and saved History stays readable.
-
-Releases up to 0.12 shipped a Go server as `latest`. The Rust server is now the only one and carries the plain
-tags. It keeps the ports, `GM_*` settings, `hash-password` command, [container user](#container-user), password
-hashes and device cookies. Check these when switching:
-
-- [`GM_MAX_BUFFER_BYTES`](REFERENCE.md#resources) is new, so a host that raised `GM_MAX_CONNECTIONS` far above its
-  default may need to lower it. Otherwise the server stops at start and names the values that fit.
-- Boolean settings accept only `true`, `false`, `1` and `0`.
-- Log lines are UTC in the [log format](REFERENCE.md#logs) unless `TZ` names a zone. Adjust log parsers, and
-  replace a POSIX rule or path in `TZ` with a zone name.
-- Every server in a server catalog must be a current release, because both clients need the upload checkpoint and
-  the stage limits that the server's discovery reports.
-
 ## Troubleshooting
 
 | Symptom                                    | Check                                                                                       |
