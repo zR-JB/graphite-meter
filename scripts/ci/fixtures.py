@@ -167,16 +167,16 @@ def write_tar(path: Path, members: Mapping[str, bytes], compressed: bool = True)
             archive.addfile(info, io.BytesIO(payload))
 
 
-# 64-bit little-endian executable headers for each Rust target's architecture.
-ELF = {"x86_64": 62, "aarch64": 183}
+# 64-bit little-endian ELF and PE machines for each Rust target's architecture.
+MACHINES = {"x86_64": (62, 0x8664), "aarch64": (183, 0xAA64)}
 
 
 def executable(target: str, payload: bytes = b"") -> bytes:
     """The start of an executable for `target`, followed by `payload`."""
+    elf, pe = MACHINES[target.split("-", 1)[0]]
     if "-windows-" in target:
-        return b"MZ" + bytes(0x3A) + (0x40).to_bytes(4, "little") + b"PE\0\0" + (0x8664).to_bytes(2, "little") + payload
-    machine = ELF[target.split("-", 1)[0]]
-    return b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little") + machine.to_bytes(2, "little") + payload
+        return b"MZ" + bytes(0x3A) + (0x40).to_bytes(4, "little") + b"PE\0\0" + pe.to_bytes(2, "little") + payload
+    return b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little") + elf.to_bytes(2, "little") + payload
 
 
 def reviewed(notices: bytes) -> bytes:

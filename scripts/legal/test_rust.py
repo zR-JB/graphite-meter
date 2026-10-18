@@ -259,11 +259,13 @@ class BuildVerifyTests(Scratch):
             self.assertFalse([flag for flag in flags("x86_64-unknown-linux-musl") if "profile-use" in flag])
             self.write("pgo/x86_64.profdata", b"profile")
             use = f"-Cprofile-use={profiles / 'x86_64.profdata'}"
-            # The Windows TUI shares amd64's profile; arm64 has none here; a development build takes none.
+            # Windows amd64 shares amd64's profile, Windows arm64 never takes arm64's; a development build takes none.
             self.assertIn(use, flags("x86_64-unknown-linux-musl"))
             self.assertIn(use, flags("x86_64-pc-windows-gnu"))
             self.assertNotIn(use, flags("aarch64-unknown-linux-musl"))
             self.assertNotIn(use, flags(None))
+            self.write("pgo/aarch64.profdata", b"profile")
+            self.assertFalse([flag for flag in flags("aarch64-pc-windows-gnullvm") if "profile-use" in flag])
 
     def test_unprepared_crates_changed_notices_or_other_embedded_notices_are_refused(self) -> None:
         self.state.selected = {"app"}

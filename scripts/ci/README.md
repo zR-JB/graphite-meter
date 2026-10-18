@@ -27,6 +27,7 @@ checks job alone; every other change, every push to main and the daily run on ma
 | E2E server | the image's amd64 server alone, so the browser tests need not wait for both images |
 | Build server image | `build-image.sh` with the ci profile (no LTO or PGO), one architecture after the other; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
+| Run client on Windows arm64 | the Windows arm64 client out of its archive, on GitHub's arm64 Windows runner |
 | Release staging | `assets.py stage` and `assets.py check` on the image, the server archives and the client archives, as a release does |
 | Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
@@ -45,9 +46,9 @@ databases daily, so a new advisory never fails an unrelated pull request. Pull r
 gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 ```
 
-A stable release publishes the image as `X.Y.Z`, moves `X.Y` and `latest`, and creates a GitHub Release with seven
-assets: the server archives for Linux amd64 and arm64, the client archives for Linux amd64, Linux arm64 and Windows
-amd64, one third-party source archive for every shipped build, and `checksums.txt`. Each archive holds the executable,
+A stable release publishes the image as `X.Y.Z`, moves `X.Y` and `latest`, and creates a GitHub Release with eight
+assets: the server archives for Linux amd64 and arm64, the client archives for Linux and Windows amd64 and arm64, one
+third-party source archive for every shipped build, and `checksums.txt`. Each archive holds the executable,
 `LICENSE`, `COPYRIGHT`, its build's `THIRD_PARTY_NOTICES.txt` and the `SOURCE.txt` that names the source archive. A
 prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or `-f pr=N -f sha=<PR head>` to build an
 open same-repository PR; it publishes only the image of that version, such as `X.Y.Z-rc.N`, which no alias follows.
@@ -61,9 +62,9 @@ open same-repository PR; it publishes only the image of that version, such as `X
    *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a prerelease's client jobs skip
    their builds. Each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile for each
    architecture it builds on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`); the
-   image builds both architectures at once, a client only its own, the Windows one amd64's. *Assemble
-   request* runs `assets.py stage`, which packages each architecture's server out of the image archive, so no second
-   build makes it, copies the client archives and merges every build's part of the source offer into one archive.
+   image builds both architectures at once, a client only its own, Windows amd64 amd64's and Windows arm64 none.
+   *Assemble request* runs `assets.py stage`, which packages each architecture's server out of the image archive, so no
+   second build makes it, copies the client archives and merges every build's part of the source offer into one archive.
    Only a stable release, built from main, exports file trees; every job uploads only the regular files
    `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs past
    a failure.

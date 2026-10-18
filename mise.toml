@@ -37,6 +37,10 @@ image_rust = "docker.io/library/rust:1.99.0-trixie@sha256:81015672d6939b0265f09a
 
 # SHA-256 of static.rust-lang.org/dist/channel-rust-<channel>.toml for rust/rust-toolchain.toml's channel.
 rust_manifest_sha256 = "ce6dddc886364f8d786514771212cebe9b731ba82d6b859951c6b0ccc516b6a2"
+# The llvm-mingw release that cross-links the Windows arm64 client, and the SHA-256 of its
+# llvm-mingw-<release>-ucrt-ubuntu-22.04-x86_64.tar.xz.
+llvm_mingw = "20261006"
+llvm_mingw_sha256 = "5f9c6ed95b2d4bdb2869a488c5fd5857fbdabcf288a0aa3eb1da43f6a08d8ab4"
 
 [tasks.setup]
 description = "Install pinned tools, dependencies, and the commit hook"
@@ -148,7 +152,7 @@ run = [
 
 [tasks.rust-check-targets]
 shell = "bash -e -o pipefail -c"
-description = "Check the shipped client and server targets (needs mingw-w64, musl-tools and an aarch64 GNU compiler)"
+description = "Check the shipped client and server targets (needs mingw-w64, llvm-mingw, musl-tools and an aarch64 GNU compiler)"
 dir = "rust"
 env = { CC_x86_64_unknown_linux_musl = "x86_64-linux-musl-gcc", CC_aarch64_unknown_linux_musl = "aarch64-linux-gnu-gcc" }
 run = '''

@@ -121,8 +121,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "          RAW: ${{ inputs.sha }}\n", "only the request validator"),
     (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),
     (REQUEST, "name: Assemble request", "name: Assemble the request", "as release.py expects"),
-    (REQUEST, "platform: [linux/amd64, linux/arm64, windows/amd64]", "platform: [linux/amd64, linux/arm64]",
-     "as release.py expects"),
+    (REQUEST, "platform: [linux/amd64, linux/arm64, windows/amd64, windows/arm64]",
+     "platform: [linux/amd64, linux/arm64, windows/amd64]", "as release.py expects"),
     (REQUEST, "\njobs:\n", "\njobs:\n  other:\n    name: Another job\n    runs-on: ubuntu-26.04\n"
      "    steps:\n      - run: true\n", "as release.py expects"),
     (REQUEST, "    name: Build server image\n    needs: request\n", "    name: Build server image\n",
