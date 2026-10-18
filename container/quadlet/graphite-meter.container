@@ -30,8 +30,9 @@ PublishPort=7246:7246
 # significantly reduce throughput. For better performance, uncomment:
 # Network=host
 
-# All optional; sensible defaults are baked in. Set the GM_*_PUBLIC_ORIGIN
-# values behind a reverse proxy so /preflight advertises reachable URLs.
+# All optional; sensible defaults are baked in. Set a GM_*_PUBLIC_ORIGIN when
+# clients reach that listener on another host or port, such as a remapped
+# PublishPort.
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
 # Environment=GM_H1_ADDR=:7246
@@ -51,8 +52,9 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Environment=TZ=Europe/Berlin
 
 # Authentication, off by default. When enabled it gates every UI asset,
-# discovery request, probe, transfer, progress stream, and WebSocket. The lines
-# below assume a reverse proxy on this host owns TLS on GM_AUTH_PUBLIC_URL:
+# discovery request, probe, transfer, progress stream, WebSocket and
+# WebTransport session. The lines below assume a reverse proxy on this host
+# owns TLS on GM_AUTH_PUBLIC_URL:
 # clear HTTP/1.1 must not be advertised, and every advertised origin must be
 # HTTPS on that hostname. Publish 7246 as 127.0.0.1:7246:7246 so only that
 # proxy can send forwarding headers, and trust only the address its
