@@ -27,14 +27,14 @@ A self-hosted speed and latency test, in one container, for the browser and the 
 - **Honest gaps.** Missing data shows as missing, never as zero, and no result is graded.
 - **Every web transport.** Throughput over HTTP/1.1, HTTP/2, HTTP/3 or WebTransport, latency over WebSocket or WebTransport, picked automatically or by hand.
 - **Several servers.** One run measures one to four servers on one schedule and shows them combined or one at a time.
-- **Terminal client.** `graphite-meter-client` runs the same stages and statistics, and shared test vectors keep its numbers and wording identical to the browser's.
-- **Built for throughput.** Release builds use fat LTO and a PGO profile per architecture; the server runs one runtime per CPU and, on Linux, one HTTP/3 endpoint per two of them on a shared port.
-- **Smooth page.** Web workers time bytes, probes and the run clock off the main thread, rates update live, and animation steps aside when your system asks for reduced motion.
+- **Terminal client.** `graphite-meter-client` runs the same test and reports the same numbers in the same words as the browser.
+- **Built for fast links.** Profile-optimized release builds and a server that spreads every protocol, HTTP/3 included, across all CPU cores.
+- **Smooth while it measures.** Timing runs in background workers, so the page stays responsive and rates update live; animation steps aside when your system asks for reduced motion.
 - **Adjustable.** Choose servers, paths, stage times and warmup, early finish, probe cadence, stream count, units and History; light, dark or automatic theme.
 - **Self-hosted.** One image for amd64 and arm64 holding one static binary, with no database. Password or OIDC sign-in is optional.
 - **Private.** The server stores no results and connects out only to an OIDC provider; the page loads nothing from a third party.
 
-The [measurement definitions](docs/MEASUREMENTS.md) define every result.
+[How each result is measured](docs/MEASUREMENTS.md).
 
 ### No proxy needed
 
@@ -52,9 +52,8 @@ It still runs behind nginx, Caddy or Traefik when you need one; see [reverse pro
 docker run -d --name graphite-meter --restart unless-stopped -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open `http://SERVER_IP:7246`. Clear HTTP measures HTTP/1.1 and WebSocket; HTTP/2, HTTP/3 and WebTransport need TLS
+Open `http://SERVER_IP:7246`. Over plain HTTP the test uses HTTP/1.1 and WebSocket; HTTP/2, HTTP/3 and WebTransport need TLS
 from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse proxy](docs/DEPLOYMENT.md#reverse-proxies).
-
 
 ## Terminal
 
@@ -62,7 +61,7 @@ from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse p
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/terminal-dark.png">
-  <img src="docs/assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under load">
+  <img src="docs/assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under download load and 2.8 ms under upload load">
 </picture>
 
 <sub>Terminal client 0.13.0.</sub>
