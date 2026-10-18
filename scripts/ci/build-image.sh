@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The server image of CI and release requests. Two concurrent cargo builds on one runner take longer than two in a row,
-# so each architecture builds and loads alone; the OCI archive and source offers then reuse this builder's layers.
+# The server image of CI and release requests. The ci profile's two cargo builds take longer at once than in a row, so
+# CI builds and loads each architecture alone and the OCI archive reuses those layers. A release's fat LTO links and
+# arm64 PGO training under QEMU leave cores idle, so its archive is the fresh builder's first build, of both at once.
 set -euo pipefail
 
 build() {
@@ -13,10 +14,12 @@ build() {
     --label org.opencontainers.image.licenses=AGPL-3.0-or-later "$@" "$CONTEXT"
 }
 
-# Docker's image store cannot load the attestation manifests.
-for arch in amd64 arm64; do
-  build --target server --platform "linux/$arch" --provenance false --load --tag "graphite-meter:$arch"
-done
+if [[ "$PROFILE" == ci ]]; then
+  # Docker's image store cannot load the attestation manifests.
+  for arch in amd64 arm64; do
+    build --target server --platform "linux/$arch" --provenance false --load --tag "graphite-meter:$arch"
+  done
+fi
 mkdir -p "$OUT_DIR"
 build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \
   --output "type=oci,dest=$OUT_DIR/graphite-meter.oci.tar"
