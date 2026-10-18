@@ -20,23 +20,17 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
-/// How long an approval waits for the operator.
 const LIFETIME: Duration = Duration::from_mins(2);
-/// The spacing of token polls.
 const POLL: Duration = Duration::from_secs(1);
 
-/// A sign-in at a server waiting for the operator's approval.
 pub struct Approval {
     pub origin: Origin,
-    /// The approval page with the challenge.
     pub url: String,
-    /// The code the page shows too.
     pub code: String,
     pub deadline: Instant,
     verifier: String,
 }
 
-/// Why an approval gave no grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unapproved {
     Expired,
@@ -73,15 +67,13 @@ impl Approval {
         }
     }
 
-    /// The grant once approved at `client`'s server.
     pub async fn grant(&self, client: &Client) -> Result<String, Unapproved> {
         let conn = &tokio::sync::Mutex::new(None);
         self.wait(|| async move { self.poll(client, &mut *conn.lock().await).await })
             .await
     }
 
-    /// The grant `poll` brings, asked every second; polls outlast network failures until the deadline, which reports
-    /// the last of them.
+    /// The grant `poll` brings, asked every second; network failures are retried until the deadline reports the last.
     pub async fn wait<F>(&self, mut poll: impl FnMut() -> F) -> Result<String, Unapproved>
     where
         F: Future<Output = Result<Option<String>, Fault>>,
@@ -172,7 +164,6 @@ impl Approval {
 }
 
 impl Unapproved {
-    /// The failure a view shows.
     pub fn failure(&self) -> Failure {
         match self {
             Self::Expired => Failure::new(FailureReason::SignInRequired, EXPIRED),
@@ -181,5 +172,4 @@ impl Unapproved {
     }
 }
 
-/// What an expired approval asks the operator to do.
 pub const EXPIRED: &str = "Sign-in expired";

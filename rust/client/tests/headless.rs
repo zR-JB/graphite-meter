@@ -46,7 +46,6 @@ async fn finished(child: Child) -> (Option<i32>, String, String) {
     )
 }
 
-/// The path of the next request on `stream`, once its head arrived.
 async fn path(stream: &mut TcpStream) -> Option<String> {
     graphite_meter_testkit::read_head(stream)
         .await?

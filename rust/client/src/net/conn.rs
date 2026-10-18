@@ -46,23 +46,18 @@ const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
 const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 /// A download lane's HTTP/1.1 reads: hyper's adaptive buffer grows past it and costs memory.
 const FIXED_READ_BYTES: usize = 256 << 10;
-/// The most bytes one transfer request or stream carries.
 pub(super) const TRANSFER_BYTES: u64 = 64 << 30;
 /// How long a server that stopped reading an upload may take to show its answer.
 const EARLY_ANSWER: Duration = Duration::from_secs(1);
 
-/// How an HTTP/1.1 connection reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadBuffer {
     Adaptive,
-    /// A fixed buffer, as download lanes read.
     Fixed,
 }
 
-/// Reads a JSON answer, as `Preflight::decode` and its siblings do.
 pub type Decode<T> = fn(&[u8]) -> Result<T, serde_json::Error>;
 
-/// One connection to an origin.
 pub enum Conn {
     Http1 {
         sender: http1::SendRequest<Payload>,
@@ -153,7 +148,6 @@ impl Conn {
         }
     }
 
-    /// Whether the connection may take another request.
     pub(super) fn usable(&self) -> bool {
         match self {
             Self::Http1 { sender, .. } => !sender.is_closed(),
@@ -162,12 +156,10 @@ impl Conn {
         }
     }
 
-    /// Whether an HTTP/1.1 connection finished its last exchange.
     pub(super) fn idle(&self) -> bool {
         matches!(self, Self::Http1 { sender, .. } if sender.is_ready())
     }
 
-    /// The runtime a QUIC connection runs on.
     pub(super) fn home(&self) -> Option<Handle> {
         match self {
             Self::Http3 { quic, .. } => Some(quic.home.clone()),
@@ -195,7 +187,6 @@ impl Conn {
         client.check(request, answer)
     }
 
-    /// Sends a request with an absolute URI and `body`, and reads its answer's head.
     pub(super) async fn send(
         &mut self,
         mut head: http::Request<()>,
@@ -289,7 +280,6 @@ async fn http3_send(
 pub struct Payload {
     block: Bytes,
     remaining: u64,
-    /// Counts the bytes handed on.
     sent: Option<Arc<AtomicU64>>,
 }
 
@@ -302,7 +292,6 @@ impl Payload {
         }
     }
 
-    /// `bytes` once.
     pub fn once(bytes: Bytes) -> Self {
         Self {
             remaining: bytes.len() as u64,
@@ -320,7 +309,6 @@ impl Payload {
         }
     }
 
-    /// The next slice, `None` once the transfer's bytes were handed on.
     pub(super) fn slice(&mut self) -> Option<Bytes> {
         let size = self.remaining.min(self.block.len() as u64);
         if size == 0 {
@@ -354,10 +342,8 @@ impl hyper::body::Body for Payload {
     }
 }
 
-/// A response body, holding the connection it reads from.
 pub struct Incoming {
     source: Source,
-    /// Runs once the body ended.
     ended: Option<Box<dyn FnOnce() + Send>>,
 }
 
@@ -375,7 +361,6 @@ impl Incoming {
         self.read(true).await
     }
 
-    /// The same body, running `ended` once it ended.
     pub(super) fn then(self, ended: impl FnOnce() + Send + 'static) -> Self {
         Self {
             ended: Some(Box::new(ended)),
@@ -407,7 +392,6 @@ impl Incoming {
         read
     }
 
-    /// The bounded body, read by `decode`.
     pub async fn json<T>(mut self, decode: Decode<T>) -> Result<T, Fault> {
         let oversized = || {
             Fault::Malformed(format!(
@@ -478,7 +462,6 @@ pub struct Quic {
     connection: noq::Connection,
     _endpoint: noq::Endpoint,
     driver: AbortHandle,
-    /// The runtime that runs them.
     pub home: Handle,
 }
 
@@ -506,7 +489,6 @@ pub(super) async fn dial(
     (&mut dialing.0).await.map_err(|_| Fault::Lost)?
 }
 
-/// A connection and its request sender.
 type Dialed = (Arc<Quic>, client::SendRequest);
 
 /// A dial running on another runtime, aborted once nothing awaits it.
@@ -518,7 +500,6 @@ impl Drop for Dialing {
     }
 }
 
-/// Connects and starts the HTTP/3 driver on the current runtime.
 async fn connect(origin: &Origin, verify: Verify) -> Result<Dialed, Fault> {
     let (endpoint, connection) = quic::dial(&origin.host, origin.port, &verify).await?;
     let (mut driver, requests) = client::new(connection.clone());
@@ -580,12 +561,10 @@ impl Client {
 }
 
 impl Session {
-    /// Whether the session and its connection still carry streams.
     pub(super) fn usable(&self) -> bool {
         !self.quic.closed() && self.ended().is_none()
     }
 
-    /// The fault the session ended with, once it ended.
     pub(super) fn ended(&self) -> Option<Fault> {
         Some(match self.session.closed().now_or_never()? {
             Ok(SessionClose { code, .. }) => {
@@ -607,7 +586,6 @@ impl Session {
         self.ended().unwrap_or(Fault::Lost)
     }
 
-    /// The next stream the server opened.
     pub async fn accept_uni(&self) -> Result<RecvStream, Fault> {
         self.session.accept_uni().await.ok_or_else(|| self.gone())
     }

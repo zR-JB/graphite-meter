@@ -1,5 +1,3 @@
-//! The Graphite Meter native terminal client.
-
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED, VERSION,
     config::{self, Config, Parsed, Refusal},
@@ -23,7 +21,6 @@ include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 #[global_allocator]
 static ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
 
-/// The status of a refused command line.
 const USAGE_ERROR: u8 = 2;
 
 fn main() -> ExitCode {
@@ -128,7 +125,6 @@ fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<Ex
     })
 }
 
-/// The terminal's width, when stdout is one.
 fn columns(terminal: bool) -> Option<u16> {
     let columns = crossterm::terminal::size().ok().map(|(columns, _)| columns);
     columns.filter(|&columns| terminal && columns > 0)
@@ -153,7 +149,6 @@ fn print(
     Ok(ExitCode::from(if printed == 0 { status } else { printed }))
 }
 
-/// The first signal's status.
 async fn first(mut signals: UnboundedReceiver<u8>) -> u8 {
     match signals.recv().await {
         Some(status) => status,

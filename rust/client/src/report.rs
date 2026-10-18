@@ -16,7 +16,6 @@ use crate::{
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::time::Duration;
 
-/// The width of a report that does not reach a terminal.
 pub const WIDTH: usize = 100;
 const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
 
@@ -55,7 +54,6 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
         .collect()
 }
 
-/// Why the view's run has no report: it never started, or its sign-in expired.
 pub fn unreported(view: &View) -> Option<String> {
     let run = view.latest()?;
     let error = run.error.as_ref();
@@ -74,7 +72,6 @@ pub fn unreported(view: &View) -> Option<String> {
 struct Report<'a> {
     view: &'a View,
     run: &'a Run,
-    /// The latency server.
     focus: Option<&'a ServerId>,
     width: usize,
     palette: &'a Palette,
@@ -101,7 +98,6 @@ impl Report<'_> {
         Some(self.result(stage)?.status(self.focus))
     }
 
-    /// What a planned stage shows without a value.
     fn unmeasured(&self, stage: Stage) -> &'static str {
         let stopped = self.run.outcome == Some(Outcome::Stopped);
         let skipped = if stopped { "Not reached" } else { "Skipped" };
@@ -111,7 +107,6 @@ impl Report<'_> {
         })
     }
 
-    /// The latency server's population in `stage`.
     fn population(&self, stage: Stage) -> Option<Population> {
         let result = self.result(stage)?;
         let server = result
@@ -143,7 +138,6 @@ impl Report<'_> {
             .and(facts.join(" · "), self.palette.muted)
     }
 
-    /// Each planned direction's mean rate and facts.
     fn throughput(&self) -> Vec<Line> {
         let (palette, partial) = (self.palette, format::status_label(StageStatus::Partial));
         let mut rows = Vec::new();
@@ -503,7 +497,6 @@ impl Report<'_> {
         lines.into_iter().map(|line| line.fit(self.width)).collect()
     }
 
-    /// The run's outcome with how many of its servers remain.
     fn notice(&self) -> String {
         let selected = self.view.servers.len();
         let servers = self.view.servers.iter();
@@ -518,7 +511,6 @@ impl Report<'_> {
     }
 }
 
-/// Median, Added, P95, Jitter and Timeouts.
 fn latency_cells(population: &Population, idle: Option<Duration>) -> Vec<String> {
     let (summary, median) = (population.summary, population.median());
     let mut cells = vec![MISSING.to_owned(); 5];

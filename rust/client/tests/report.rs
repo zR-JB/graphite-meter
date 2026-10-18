@@ -59,8 +59,7 @@ fn server(name: &str, left: bool, down: Option<f64>, median_ms: u64) -> ServerRe
     }
 }
 
-/// Builds the view of a finished run of `plan` over `names`, each a prepared server named `<name> meter`, whose
-/// stages gave `results` from `at`.
+/// The view of a finished run of `plan` over `names`, each a prepared `<name> meter`, whose stages gave `results` from `at`.
 fn viewed(
     names: &[&str],
     plan: &[(Stage, Duration)],

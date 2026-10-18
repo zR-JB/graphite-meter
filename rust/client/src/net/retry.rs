@@ -10,7 +10,6 @@ const QUICK_FAILURE: Duration = Duration::from_millis(500);
 const BUSY_FIRST: Duration = Duration::from_millis(300);
 const BUSY_CAP: Duration = Duration::from_millis(1200);
 
-/// A failed attempt: when it started and whether it moved bytes first.
 #[derive(Debug, Clone, Copy)]
 pub struct Attempt {
     pub started: Instant,
@@ -58,7 +57,6 @@ impl Retry {
     }
 }
 
-/// `attempt`'s result once it succeeds or its fault stands.
 pub async fn retrying<T, F: Future<Output = Result<T, Fault>>>(
     mut attempt: impl FnMut() -> F,
 ) -> Result<T, Fault> {

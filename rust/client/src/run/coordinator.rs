@@ -33,10 +33,8 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 /// How long a stage's upload sessions may take to finish, and a stopped stage's.
 const FINISH: Duration = Duration::from_secs(10);
 const STOPPED_FINISH: Duration = Duration::from_secs(1);
-/// Why a run whose test servers all left ends.
 const NO_SURVIVORS: &str = "All selected test servers failed";
 
-/// A prepared server across the run.
 struct Seat<'a> {
     server: &'a ServerPath,
     idle_rtt: Option<Duration>,
@@ -290,13 +288,11 @@ struct Live<'a> {
     checkpoint: Option<Duration>,
     /// The measured window once it opened; probes sent within it are announced until the stage ends.
     window: Option<(Instant, Instant)>,
-    /// The window is open, so the boundaries' live rates are announced.
     open: bool,
     finished: bool,
 }
 
 impl Live<'_> {
-    /// Ticks when the engine asks until it finishes or the run stops.
     async fn run(&mut self) {
         let token = self.run.token;
         let (mut due, mut returned) = (Instant::now(), Instant::now());
@@ -359,7 +355,6 @@ impl Live<'_> {
         (self.engine.tick(input), probes)
     }
 
-    /// Carries out the tick's decisions, then announces what it measured.
     fn apply(&mut self, mut tick: Tick, probes: &[(ServerId, ProberEvent)], now: Instant) {
         let (participants, mut closed) = (&mut self.participants, false);
         for decision in std::mem::take(&mut tick.decisions) {
@@ -458,7 +453,6 @@ struct Participant {
     down: Option<Lanes>,
     up: Option<UploadSession>,
     prober: Option<Prober>,
-    /// The upload session finishing after the window closed.
     finishing: Option<JoinHandle<()>>,
     _departs: DropGuard,
 }
@@ -554,20 +548,17 @@ impl Participant {
         }
     }
 
-    /// A fresh receiver checkpoint within `budget`, when it uploads.
     async fn checkpoint(&self, budget: Duration) -> Option<Result<Receiver, Failure>> {
         let up = self.up.as_ref()?;
         Some(up.checkpoint(budget).await.map_err(|fault| fault.failure()))
     }
 
-    /// Moves what its prober observed into `into`.
     fn probes(&mut self, into: &mut Vec<(ServerId, ProberEvent)>) {
         if let Some(prober) = &mut self.prober {
             into.extend(prober.drain().map(|probe| (self.server.clone(), probe)));
         }
     }
 
-    /// The measured window opened and ends at `end`.
     fn opened(&self, end: Instant) {
         if let Some(prober) = &self.prober {
             prober.open(end);
@@ -585,7 +576,6 @@ impl Participant {
         }
     }
 
-    /// Its latency population failed: probing ends.
     fn stop_probing(&mut self) {
         self.prober = None;
     }

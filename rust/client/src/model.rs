@@ -12,7 +12,6 @@ graphite_meter_proto::table! {
     #[derive(PartialOrd, Ord)]
     pub enum Stage {
         name.0: &'static str,
-        /// The directions the stage moves bytes in; none for latency.
         directions.1: &'static [Direction],
     } {
         Latency => ("latency", &[]),
@@ -38,7 +37,6 @@ impl Direction {
     pub const BOTH: [Self; 2] = [Self::Down, Self::Up];
 }
 
-/// One value per direction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Dir<T> {
     pub down: T,
@@ -55,7 +53,6 @@ impl<T> Dir<T> {
 }
 
 impl Dir<Option<Throughput>> {
-    /// The measured mean rates in bytes per second, its directions added.
     pub fn mean(&self) -> f64 {
         [self.down, self.up]
             .into_iter()
@@ -132,7 +129,6 @@ pub enum LaneHealth {
     Failed(Failure),
 }
 
-/// A failure as a stage recorded it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerFailure {
     pub server: ServerId,
@@ -141,26 +137,20 @@ pub struct ServerFailure {
     pub at: Instant,
 }
 
-/// A direction's headline, if any, and its unique measured bytes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Throughput {
     pub rate: Option<Rate>,
     pub bytes: u64,
 }
 
-/// One server's share of a stage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerResult {
     pub server: ServerId,
-    /// The server left the run in this stage.
     pub left: bool,
-    /// Per direction the stage moves.
     pub throughput: Dir<Option<Throughput>>,
-    /// When the stage probed this server.
     pub latency: Option<Population>,
 }
 
-/// What a stage measured.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StageResult {
     pub stage: Stage,
@@ -227,7 +217,6 @@ pub fn focus(results: &[StageResult]) -> Option<ServerId> {
     survivors.find(measured).map(|server| server.server.clone())
 }
 
-/// How a run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     /// Every planned stage finished with every server.
@@ -237,7 +226,6 @@ pub enum Outcome {
     /// A planned result is missing after measurement began.
     Incomplete,
     Stopped,
-    /// Nothing was measured.
     Failed,
 }
 

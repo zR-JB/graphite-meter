@@ -14,14 +14,12 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    /// A path check began, or a run's preparation.
     Checking(Kind),
     /// The server catalog and the selected test servers with their paths, in catalog order.
     Prepared {
         servers: Arc<[ServerPath]>,
         catalog: Arc<[ServerEntry]>,
     },
-    /// The path check could not finish.
     CheckFailed(Failure),
     /// A server asks for sign-in until `SignInEnded`.
     SignIn(SignInPrompt),
@@ -33,7 +31,6 @@ pub enum Event {
         at: Instant,
     },
     StageStarted(StagePlan),
-    /// The stage's measured window opened.
     Measuring(Stage),
     /// A boundary's all-servers rates in bytes per second, `at` into the window; none restarts a direction.
     Sample {
@@ -46,7 +43,6 @@ pub enum Event {
         probes: Box<[Probed]>,
         latency: Summary,
     },
-    /// A failure as it happens.
     ServerFailed(ServerFailure),
     StageFinished(StageResult),
     /// The run ended `elapsed` after it began; `error` says why it never started.
@@ -57,12 +53,10 @@ pub enum Event {
     },
 }
 
-/// What the sign-in screen shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignInPrompt {
     /// The test server's name, or the server's origin.
     pub issuer: String,
-    /// The approval page.
     pub url: String,
     pub code: String,
     pub deadline: tokio::time::Instant,
@@ -76,7 +70,6 @@ pub enum SignInEnd {
     Canceled,
 }
 
-/// The sending side of the events.
 #[derive(Debug, Clone)]
 pub struct Events(mpsc::UnboundedSender<Event>);
 
@@ -94,7 +87,6 @@ impl Events {
 
 /// The most points a series keeps; at the limit every pair merges and the step doubles.
 const POINTS: usize = 480;
-/// The shortest spacing of points.
 const STEP: Duration = Duration::from_millis(50);
 
 /// A trace over the plan's measured time, keeping its planned span; nearby values merge into peak-keeping means.
@@ -117,10 +109,8 @@ pub struct Point {
     pub at: Duration,
     /// The mean of the merged values; none for a gap.
     pub value: Option<f64>,
-    /// The merged values' lowest and highest.
     pub low: f64,
     pub peak: f64,
-    /// How many values merged into it.
     pub count: u32,
 }
 
@@ -181,12 +171,10 @@ impl Series {
     }
 }
 
-/// What the operations so far showed.
 #[derive(Debug, Clone, Default)]
 pub struct View {
     pub check: Check,
     pub sign_in: Option<SignInPrompt>,
-    /// The latest preparation's test servers and server catalog.
     pub servers: Arc<[ServerPath]>,
     pub catalog: Arc<[ServerEntry]>,
     /// The run shown: the latest that started, kept while the next one checks its paths.
@@ -229,29 +217,22 @@ impl Running {
     }
 }
 
-/// A run from its preparation on.
 #[derive(Debug, Clone, Default)]
 pub struct Run {
     pub plan: Vec<(Stage, Duration)>,
-    /// The run's clock origin once it started.
     pub at: Option<Instant>,
     /// The latency server: the first selected one, or a survivor that measured latency once it left.
     pub focus: Option<ServerId>,
-    /// The stage in progress.
     pub stage: Option<Running>,
     /// Each direction's presented rate, as the browser estimates it from the samples.
     pub live: Dir<LiveRate>,
-    /// The latest sample's offset into the window.
     sampled: Duration,
-    /// Presented rates in bytes per second.
     pub throughput: Dir<Series>,
     /// The highest combined rate presented or measured, in bytes per second; scales only grow during a run.
     pub peak: f64,
     /// The bytes moved so far: the finished stages' counts, and the running one's samples.
     pub moved: f64,
-    /// Round trips in milliseconds per probed server.
     pub rtt: Vec<(ServerId, Series)>,
-    /// Each server's latency in each stage while it runs.
     pub latency: Vec<(Stage, ServerId, Summary)>,
     pub results: Vec<StageResult>,
     /// Every failure with its stage, a finished stage's as its result records them.
@@ -336,7 +317,6 @@ impl Run {
         }
     }
 
-    /// The run's events from its start to its end.
     fn apply(&mut self, event: &Event) {
         match event {
             Event::StageStarted(plan) => {

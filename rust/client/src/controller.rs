@@ -29,7 +29,6 @@ const GRACE: Duration = Duration::from_secs(5);
 /// Why a run without the interface does not sign in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "the server refused the approved sign-in; check its sign-in configuration";
-/// What a failure from a panic says.
 const INTERNAL: &str = "Internal error";
 
 /// A failure from a panic; `connection-lost` would send a server away for the client's own bug.
@@ -44,7 +43,6 @@ pub enum Command {
     Stop,
 }
 
-/// What an operation does: check the paths, or run over them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Check,
@@ -68,7 +66,6 @@ struct Operation {
     task: JoinHandle<State>,
 }
 
-/// Runs the operations commands ask for and sends their events.
 pub struct Controller {
     /// What each operation starts from; its stop token is replaced.
     work: Work,
@@ -112,7 +109,6 @@ impl Controller {
         }
     }
 
-    /// Waits until no operation is left.
     pub async fn settled(&mut self) {
         if let Some(current) = self.current.take() {
             self.idle = current.task.await.unwrap_or_default();
@@ -167,12 +163,10 @@ impl Drop for Controller {
     }
 }
 
-/// One operation's view of the controller.
 #[derive(Clone)]
 struct Work {
     events: Events,
     runtimes: Arc<Pool>,
-    /// Whether an operator can approve sign-ins.
     interactive: bool,
     /// The proxies and verification of checked clients in place of the environment's.
     outbound: Option<(Verify, Proxy)>,

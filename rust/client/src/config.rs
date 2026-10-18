@@ -14,14 +14,11 @@ use std::{ffi::OsString, fmt, num::NonZero, path::PathBuf, time::Duration};
 
 /// Why settings without a server address cannot run; nothing has a sensible default one.
 pub const NO_SERVER: &str = "enter the server's address";
-/// Exact and automatic streams per server and direction stay within this many.
 pub const MAX_STREAMS: usize = 14;
-/// The longest warmup a setting or a server's round trip asks for.
 pub const MAX_WARMUP: Duration = Duration::from_secs(4);
 const FASTEST_CADENCE: Duration = Duration::from_millis(80);
 /// Half the server's idle bound, so a quiet probe channel is never closed.
 const SLOWEST_CADENCE: Duration = Duration::from_secs(IDLE_BOUND.as_secs() / 2);
-/// The probe cadence presets by name.
 pub const CADENCES: [(&str, Cadence); 4] = [
     ("reply-driven", Cadence::ReplyDriven),
     ("fast", Cadence::Every(FASTEST_CADENCE)),
@@ -29,7 +26,6 @@ pub const CADENCES: [(&str, Cadence); 4] = [
     ("slow", Cadence::Every(Duration::from_millis(600))),
 ];
 
-/// One run's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// The server whose server catalog lists the test servers; none until one is given.
@@ -121,7 +117,6 @@ impl Config {
         self.durations[stage.index()]
     }
 
-    /// The stages to run with their windows.
     pub fn plan(&self) -> Vec<(Stage, Duration)> {
         self.stages
             .iter()
@@ -170,7 +165,6 @@ impl Config {
         Dir { down, up }
     }
 
-    /// Why the settings cannot run, if they cannot.
     pub fn validate(&self) -> Result<(), Invalid> {
         let outside = |stage: &&Stage| !STAGE_LIMITS.contains(&self.duration(**stage));
         let spaced = |cadence| matches!(cadence, Cadence::Every(spacing) if !(FASTEST_CADENCE..=SLOWEST_CADENCE).contains(&spacing));
@@ -195,7 +189,6 @@ impl Config {
     }
 }
 
-/// Why settings cannot run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Invalid {
     NoServer,
@@ -251,7 +244,6 @@ impl fmt::Display for Invalid {
     }
 }
 
-/// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
     Help,
@@ -267,7 +259,6 @@ pub enum Refusal {
     Argument(String),
 }
 
-/// Reads the arguments after the program name.
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal> {
     let mut flags = Flags::default();
     let arguments = match flag::parse(&FLAGS, &mut flags, args) {
@@ -291,7 +282,6 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal
     Ok(Parsed::Run(Box::new(config)))
 }
 
-/// The usage text for `program`.
 pub fn usage(program: &str) -> String {
     format!(
         "Usage: {program} [options]\n\nOptions:\n{}",
@@ -354,8 +344,7 @@ fn url(text: &str) -> Result<Option<Origin>, String> {
     }
 }
 
-/// The origin an entered or pasted address names. Without a scheme it is HTTPS, or HTTP on the local network; HTTPS
-/// never falls back to HTTP, which would let anyone on the path force a plaintext test.
+/// Without a scheme an address is HTTPS, or HTTP on the local network; HTTPS never falls back to plaintext.
 pub fn server_origin(raw: &str) -> Result<Origin, String> {
     let raw = raw.trim();
     let (scheme, rest) = raw.split_once("://").unwrap_or(("", raw));
@@ -376,8 +365,7 @@ pub fn server_origin(raw: &str) -> Result<Origin, String> {
     })
 }
 
-/// Whether `authority` names a host on the local network: a loopback, private or link-local address, or a name without
-/// a dot or under a local-only suffix.
+/// A loopback, private or link-local address, or a name without a dot or under a local-only suffix.
 fn local(authority: &str) -> bool {
     let host = match authority.strip_prefix('[') {
         Some(literal) => literal.split(']').next().unwrap_or_default(),
@@ -416,7 +404,6 @@ pub fn kept_server() -> Option<PathBuf> {
     Some(directory?.join("graphite-meter").join("server"))
 }
 
-/// The server kept at `path`, if one is and it still parses.
 pub fn recall(path: &std::path::Path) -> Option<Origin> {
     Origin::parse(std::fs::read_to_string(path).ok()?.trim()).ok()
 }
@@ -459,7 +446,6 @@ fn cadence(text: &str) -> Result<Cadence, &'static str> {
     spacing.map_err(|_| "use reply-driven, fast, medium, slow or a duration such as 400ms")
 }
 
-/// The name of the preset `cadence` is.
 pub fn preset(cadence: Cadence) -> Option<&'static str> {
     CADENCES
         .iter()
@@ -467,7 +453,6 @@ pub fn preset(cadence: Cadence) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-/// A cadence as its flag spells it.
 fn cadence_name(cadence: Cadence) -> String {
     match (preset(cadence), cadence) {
         (None, Cadence::Every(spacing)) => duration::format(spacing),
@@ -597,7 +582,6 @@ const FLAGS: [Flag<Flags>; 22] = [
 ];
 
 const PROTOCOLS: [Protocol; 3] = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
-/// The transports a path can be set to by name.
 pub const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] = [
     ThroughputTransport::FetchStream,
     ThroughputTransport::WebTransport,

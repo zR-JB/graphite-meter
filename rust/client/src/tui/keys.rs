@@ -76,7 +76,6 @@ impl Binding {
         }
     }
 
-    /// Renames what the binding does to `does`.
     pub const fn does(self, does: &'static str) -> Self {
         let Some((key, _)) = self.help else {
             return self;
@@ -213,7 +212,6 @@ pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, QUIT, ABORT.hidde
 pub const SIGN_IN: &[Binding] = &[BROWSE, CANCEL.does("cancel sign-in"), QUIT, ABORT.hidden()];
 pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT.hidden()];
 
-/// Finds the first binding of `table` for `key` whose action is `offered`.
 pub fn find(table: &[Binding], key: Key, offered: impl Fn(Action) -> bool) -> Option<Action> {
     let bindings = table.iter().filter(|binding| binding.keys.contains(&key));
     bindings
@@ -221,7 +219,6 @@ pub fn find(table: &[Binding], key: Key, offered: impl Fn(Action) -> bool) -> Op
         .find(|&action| offered(action))
 }
 
-/// Lists the bindings of `table` that help shows while their actions are `offered`.
 pub fn listed(table: &[Binding], offered: impl Fn(Action) -> bool) -> Vec<Binding> {
     let listed = |binding: &&Binding| binding.help.is_some() && offered(binding.action);
     table.iter().filter(listed).copied().collect()

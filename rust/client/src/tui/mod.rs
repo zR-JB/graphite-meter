@@ -46,15 +46,11 @@ use std::{
 const RECHECK: Duration = Duration::from_millis(350);
 /// Animation repaints at 60 fps: 120 wrote the same terminal output for twice the idle CPU. Input paints at once.
 const FRAME: Duration = Duration::from_micros(16_667);
-/// How long the spinner shows each of its glyphs.
 const SPIN: Duration = Duration::from_millis(80);
-/// How long a notice stays.
 const TOAST: Duration = Duration::from_millis(3200);
-/// The smallest terminal the interface draws in, in columns and rows.
 const SMALLEST: (u16, u16) = (60, 16);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// What opens over the console, with the state it keeps while open.
 enum Overlay {
     None,
     /// The row being typed into, and whether a reset awaits its confirmation.
@@ -77,7 +73,6 @@ impl Overlay {
     };
 }
 
-/// What a press on a drawn region does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     /// The run key: start, or stop while a run goes.
@@ -91,7 +86,6 @@ pub enum Target {
     /// A settings row, and a chooser entry.
     Row(usize),
     Entry(usize),
-    /// The sign-in page's address.
     Link,
     /// The connect card's switch that remembers the server for later starts.
     Remember,
@@ -100,15 +94,11 @@ pub enum Target {
     Backdrop,
 }
 
-/// What the interface asks of its loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     Command(Box<Command>),
-    /// Opens the sign-in page at this address in a browser.
     OpenBrowser(String),
-    /// Keeps this server for the next start.
     Remember(Origin),
-    /// Deletes the server kept for the next start.
     Forget,
     Quit,
 }
@@ -127,7 +117,6 @@ pub struct Exit {
     pub report: bool,
 }
 
-/// A notice in the bottom bar until it lapses.
 struct Toast {
     text: Line,
     until: Instant,
@@ -145,38 +134,28 @@ pub struct App {
     setup: Setup,
     live: run::Live,
     toast: Option<Toast>,
-    /// Whether a stop was asked for and the run has not ended yet.
     stopping: bool,
-    /// Whether the interface quits once the run stops.
     quitting: bool,
-    /// Whether ctrl+c or a signal arrived during a run.
     interrupted: bool,
-    /// The status of the latest caught signal.
     caught: Option<u8>,
-    /// When the paths are checked next.
     recheck: Option<Instant>,
-    /// What the latest operation prepared for.
     asked: Option<PrepKey>,
     /// Whether the server is kept for later starts: it was at start, or the user turned it on; and the one kept.
     remembering: bool,
     kept: Option<Origin>,
-    /// A sheet's first shown line, and how many it shows.
     scroll: usize,
     rows: usize,
     /// The last frame's pressable regions, the topmost last, and the one the pointer rests on.
     hits: Vec<(Rect, Target)>,
     hover: Option<Target>,
-    /// The last frame's size.
     area: Rect,
-    /// The dial's ring for the area it was last drawn in.
     ring: RefCell<Option<dial::Ring>>,
     since: Instant,
     now: Instant,
 }
 
 impl App {
-    /// The console for `config` in `profile` and `palette`, with the server `kept` for later starts if one is; its first
-    /// tick checks the paths, or it asks for the server without one.
+    /// The console for `config`, with the server `kept` for later starts; its first tick checks the paths, or asks for the server.
     pub fn new(
         config: Config,
         kept: Option<Origin>,
@@ -239,7 +218,6 @@ impl App {
         Vec::new()
     }
 
-    /// Opens the server's address for typing, with the one set so far.
     fn ask_for_server(&mut self) {
         let address = self
             .config
@@ -250,7 +228,6 @@ impl App {
         self.overlay = Overlay::Connect(Editor::new(Row::Address, &address));
     }
 
-    /// The address or setting being typed.
     fn editor(&self) -> Option<&Editor> {
         match &self.overlay {
             Overlay::Settings {
@@ -273,7 +250,6 @@ impl App {
         }
     }
 
-    /// Shows `text` in the bottom bar for a while.
     fn notify(&mut self, text: Line) {
         self.toast = Some(Toast {
             text,
@@ -387,7 +363,6 @@ impl App {
         }
     }
 
-    /// Reacts to terminal input: keys, pasted text, and the pointer's moves, presses and wheel.
     pub fn input(&mut self, input: Input, now: Instant) -> Vec<Effect> {
         self.now = now;
         match input {
@@ -439,7 +414,6 @@ impl App {
         Vec::new()
     }
 
-    /// The topmost pressable region at `column` and `row` in the last frame.
     fn target(&self, column: u16, row: u16) -> Option<Target> {
         let at = Position::new(column, row);
         self.hits
@@ -449,7 +423,6 @@ impl App {
             .map(|(_, target)| *target)
     }
 
-    /// What the pointer rests on.
     pub fn hovered(&self) -> Option<Target> {
         self.hover
     }
@@ -513,7 +486,6 @@ impl App {
         Vec::new()
     }
 
-    /// Does what `key` does in the context on top.
     fn press(&mut self, key: Key) -> Vec<Effect> {
         if self.editor().is_some() {
             return self.edit_key(key);
@@ -572,7 +544,6 @@ impl App {
         Vec::new()
     }
 
-    /// Switches `stage` on or off for the next run.
     fn switch(&mut self, stage: Stage) {
         if self.running() {
             return;
@@ -581,7 +552,6 @@ impl App {
         self.set_flag(Row::Stage(stage), on);
     }
 
-    /// Quits, a running test first stopping.
     fn quit(&mut self) -> Vec<Effect> {
         if !self.running() {
             return vec![Effect::Quit];
@@ -616,7 +586,6 @@ impl App {
         }
     }
 
-    /// Stops the run at once.
     fn stop(&mut self) -> Vec<Effect> {
         if !self.running() || std::mem::replace(&mut self.stopping, true) {
             return Vec::new();
@@ -624,7 +593,6 @@ impl App {
         Effect::command(Command::Stop)
     }
 
-    /// Checks the paths once their settings have rested.
     pub fn tick(&mut self, now: Instant) -> Vec<Effect> {
         self.now = now;
         self.toast = self.toast.take().filter(|toast| toast.until > now);
@@ -665,7 +633,6 @@ impl App {
         }
     }
 
-    /// The key table of what is on top.
     fn table(&self) -> &'static [keys::Binding] {
         match &self.overlay {
             Overlay::None | Overlay::Connect(_) => keys::CONSOLE,
@@ -715,7 +682,6 @@ impl App {
         Effect::command(Command::Run(self.config.clone()))
     }
 
-    /// The spinner's glyph now.
     fn spinner(&self) -> &'static str {
         let frames = self.now.saturating_duration_since(self.since).as_millis() / SPIN.as_millis();
         SPINNER[(frames % SPINNER.len() as u128) as usize]
@@ -728,7 +694,6 @@ impl App {
         }
     }
 
-    /// The selected servers' names with their locations.
     pub(super) fn labels(&self) -> Vec<String> {
         let label = |server: &crate::run::prepare::ServerPath| {
             format::server(&server.name, &server.location)

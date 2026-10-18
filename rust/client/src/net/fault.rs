@@ -13,19 +13,13 @@ use http::{HeaderMap, StatusCode, header};
 use rustls::CertificateError;
 use std::{fmt, time::Duration};
 
-/// The most characters of a peer's or a library's text a fault shows.
 const DETAIL_CHARS: usize = 320;
 
-/// Why a request, a connection or a lane failed.
 #[derive(Debug)]
 pub enum Fault {
-    /// No connection opened.
     Connect(ConnectError),
-    /// An open connection or stream broke.
     Lost,
-    /// What did not arrive in time.
     TimedOut(&'static str),
-    /// The server answered `from` with another status than 200.
     Status {
         status: StatusCode,
         from: Route,
@@ -33,19 +27,15 @@ pub enum Fault {
     },
     /// The server refused an upload ID for good.
     Refused(UploadRefusal),
-    /// The server ended the lane.
     Ended(LaneEnding),
-    /// The server at this origin asks for sign-in.
     SignIn(Origin),
     /// The peer broke the protocol or answered what this client refuses.
     Malformed(String),
 }
 
-/// How a retry treats a fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
     Redial,
-    /// The server is busy; it asked to wait this long.
     Busy(Duration),
     Final,
 }

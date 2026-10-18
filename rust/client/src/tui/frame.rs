@@ -20,10 +20,8 @@ use std::time::Instant;
 /// A sheet's line, and for an item's its index and what a press on it does.
 type SheetLine = (Line, Option<(usize, Option<Target>)>);
 
-/// An entry of a sheet.
 pub(super) enum Entry {
     Heading(String),
-    /// A label and its value, pressable as `target` when it has one.
     Item {
         label: Line,
         value: Line,
@@ -48,7 +46,6 @@ impl App {
         }
     }
 
-    /// Paints the frame, and returns where its links landed.
     fn paint(&mut self, canvas: &mut Canvas) -> Vec<Link> {
         let area = canvas.area();
         if area.width < SMALLEST.0 || area.height < SMALLEST.1 {
@@ -128,7 +125,6 @@ impl App {
         }
     }
 
-    /// The selected servers' readiness as the top bar shows it: a dot and its words.
     fn readiness_line(&self) -> (Line, String, Style) {
         let palette = &self.palette;
         let names = self.labels().join(", ");
@@ -270,7 +266,6 @@ impl App {
         }
     }
 
-    /// The keys the bottom bar names for what is on top.
     fn bar_keys(&self) -> Vec<keys::Binding> {
         if self.editor().is_some() {
             return keys::listed(keys::EDIT, |_| true);
@@ -499,7 +494,6 @@ impl App {
         )
     }
 
-    /// The server's address asked for: the field, and how its check stands.
     fn connect_card(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
         let inner = self.card_over(canvas, area, 13);
@@ -697,7 +691,6 @@ impl App {
         links
     }
 
-    /// Every key, grouped by where it works.
     fn help_entries(&self) -> Vec<Entry> {
         let groups: [(&str, &[keys::Binding]); 5] = [
             ("Console", keys::CONSOLE),
@@ -841,7 +834,6 @@ impl App {
         entries
     }
 
-    /// Whether the chips' stage `stage` is on for the next run.
     pub(super) fn stage_on(&self, stage: Stage) -> bool {
         match self.running() {
             true => self.plan().iter().any(|(own, _)| *own == stage),

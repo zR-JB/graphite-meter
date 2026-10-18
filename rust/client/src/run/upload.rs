@@ -32,24 +32,20 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// The pause before a missed checkpoint is asked again.
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 /// How long a departed server's receiver may take to answer its finalize.
 const DEPART: Duration = Duration::from_secs(1);
 
-/// One stage's uploads to a server; dropping it ends its lanes and feed.
 pub struct UploadSession {
     start: Start,
     upload: Upload,
     replacing: Option<JoinHandle<Option<Result<Upload, Fault>>>>,
-    /// The server's one replacement receiver in this run was taken.
     replaced: Arc<AtomicBool>,
 }
 
 /// What a receiver starts from, so that a replacement starts the same lanes.
 #[derive(Clone)]
 struct Start {
-    /// The client its lanes go through.
     client: Client,
     control: Control,
     plans: Vec<GroupPlan>,
@@ -58,13 +54,11 @@ struct Start {
     token: CancellationToken,
 }
 
-/// A receiver: its upload ID, its number in the session, its lanes and what its feed reported.
 struct Upload {
     id: String,
     number: u32,
     lanes: Lanes,
     progress: watch::Receiver<Progress>,
-    /// Ends its lanes and feed.
     token: CancellationToken,
 }
 
@@ -73,7 +67,6 @@ struct Progress {
     ready: bool,
     latest: Option<Counters>,
     complete: bool,
-    /// The fault the feed ended with after recovery.
     ended: Option<Fault>,
 }
 
@@ -131,7 +124,6 @@ impl UploadSession {
         self.upload.lanes.ready() && progress.ready && counting
     }
 
-    /// The highest byte count the current receiver's feed reported.
     pub fn fed(&self) -> Option<Fed> {
         let latest = self.upload.progress.borrow().latest?;
         Some(Fed {
@@ -223,7 +215,6 @@ impl UploadSession {
         tokio::spawn(async move { timeout(DEPART, control.finalize(&id)).await });
     }
 
-    /// Ends the current receiver and starts another in its place.
     fn replace(&mut self) {
         self.upload.token.cancel();
         let (start, number) = (self.start.clone(), self.upload.number + 1);
@@ -235,7 +226,6 @@ impl UploadSession {
 }
 
 impl Start {
-    /// Mints receiver `number` and starts its feed and lanes.
     async fn upload(self, number: u32) -> Result<Upload, Fault> {
         let control = &self.control;
         let request = || control.request(Method::POST, Route::UploadSession, None);
@@ -265,7 +255,6 @@ impl Start {
 }
 
 impl Control {
-    /// A request to `method` on `route` for upload `id`, if any.
     fn request(&self, method: Method, route: Route, id: Option<&str>) -> Request {
         let query = id.map(|id| ("id", id.to_owned())).into_iter().collect();
         Request {
@@ -274,7 +263,6 @@ impl Control {
         }
     }
 
-    /// Asks the receiver of upload `id` to finalize and reads its answer.
     async fn finalize(&self, id: &str) {
         let request = self.request(Method::DELETE, Route::UploadProgress, Some(id));
         if let Ok(mut answer) = self.client.control(self.via, request).await {
@@ -331,7 +319,6 @@ async fn follow(
     }
 }
 
-/// Where the feed's lines arrive.
 enum Source {
     Http(Incoming),
     Stream(RecvStream, Arc<Session>),

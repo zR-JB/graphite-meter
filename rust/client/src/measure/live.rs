@@ -9,7 +9,6 @@ const UPSHIFT_MS: f64 = 500.0;
 /// Spans kept past this many merge in pairs from the oldest half, so a long stage holds a bounded history.
 const MAX_SPANS: usize = 4096;
 
-/// Holds the bytes over a stretch of evidence, and all bytes up to its end.
 #[derive(Debug, Clone, Copy, Default)]
 struct Span {
     start: f64,
@@ -46,17 +45,14 @@ fn window(age: f64) -> f64 {
 }
 
 impl LiveRate {
-    /// Returns the rate shown in bytes per second, once there is a positive one.
     pub fn presented(&self) -> Option<f64> {
         Some(self.presented).filter(|&rate| rate > 0.0)
     }
 
-    /// Adds `bytes` measured over `ms` and reports whether a new regime was confirmed.
     pub fn observe(&mut self, bytes: f64, ms: f64) -> bool {
         self.step(bytes, ms, MAX_SPANS)
     }
 
-    /// Runs `observe` and coarsens once more than `kept` spans remain.
     fn step(&mut self, bytes: f64, ms: f64, kept: usize) -> bool {
         if !ms.is_finite() || ms <= 0.0 {
             return false;

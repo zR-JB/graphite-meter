@@ -13,7 +13,6 @@ use crate::{
 use graphite_meter_proto::catalog::MAX_SELECTED;
 use std::time::Duration;
 
-/// A settings row is one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row {
     Address,
@@ -60,7 +59,6 @@ const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
 ];
 
 impl Row {
-    /// Gives the row's label and what the sheet's foot says of it.
     fn text(self) -> (&'static str, &'static str) {
         let row = ROWS.iter().find(|(_, row, ..)| *row == self);
         row.map(|(.., label, help)| (*label, *help))
@@ -84,7 +82,6 @@ impl App {
         ROWS[self.setup.row.min(ROWS.len() - 1)].1
     }
 
-    /// Opens the settings sheet, focused on `row` when given.
     pub(super) fn open_settings(&mut self, row: Option<Row>) {
         if let Some(at) = row.and_then(|row| ROWS.iter().position(|(_, own, ..)| *own == row)) {
             self.setup.row = at;
@@ -92,7 +89,6 @@ impl App {
         (self.overlay, self.scroll) = (Overlay::SETTINGS, 0);
     }
 
-    /// Moves the focus `step` rows.
     pub(super) fn move_focus(&mut self, step: isize) {
         self.setup.row = self
             .setup
@@ -102,7 +98,6 @@ impl App {
         self.resetting(false);
     }
 
-    /// Sets whether a reset awaits its confirmation to `awaits` and returns what it was.
     pub(super) fn resetting(&mut self, awaits: bool) -> bool {
         match &mut self.overlay {
             Overlay::Settings { resetting, .. } => std::mem::replace(resetting, awaits),
@@ -184,7 +179,6 @@ impl App {
         }
     }
 
-    /// Lists the sheet's entries and the focused row's index among them.
     pub(super) fn settings_entries(&self) -> (Vec<Entry>, usize) {
         let (mut entries, mut focus) = (Vec::new(), 0);
         for (index, &(heading, row, label, _)) in ROWS.iter().enumerate() {
@@ -253,7 +247,6 @@ impl App {
         vec![Line::styled(help, self.palette.muted)]
     }
 
-    /// Names the selected servers and says how many are ready.
     fn selection(&self) -> String {
         let names: Vec<_> = self
             .view
@@ -274,7 +267,6 @@ impl App {
         }
     }
 
-    /// Sums how long the configured stages take with their warmups.
     pub(super) fn plan_time(&self) -> String {
         let plan = self.config.plan();
         let total: Duration = plan

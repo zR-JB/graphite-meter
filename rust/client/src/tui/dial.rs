@@ -10,17 +10,13 @@ use std::cell::RefCell;
 
 /// A cell is this wide and tall in pixels, as most monospace fonts draw it. The ring is round at this aspect.
 const CELL: (f64, f64) = (9.0, 20.0);
-/// The sweep starts at 225° and turns 270° clockwise.
 const START: f64 = 225.0;
 const TURN: f64 = 270.0;
-/// Each side keeps this many columns clear for the labels.
 const MARGIN: u16 = 6;
-/// An arc's band, the track and a head's bead take these shares of the ring's radius.
 const BAND: f64 = 0.08;
 const TRACK: f64 = 0.03;
 const BEAD: f64 = 0.16;
 
-/// One arc reaches this far, 0 to 1 of the sweep, in its color.
 pub struct Arc {
     pub to: f64,
     pub color: Color,
@@ -31,11 +27,9 @@ pub struct Dial {
     pub arcs: Vec<Arc>,
     pub track: Color,
     pub ticks: [String; 5],
-    /// Shows the stage's mark and name over the figures.
     pub label: Line,
     pub value: String,
     pub unit: String,
-    /// Sits under the ring.
     pub note: Line,
 }
 
@@ -53,7 +47,6 @@ pub struct Ring {
     dots: Vec<RingDot>,
 }
 
-/// A dot within the ring's reach, in drawing order, knows where it is, its share of the sweep and what it may show.
 struct RingDot {
     x: isize,
     y: isize,
@@ -136,7 +129,6 @@ impl Ring {
         }
     }
 
-    /// Finds the point `reach` from the centre at `fraction` of the sweep.
     fn point(&self, fraction: f64, reach: f64) -> (f64, f64) {
         let angle = (START - fraction * TURN).to_radians();
         (self.cx + reach * angle.cos(), self.cy - reach * angle.sin())
@@ -237,7 +229,6 @@ pub fn draw(
     );
 }
 
-/// Draws the readout without its ring, centred in `area`, as the label, the figures, the unit and the note.
 pub fn readout(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) {
     let top = area.y + area.height.saturating_sub(7) / 2;
     stack(canvas, Rect::new(area.x, top, area.width, 7), palette, dial);
@@ -249,7 +240,6 @@ pub fn readout(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) 
     );
 }
 
-/// Stacks the label, the figures three rows tall and the unit in seven rows.
 fn stack(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) {
     canvas.center(area.x, area.y, area.width, &dial.label);
     let rows = figures(&dial.value);

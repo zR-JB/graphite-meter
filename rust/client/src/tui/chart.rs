@@ -6,8 +6,7 @@ use crate::{
 };
 use ratatui_core::layout::Rect;
 
-/// Draws `points` over `window` seconds as a line up to `head`, the live value now, its tip in `tip` and the area
-/// under it fading into `field`. A gap breaks it.
+/// Draws `points` over `window` seconds as a line up to `head`, its tip in `tip`, the area under it fading into `field`.
 pub fn line(
     canvas: &mut Canvas,
     area: Rect,
@@ -89,7 +88,6 @@ pub fn line(
     canvas.dots(&dots);
 }
 
-/// Interpolates the value at `at` between `before` and a later point at `after_at`, along the line between them.
 fn between(before: &Point, after_at: f64, after: Option<f64>, at: f64) -> f64 {
     let (from, to) = (before.at.as_secs_f64(), after_at);
     match (before.value, after) {
@@ -101,8 +99,7 @@ fn between(before: &Point, after_at: f64, after: Option<f64>, at: f64) -> f64 {
     }
 }
 
-/// Draws `points` over `window` seconds as one bar a cell from the fastest to the slowest value it holds, on a scale
-/// to `top`. A bar past it ends at the top in an arrowhead.
+/// Draws `points` as one bar a cell from fastest to slowest, scaled to `top`; a bar past it ends in an arrowhead.
 pub fn bars(
     canvas: &mut Canvas,
     area: Rect,

@@ -16,7 +16,6 @@ use graphite_meter_proto::{
     reason::FailureReason,
 };
 
-/// A selected server's paths as setup shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Readiness {
     Ready,
@@ -51,21 +50,18 @@ impl App {
         }
     }
 
-    /// The selected servers whose paths a run can take.
     pub(super) fn ready(&self) -> Vec<ServerId> {
         let usable = |server: &&ServerPath| self.readiness(server) == Readiness::Ready;
         let servers = self.view.servers.iter().filter(usable);
         servers.map(|server| server.id.clone()).collect()
     }
 
-    /// Whether the last check left no server to run with.
     pub(super) fn could_not_start(&self) -> bool {
         let failed = matches!(self.view.check, Check::Failed(_))
             || self.view.check == Check::Ready && self.ready().is_empty();
         failed && !self.checking()
     }
 
-    /// The single selected server and what its preflight offered.
     fn single(&self) -> Option<(&ServerPath, &Capabilities)> {
         match &self.view.servers[..] {
             [server] => Some((server, server.offered.as_ref()?)),
@@ -175,7 +171,6 @@ impl App {
     }
 }
 
-/// A path a preflight offered: its origin, transport and HTTP version.
 type Offer<T> = (Origin, T, Protocol);
 
 /// A path row's transport kind: nameable transports, labels, settings slot, offered paths by origin, checked origin.

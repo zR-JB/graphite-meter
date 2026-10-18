@@ -1,4 +1,3 @@
-//! The console, the one screen before, during and after a run.
 use super::{
     App, Target, chart,
     dial::{self, Arc, Dial},
@@ -23,12 +22,10 @@ const WIDE: (u16, u16) = (110, 32);
 /// The browser's chart steps (`client/src/view/scales.ts`) and its latency ladder.
 const CHART_STEPS: [f64; 10] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0];
 pub(super) const LADDER: [f64; 3] = [1.0, 2.0, 4.0];
-/// The run key's and the chips' widest.
 const CONTROLS: u16 = 64;
 /// The browser's dial transfer curve (`client/src/ui/measure/dial-model.ts`): equal sweeps for each knot.
 const KNOTS: [f64; 9] = [0.0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
 
-/// Where `value` sits on a dial reaching `scale`, from 0 to 1.
 pub fn gauge_fraction(value: f64, scale: f64) -> f64 {
     let v = (value / scale).clamp(0.0, 1.0);
     if v.is_nan() {
@@ -41,7 +38,6 @@ pub fn gauge_fraction(value: f64, scale: f64) -> f64 {
     (i as f64 - 1.0 + (v - KNOTS[i - 1]) / (KNOTS[i] - KNOTS[i - 1])) / spans
 }
 
-/// The value at `fraction` of a dial reaching `scale`.
 pub fn gauge_value(fraction: f64, scale: f64) -> f64 {
     let at = fraction.clamp(0.0, 1.0) * (KNOTS.len() - 1) as f64;
     let i = (at as usize).min(KNOTS.len() - 2);
@@ -72,11 +68,9 @@ pub fn icon(stage: Stage) -> &'static str {
 
 /// The browser's reference rate before any, 100 Mbit/s in bytes per second.
 const REFERENCE_RATE: f64 = 12.5e6;
-/// A scale's headroom over the rate it shows.
 const HEADROOM: f64 = 1.03;
 
-/// The browser's dial scale for a combined rate in bytes per second: its 1-2-5 step above it with headroom, and from
-/// a megabit up never under 1 Gbit/s, where most connections fit.
+/// The browser's dial scale: the 1-2-5 step above the rate with headroom, from a megabit up never under 1 Gbit/s.
 pub fn gauge_ceiling(bytes_per_sec: f64) -> f64 {
     let bits = bytes_per_sec * 8.0 * HEADROOM;
     let top = ceil_step(bits, &[1.0, 2.0, 5.0]);
@@ -101,7 +95,6 @@ impl Unit {
         }
     }
 
-    /// `bytes_per_sec` as a figure in this unit.
     pub fn figure(self, bytes_per_sec: f64) -> String {
         format::speed(bytes_per_sec * 8.0 / self.divisor)
     }
@@ -204,7 +197,6 @@ impl App {
         }
     }
 
-    /// The run key over the stage chips, as wide as each other.
     fn controls(&self, canvas: &mut Canvas, area: Rect) {
         let width = area.width.min(CONTROLS);
         let x = area.x + (area.width - width) / 2;
@@ -283,7 +275,6 @@ impl App {
         canvas.hit(area, Target::Key);
     }
 
-    /// Why the key cannot start a test now, if it cannot.
     pub(super) fn blocked(&self) -> Option<String> {
         match () {
             _ if self.running() => None,
@@ -901,7 +892,6 @@ impl App {
         Some(own.or_else(|| failures.next())?.failure.reason.label())
     }
 
-    /// The card's facts as label and value, missing until known.
     fn facts(
         &self,
         stage: Stage,
@@ -1183,7 +1173,6 @@ impl App {
         }
     }
 
-    /// Under a finished run's dial: why it stopped or failed, if it did.
     fn outcome_note(&self) -> Line {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
@@ -1238,7 +1227,6 @@ fn lane_scale(lanes: &[Lane]) -> f64 {
     ceil_step((top * 1.25).max(1.0), &LADDER)
 }
 
-/// The series' points over `window` seconds.
 fn between(series: &Series, (t0, t1): (f64, f64)) -> &[Point] {
     let at = |t: f64| {
         series

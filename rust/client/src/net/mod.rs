@@ -12,7 +12,6 @@ pub use fault::{Class, Fault};
 pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
 pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 
-/// What a check says of a server no connection reached.
 pub const UNREACHABLE: &str = "Could not reach this test server";
 
 use conn::{Answer, Failed};
@@ -69,7 +68,6 @@ impl Grants {
     }
 }
 
-/// A bodyless request to a route.
 #[derive(Debug, Clone)]
 pub struct Request {
     pub method: Method,
@@ -131,7 +129,6 @@ impl Client {
         }
     }
 
-    /// A control request's JSON answer, read by `decode` within the control timeout.
     pub async fn json<T>(
         &self,
         via: Protocol,
@@ -141,8 +138,7 @@ impl Client {
         Ok(self.exchange(via, request, decode).await?.1)
     }
 
-    /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved, and the address family
-    /// the server saw the probe arrive from.
+    /// The protocol a valid probe answer from `origin` came over, and the address family the server saw.
     pub async fn probe(
         &self,
         origin: &Origin,
@@ -204,7 +200,6 @@ impl Client {
         }
     }
 
-    /// The HTTP version a JSON answer came over, and the answer read by `decode`, within the control timeout.
     async fn exchange<T>(
         &self,
         via: Protocol,
@@ -244,7 +239,6 @@ impl Client {
             .map_err(|error| Fault::Malformed(error.to_string()))
     }
 
-    /// The answer's body when it is a 200.
     fn check(&self, request: &Request, answer: Answer) -> Result<Incoming, Fault> {
         let refused = self.refusal(request, answer.status(), answer.headers());
         refused.map_or_else(|| Ok(answer.into_body()), Err)
@@ -273,12 +267,10 @@ impl Client {
         }
     }
 
-    /// The server whose grant `origin` takes.
     fn issuer(&self, origin: &Origin) -> Origin {
         lock(&self.shared.grants).issuer(origin).clone()
     }
 
-    /// `fault`, dropping its server's grant when it asks for sign-in.
     fn signed_out(&self, fault: Fault) -> Fault {
         if let Fault::SignIn(issuer) = &fault {
             lock(&self.shared.grants).tokens.remove(issuer);
@@ -287,7 +279,6 @@ impl Client {
     }
 }
 
-/// Idle HTTP/1.1 connections kept per origin and protocol.
 const IDLE: usize = 32;
 
 /// Control connections per origin and protocol: a multiplexed one shared, idle HTTP/1.1 ones reused.
@@ -299,11 +290,9 @@ struct Connections {
 
 #[derive(Default)]
 struct Slot {
-    /// The multiplexed connection, by its serial.
     shared: Mutex<Option<(u64, Conn)>>,
     /// Held across a dial that may bring the multiplexed connection, which other requests wait for.
     dialing: tokio::sync::Mutex<()>,
-    /// HTTP/1.1 connections whose last answer ended.
     idle: Mutex<Vec<Conn>>,
     /// A negotiated dial found HTTP/1.1, so each request without an idle connection dials its own.
     exclusive: AtomicBool,
@@ -339,7 +328,6 @@ impl Connections {
         .map_err(|(fault, _)| fault)
     }
 
-    /// The multiplexed connection to `origin` over `via`, dialed on the current runtime when there is none.
     async fn shared(&self, client: &Client, origin: &Origin, via: Protocol) -> Result<Conn, Fault> {
         let (slot, home) = (self.slot(origin, via), Handle::current());
         Ok(self
@@ -348,7 +336,6 @@ impl Connections {
             .conn)
     }
 
-    /// The runtime the multiplexed QUIC connection to `origin` over `via` runs on, if there is one.
     fn home(&self, origin: &Origin, via: Protocol) -> Option<Handle> {
         let slot = self.slot(origin, via);
         let shared = lock(&slot.shared);
@@ -444,7 +431,6 @@ impl Connections {
 }
 
 impl Slot {
-    /// The usable multiplexed connection, or an idle HTTP/1.1 one.
     fn reusable(&self) -> Option<Taken> {
         let shared = lock(&self.shared);
         if let Some((serial, conn)) = shared.as_ref().filter(|(_, conn)| conn.usable()) {
@@ -502,8 +488,7 @@ mod pool_tests {
         sync::oneshot,
     };
 
-    /// A request taking the connection of an answer still being read would wait behind it, as a receiver checkpoint
-    /// behind the upload progress feed it shared a connection with.
+    /// A request waits behind an answer still read on its connection, as a checkpoint would behind the progress feed.
     #[tokio::test]
     async fn an_http1_connection_rejoins_the_pool_once_its_answer_ended() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

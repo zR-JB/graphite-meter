@@ -19,7 +19,6 @@ use std::{
 /// The needle closes on its reading by e⁻¹ every 110 ms, so it rises, falls and drains without a jump.
 const NEEDLE: f64 = 0.11;
 
-/// The console animates and picks these during a run, beside what the view keeps.
 #[derive(Debug, Default)]
 pub struct Live {
     since: Option<Instant>,
@@ -30,7 +29,6 @@ pub struct Live {
     pub pick: Option<ServerId>,
     /// Records where the needle stands, 0 to 1 of the sweep, and when it last moved.
     needle: Cell<(f64, Option<Instant>)>,
-    /// Records when the result began to sweep in, and from where.
     sweep: Option<(Instant, f64)>,
 }
 
@@ -129,7 +127,6 @@ impl Live {
         }
     }
 
-    /// Moves the needle at `now` on its way to `to`, 0 to 1 of the sweep.
     pub fn needle(&self, to: f64, now: Instant) -> f64 {
         let to = to.clamp(0.0, 1.0);
         let (at, then) = self.needle.get();
@@ -153,7 +150,6 @@ impl Live {
         to.min(from + (1.0 - from) * (1.0 - (1.0 - share).powi(3)))
     }
 
-    /// Tells whether the needle or the result's sweep still moves.
     pub fn moving(&self, now: Instant) -> bool {
         let sweeping = self
             .sweep
@@ -163,7 +159,6 @@ impl Live {
     }
 }
 
-/// Where a stage stands, from not begun through warmup and measuring to ended with its status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Pending,
@@ -220,7 +215,6 @@ impl App {
         self.live.pick.as_ref().filter(remains).or(focus)
     }
 
-    /// Steps the latency server to the next one remaining.
     pub(super) fn next_latency_server(&mut self) {
         let servers = self.participants();
         let at = servers
@@ -249,13 +243,11 @@ impl App {
         )
     }
 
-    /// Measures how long the stage's warmup or window has run.
     pub(super) fn elapsed(&self) -> Duration {
         let since = self.live.since.unwrap_or(self.now);
         self.now.saturating_duration_since(since)
     }
 
-    /// Gives the share of its planned time a stopped stage measured.
     pub(super) fn reached(&self, stage: Stage) -> f64 {
         let run = self.view.run.as_ref();
         let planned = run
@@ -292,7 +284,6 @@ impl App {
         live.map(|&(.., summary)| summary)
     }
 
-    /// Gives the latency server's latest round trip.
     pub(super) fn latest(&self) -> Option<Duration> {
         let shown = self.latency_server();
         let probe = self.live.probes.iter().find(|(id, ..)| Some(id) == shown);
@@ -351,7 +342,6 @@ impl App {
         Progress::Share((done.as_secs_f64() / total.as_secs_f64().max(1.0) * 100.0) as u8)
     }
 
-    /// Gives the time left in the stage's measured window, for the status bar.
     pub(super) fn left(&self) -> Option<Duration> {
         let run = self.view.run.as_ref().filter(|_| self.running())?;
         match run.stage.as_ref()? {

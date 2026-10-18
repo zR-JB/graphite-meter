@@ -1,5 +1,3 @@
-//! Implements the Graphite Meter native terminal client.
-
 pub mod config;
 pub mod controller;
 pub mod events;
@@ -35,7 +33,6 @@ use graphite_meter_net::Pool;
 use model::Outcome;
 use std::{io::Write, pin::pin, sync::Arc};
 
-/// The client prints this version for `--version`.
 pub const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     Some(version) => version,
     None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),

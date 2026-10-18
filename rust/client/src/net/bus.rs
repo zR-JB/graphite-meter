@@ -29,14 +29,12 @@ use tokio_tungstenite::{
 
 type Socket = WebSocketStream<TokioIo<Upgraded>>;
 
-/// A server's latency path as preparation chose it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LatencyPath {
     pub origin: Origin,
     pub transport: LatencyTransport,
 }
 
-/// An open latency bus; dropping it closes it.
 pub struct Bus(Channel);
 
 enum Channel {
@@ -49,7 +47,6 @@ enum Channel {
 }
 
 impl Client {
-    /// A bus over `path`, within the control timeout.
     pub async fn bus(&self, path: &LatencyPath) -> Result<Bus, Fault> {
         let channel = match path.transport {
             LatencyTransport::WebTransport => {
@@ -151,8 +148,7 @@ impl Bus {
         }
     }
 
-    /// The next reply and the instant its message arrived, before decoding; skips any other message; cancelling it
-    /// loses nothing.
+    /// The next reply and when its message arrived, skipping any other message; cancel-safe.
     pub async fn next(&mut self) -> Result<(Pong, Instant), Fault> {
         loop {
             let (pong, arrived) = match &mut self.0 {

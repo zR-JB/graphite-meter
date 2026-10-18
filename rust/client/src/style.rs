@@ -7,10 +7,8 @@ use std::{io, time::Duration};
 
 /// The background query: OSC 11, then DA1, which every terminal answers, in order.
 const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
-/// How long a terminal may take to answer the query.
 pub const ANSWER: Duration = Duration::from_secs(2);
 
-/// A tone's light and dark shades.
 type Tone = [Color; 2];
 
 const fn tone(light: (u32, u8, u8), dark: (u32, u8, u8)) -> Tone {
@@ -51,7 +49,6 @@ const TRACES: [Tone; Stage::ALL.len()] = [
     tone((0x9b2065, 125, 1), (0xe472ac, 169, 9)),
 ];
 
-/// The styles and fills views draw with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     pub text: Style,
@@ -63,7 +60,6 @@ pub struct Palette {
     pub warn: Style,
     pub err: Style,
     pub border: Style,
-    /// The editor's block cursor.
     pub cursor: Style,
     /// The run key's plate: Stop's, and that of a key that cannot be pressed.
     pub plate: Style,
@@ -84,7 +80,6 @@ impl Palette {
         Self::on(dark, CANVAS[usize::from(dark)])
     }
 
-    /// The palette over the background a terminal named.
     pub fn over(background: Background) -> Self {
         let dark = background.dark();
         let canvas = CANVAS[usize::from(dark)];
@@ -141,7 +136,6 @@ impl Palette {
         Style::fg(STAGES[stage.index()][usize::from(self.dark)])
     }
 
-    /// A stage's chart trace.
     pub fn trace(&self, stage: Stage) -> Color {
         TRACES[stage.index()][usize::from(self.dark)]
     }
@@ -151,7 +145,6 @@ impl Palette {
         mix(self.trace(stage), under, share)
     }
 
-    /// An outcome's label: bold in its badge's color.
     pub fn outcome(&self, outcome: Outcome) -> Style {
         let tone = match outcome {
             Outcome::Complete => GOOD,
@@ -175,7 +168,6 @@ pub fn mix(color: Color, under: Color, share: f64) -> Color {
     nearest([channel(16), channel(8), channel(0)], color.ansi)
 }
 
-/// `rgb` with the nearest of the 256 colors and `ansi` of the 16.
 fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
     const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let distance = |to: [u8; 3]| {
@@ -241,7 +233,6 @@ pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
     }
 }
 
-/// The terminal in raw mode until dropped.
 pub struct Raw;
 
 impl Raw {
@@ -310,7 +301,6 @@ pub fn ask(_: Duration) -> Answer {
     Answer::default()
 }
 
-/// What a terminal says its background is: its color, unless it could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Background(pub Option<[u8; 3]>);
 
@@ -359,7 +349,6 @@ pub fn scan(answers: &[u8]) -> (Option<Background>, bool) {
     (background, false)
 }
 
-/// An `rgb:`/`rgba:` or `#` color's channels.
 fn rgb(color: &[u8]) -> Option<[u8; 3]> {
     let hex =
         |digits: &str| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit());

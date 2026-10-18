@@ -20,7 +20,6 @@ use tokio::{
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
 
-/// How long a probe may take to leave.
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
 /// A channel lost this soon after it opened waits this long before it is dialed again.
 const EARLY_LOSS: Duration = Duration::from_millis(500);
@@ -36,21 +35,16 @@ pub fn window(stage: Stage, cadence: Cadence) -> usize {
     }
 }
 
-/// When probes go and resolve: sends start to start or on the reply in flight backed by the deadline, a full window
-/// skips a send, each probe's deadline is fixed as it goes, and after sending stops the rest drain to their deadlines.
+/// Sends go start to start, or on the reply backed by the deadline; a full window skips one, and stopped probes drain.
 #[derive(Debug)]
 pub struct Schedule {
     cadence: Cadence,
     window: usize,
     deadline: Deadline,
-    /// Each probe in flight: when it went and its deadline.
     pending: BTreeMap<u32, (Instant, Instant)>,
-    /// Timed-out probes, when they went.
     late: BTreeMap<u32, Instant>,
     next: Ping,
-    /// The next send; none once sending stopped.
     due: Option<Instant>,
-    /// Whether any probe was answered, in time or late.
     answered: bool,
 }
 
@@ -69,13 +63,11 @@ impl Schedule {
         }
     }
 
-    /// When a send or a deadline is next due; none once drained.
     pub fn wake(&self) -> Option<Instant> {
         let deadlines = self.pending.values().map(|&(_, deadline)| deadline);
         self.due.into_iter().chain(deadlines).min()
     }
 
-    /// The probe to send at `now`, unless none is due or the window is full.
     pub fn send(&mut self, now: Instant) -> Option<Ping> {
         let due = self.due.filter(|due| now >= *due)?;
         let deadline = self.deadline.get();
@@ -117,7 +109,6 @@ impl Schedule {
         Some(ProberEvent::Outcome { sent, outcome })
     }
 
-    /// Probes whose deadline passed by `now`, as timeouts.
     pub fn expire(&mut self, now: Instant) -> Vec<ProberEvent> {
         let recent =
             |_: &u32, sent: &mut Instant| now.saturating_duration_since(*sent) <= LATE_REPLIES;
@@ -137,7 +128,6 @@ impl Schedule {
         expired
     }
 
-    /// A probe that could not leave.
     pub fn failed(&mut self, ping: Ping) -> Option<ProberEvent> {
         let (sent, _) = self.pending.remove(&ping.id)?;
         Some(ProberEvent::Outcome {
@@ -184,7 +174,6 @@ impl Schedule {
     }
 }
 
-/// A server's running prober; dropping it ends it.
 #[derive(Debug)]
 pub struct Prober {
     window: watch::Sender<Window>,
@@ -235,7 +224,6 @@ impl Prober {
         self.window.send_replace(Window::Open { end });
     }
 
-    /// The window closed: sending stops and probes in flight drain.
     pub fn close(&self) {
         self.window.send_replace(Window::Closed);
     }

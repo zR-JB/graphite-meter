@@ -34,17 +34,14 @@ const VERIFY: Duration = Duration::from_secs(3);
 /// How long a datagram probe waits for its reply before another goes.
 const DATAGRAM_REPLY: Duration = Duration::from_millis(750);
 
-/// A path check: its dependencies, start, network state, the catalog and each selected server's paths.
 pub struct Prepared {
     pub key: PrepKey,
     pub at: Instant,
     pub client: Client,
     pub catalog: Arc<[ServerEntry]>,
-    /// In catalog order.
     pub servers: Vec<ServerPath>,
 }
 
-/// A selected server and what its check found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerPath {
     pub id: ServerId,
@@ -53,28 +50,23 @@ pub struct ServerPath {
     pub location: String,
     /// The origin its discovery came from, where it signs in.
     pub origin: Origin,
-    /// What its preflight offered, once it answered.
     pub offered: Option<Capabilities>,
     pub path: Result<Paths, Failure>,
 }
 
-/// A prepared server's paths and what its checks measured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub throughput: ThroughputPath,
     /// The protocol its throughput check went over, unresolved; upload control requests take it and its connection.
     pub control: Protocol,
-    /// When a stage probes latency.
     pub latency: Option<LatencyPath>,
     pub stage_limit: Duration,
-    /// The latency check's round trip.
     pub idle_rtt: Option<Duration>,
     /// The address family the server saw the throughput check arrive from.
     pub ip_family: IpFamily,
 }
 
 impl Prepared {
-    /// The event that tells viewers what this check found.
     pub fn event(&self) -> Event {
         let (servers, catalog) = (self.servers.clone().into(), self.catalog.clone());
         Event::Prepared { servers, catalog }
@@ -198,8 +190,7 @@ where
     result
 }
 
-/// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol and
-/// names the address family it arrived from.
+/// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol.
 async fn check_throughput(
     client: &Client,
     path: &ThroughputPath,

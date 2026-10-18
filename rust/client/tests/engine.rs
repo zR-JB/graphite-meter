@@ -84,15 +84,12 @@ fn up(server: &str, bytes: u64, at: Duration) -> Sample {
     checkpoint(server, bytes, at.as_nanos() as u64 + 1)
 }
 
-/// Ticks an engine at scripted times and keeps what it decided.
 struct Script {
     engine: Engine,
     base: Instant,
     next: Duration,
     log: Vec<(Duration, Decision)>,
-    /// Records when the live trace got rates.
     live: Vec<Duration>,
-    /// The next tick passes these departures in.
     departed: Vec<(ServerId, Failure)>,
 }
 
@@ -133,7 +130,6 @@ impl Script {
         }
     }
 
-    /// Ticks on time.
     fn step(&mut self, at: Duration, samples: &[Sample], probes: &[(ServerId, ProberEvent)]) {
         self.tick(at, Duration::ZERO, samples, probes);
     }
@@ -162,7 +158,6 @@ impl Script {
         found.map(|(at, _)| *at)
     }
 
-    /// Says when the window opened and when it closes.
     fn window(&self) -> Option<(Duration, Duration)> {
         self.log.iter().find_map(|(_, decision)| match decision {
             Decision::OpenWindow { start, end } => Some((*start - self.base, *end - self.base)),
@@ -180,7 +175,6 @@ impl Script {
         removals.collect()
     }
 
-    /// Lists the failures the members stayed for.
     fn failed(&self) -> Vec<(Duration, &str, Scope, FailureReason)> {
         let failures = self.log.iter().filter_map(|(at, decision)| match decision {
             Decision::Failed(failure) => Some((

@@ -1,5 +1,4 @@
-//! The network layer against canned peers, for what a real server never does, and under chosen proxy and trust
-//! settings: proxies, the trust store and grants over verified TLS.
+//! The network layer against canned peers: what a real server never does, proxies, the trust store and grants over TLS.
 use graphite_meter_client::{
     config::{Config, PathChoice},
     model::Stage,
@@ -49,7 +48,6 @@ fn origin(scheme: &str, address: SocketAddr) -> Origin {
     Origin::parse(&format!("{scheme}://localhost:{}", address.port())).unwrap()
 }
 
-/// A probe's answer as any JSON object.
 async fn probe(client: &Client, via: Protocol, origin: &Origin) -> Result<Value, Fault> {
     client
         .json(
@@ -70,8 +68,7 @@ fn ok(body: &str) -> String {
 trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 
-/// An HTTP/1.1 peer, over TLS with `tls`, sending each request head with its connection's number to the receiver;
-/// `answer` gives the `n`th request's answer from its head, `None` ending its connection unanswered.
+/// An HTTP/1.1 peer, over TLS with `tls`, reporting each head with its connection's number; `answer` gives the `n`th answer or `None`.
 fn peer(
     listener: TcpListener,
     tls: Option<TlsAcceptor>,
@@ -291,7 +288,6 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
     );
 }
 
-/// The path a request head asks for, without its query.
 fn target(head: &str) -> &str {
     let target = head.split(' ').nth(1).unwrap_or_default();
     target.split_once('?').map_or(target, |(path, _)| path)

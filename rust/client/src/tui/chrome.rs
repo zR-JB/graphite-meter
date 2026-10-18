@@ -13,9 +13,7 @@ pub struct Chrome {
 pub enum Progress {
     #[default]
     None,
-    /// The bar is under way without a known share.
     Busy,
-    /// The bar shows this percentage done.
     Share(u8),
 }
 
@@ -29,13 +27,11 @@ pub struct Link {
 }
 
 impl Progress {
-    /// Clears the bar.
     pub const CLEAR: &[u8] = b"\x1b]9;4;0\x07";
 }
 
 impl Chrome {
-    /// Emits the sequences that change what `shown` set, or set everything but an absent bar. Links are rewritten
-    /// once `redrawn` cells may cover them.
+    /// Emits what changed since `shown`; links are rewritten once `redrawn` cells may cover them.
     pub fn bytes(&self, shown: Option<&Self>, redrawn: bool, profile: Profile) -> Vec<u8> {
         let mut out = Vec::new();
         if shown.is_none_or(|shown| shown.title != self.title) {

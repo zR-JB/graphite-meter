@@ -181,7 +181,6 @@ fn draw(
 
 /// Pushes the window title and reports every pointer move in SGR form, so what the pointer rests on lights up.
 const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1003h\x1b[?1006h";
-/// Undoes `ENTER`, putting back the pushed title.
 const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1003l\x1b[23;0t";
 
 /// The terminal raw on the alternate screen with mouse and pastes; dropping it restores it all and clears the progress.

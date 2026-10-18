@@ -75,7 +75,6 @@ impl App {
         }
     }
 
-    /// A click on entry `index`: focuses it and selects or deselects it.
     pub(super) fn click_entry(&mut self, index: usize) {
         if let Overlay::Chooser(chooser) = &mut self.overlay {
             chooser.row = index;
@@ -83,7 +82,6 @@ impl App {
         self.select_entry();
     }
 
-    /// Selects the focused entry, or deselects it.
     fn select_entry(&mut self) {
         let Overlay::Chooser(chooser) = &mut self.overlay else {
             return;
@@ -108,7 +106,6 @@ impl App {
         format!("Test servers · {} selected", chooser.draft.len())
     }
 
-    /// The catalog as the chooser's entries, each with its address and readiness, and the focused one's index.
     pub(super) fn chooser_entries(&self) -> (Vec<Entry>, usize) {
         let Overlay::Chooser(chooser) = &self.overlay else {
             return (Vec::new(), 0);
@@ -144,7 +141,6 @@ impl App {
     }
 }
 
-/// The sign-in prompt's arrival and whether its page was opened.
 pub struct SignIn {
     pub(super) since: Instant,
     pub(super) opened: bool,

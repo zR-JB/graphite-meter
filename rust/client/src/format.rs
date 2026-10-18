@@ -10,7 +10,6 @@ use graphite_meter_proto::{
 };
 use std::time::Duration;
 
-/// What a cell shows without a value.
 pub const MISSING: &str = "–";
 
 /// Milliseconds: one decimal below 100, whole from there.
@@ -32,7 +31,6 @@ pub fn latency(value: f64) -> String {
     }
 }
 
-/// A round trip with its unit.
 pub fn round_trip(duration: Duration) -> String {
     format!("{} ms", latency(duration.as_secs_f64() * 1e3))
 }
@@ -112,7 +110,6 @@ pub fn tick(value: f64) -> String {
     }
 }
 
-/// Thousands separated by commas.
 pub fn count(value: usize) -> String {
     let digits = value.to_string();
     let groups = digits.as_bytes().rchunks(3).rev();
@@ -255,7 +252,6 @@ pub fn latency_transport(transport: LatencyTransport) -> &'static str {
     }
 }
 
-/// The HTTP version a latency transport runs over.
 pub fn latency_protocol(transport: LatencyTransport) -> Protocol {
     match transport {
         LatencyTransport::WebSocket => Protocol::Http1,
@@ -289,7 +285,6 @@ pub fn latency_path(path: &LatencyPath) -> String {
     )
 }
 
-/// The streams a run opens per server and direction on `path`.
 pub fn streams(config: &Config, path: &ThroughputPath) -> String {
     let lanes = config.lanes(path.protocol, path.transport);
     match (config.streams.forced, path.transport, path.protocol) {
@@ -315,7 +310,6 @@ pub fn server(name: &str, location: &str) -> String {
     }
 }
 
-/// An origin without its scheme.
 pub fn authority(origin: &Origin) -> String {
     let text = origin.to_string();
     text.split_once("://")

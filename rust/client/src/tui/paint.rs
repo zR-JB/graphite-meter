@@ -9,10 +9,8 @@ use ratatui_core::{
 };
 use std::borrow::Cow;
 
-/// Maps each row and column within a braille cell to its dot.
 const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 
-/// Draws a frame and records where its pressable regions landed, the topmost last.
 pub struct Canvas<'a> {
     buffer: &'a mut Buffer,
     profile: Profile,
@@ -59,7 +57,6 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// Blanks `area`, its colors with it.
     pub fn clear(&mut self, area: Rect) {
         for (x, y) in cells(area.intersection(self.buffer.area)) {
             self.buffer[(x, y)].reset();
@@ -95,13 +92,11 @@ impl<'a> Canvas<'a> {
         at
     }
 
-    /// Writes `line` ending at the right edge of the `width` cells from `x`.
     pub fn right(&mut self, x: u16, y: u16, width: u16, line: &Line) {
         let shown = u16::try_from(line.width()).unwrap_or(u16::MAX).min(width);
         self.line(x + width - shown, y, shown, line);
     }
 
-    /// Writes `line` centred in the `width` cells from `x`.
     pub fn center(&mut self, x: u16, y: u16, width: u16, line: &Line) {
         let shown = u16::try_from(line.width()).unwrap_or(u16::MAX).min(width);
         self.line(x + (width - shown) / 2, y, shown, line);
@@ -124,7 +119,6 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// Lets a press in `area` reach `target`.
     pub fn hit(&mut self, area: Rect, target: Target) {
         self.hits.push((area, target));
     }
@@ -185,13 +179,11 @@ pub fn paint(color: Option<Color>, profile: Profile) -> Option<Paint> {
     }
 }
 
-/// Walks every cell of `area`, row by row.
 fn cells(area: Rect) -> impl Iterator<Item = (u16, u16)> {
     (area.y..area.bottom()).flat_map(move |y| (area.x..area.right()).map(move |x| (x, y)))
 }
 
-/// Lays braille dots over an area, two across and four down a cell. A cell shows its highest rank's dots in that
-/// rank's first color, so a mark drawn over a trace stays whole.
+/// Braille dots, two across and four down a cell; a cell shows its highest rank's dots, so a mark over a trace stays whole.
 pub struct Dots {
     area: Rect,
     cells: Vec<(u8, Option<Color>, u8)>,
@@ -205,7 +197,6 @@ impl Dots {
         }
     }
 
-    /// Counts the dots across and down the area.
     pub fn size(&self) -> (usize, usize) {
         (
             usize::from(self.area.width) * 2,

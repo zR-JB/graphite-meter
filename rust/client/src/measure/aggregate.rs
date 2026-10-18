@@ -12,7 +12,6 @@ use std::{
 const MIN_EVIDENCE: Duration = Duration::from_millis(800);
 /// A peak window spans at least this much on every clock.
 const MIN_PEAK: Duration = Duration::from_millis(500);
-/// A stage keeps its latest this many intervals.
 const MAX_INTERVALS: usize = 128;
 
 /// Holds one upload receiver's counters. A replacement receiver has a higher `id`.
@@ -29,24 +28,20 @@ pub struct Fed {
     pub bytes: u64,
 }
 
-/// Holds one server's counters at a boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading {
     pub server: ServerId,
-    /// The client consumed this many payload bytes.
     pub down: Option<u64>,
     /// The receiver reported these counters at a fresh checkpoint.
     pub up: Option<Receiver>,
     pub fed: Option<Fed>,
 }
 
-/// Holds every server's counters at one instant of the client's clock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Boundary {
     pub at: Instant,
     /// The sampler ran late, so evidence resumes here.
     pub stalled: bool,
-    /// The stage ends at this boundary.
     pub last: bool,
     pub readings: Vec<Reading>,
 }
@@ -60,7 +55,6 @@ impl Boundary {
 }
 
 graphite_meter_proto::table! {
-    /// Says why an interval began.
     pub enum Reason {
         name.0: &'static str,
     } {
@@ -78,7 +72,6 @@ pub struct Component {
     pub rate: f64,
 }
 
-/// Holds the combined rates between two boundaries, in bytes per second.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Window {
     pub start: Instant,
@@ -92,7 +85,6 @@ impl Window {
         self.components.down.iter().chain(&self.components.up)
     }
 
-    /// Returns the shortest span the window covers on any clock.
     pub fn shortest(&self) -> Duration {
         let receivers = self
             .components
@@ -122,7 +114,6 @@ pub struct Interval {
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Peaks {
     combined: Dir<f64>,
-    /// Lists one peak per participant, in the interval's order.
     servers: Vec<Dir<f64>>,
 }
 
@@ -141,7 +132,6 @@ impl Peaks {
     }
 }
 
-/// A headline carries the mean and peak in bytes per second.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rate {
     pub mean: f64,
@@ -167,7 +157,6 @@ impl Mark {
     }
 }
 
-/// Holds the current interval's evidence once its first boundary is in.
 #[derive(Debug)]
 struct Open {
     first: Boundary,
@@ -182,18 +171,14 @@ struct Open {
 struct Ledger {
     server: ServerId,
     down: Option<u64>,
-    /// The current receiver's highest count.
     up: Option<Fed>,
     bytes: Dir<u64>,
 }
 
-/// Keeps one stage's accounting.
 #[derive(Debug)]
 pub struct Aggregate {
     stage: Stage,
-    /// The latest interval comes last.
     intervals: VecDeque<Interval>,
-    /// Counts every interval begun, the dropped ones too.
     begun: usize,
     ledgers: Vec<Ledger>,
     open: Option<Open>,
@@ -354,7 +339,6 @@ impl Aggregate {
         })
     }
 
-    /// Returns `server`'s unique measured bytes in `direction`.
     pub fn bytes(&self, server: &ServerId, direction: Direction) -> u64 {
         let ledger = self.ledgers.iter().find(|ledger| ledger.server == *server);
         ledger.map_or(0, |ledger| ledger.bytes[direction])
@@ -365,12 +349,10 @@ impl Aggregate {
         bytes.fold(0, u64::saturating_add)
     }
 
-    /// Returns the kept intervals, the latest last.
     pub fn intervals(&self) -> impl Iterator<Item = &Interval> {
         self.intervals.iter()
     }
 
-    /// Counts how many intervals began, the dropped ones too.
     pub fn begun(&self) -> usize {
         self.begun
     }

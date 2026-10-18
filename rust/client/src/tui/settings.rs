@@ -19,7 +19,6 @@ use graphite_meter_proto::{
 use std::{num::NonZero, ops::RangeInclusive, time::Duration};
 use unicode_width::UnicodeWidthChar;
 
-/// The most characters the editor holds.
 const MAX_TEXT: usize = 4096;
 
 impl App {
@@ -162,7 +161,6 @@ impl App {
         }
     }
 
-    /// Steps `row` through its choices.
     fn cycle(&mut self, row: Row, step: isize) {
         let next = |at: Option<usize>, length: usize| {
             (at.map_or(-1, |at| at as isize) + step).rem_euclid(length as isize) as usize
@@ -248,7 +246,6 @@ impl App {
         Vec::new()
     }
 
-    /// Applies `raw` to `row`, or says why it does not apply.
     fn parse(&mut self, row: Row, raw: &str) -> Result<(), String> {
         let config = &mut self.config;
         if row == Row::Address {
@@ -289,7 +286,6 @@ impl App {
     }
 }
 
-/// The duration `row` sets and the range it keeps to.
 fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<Duration>)> {
     match row {
         Row::Stage(stage) => Some((&mut config.durations[stage.index()], STAGE_LIMITS)),
@@ -298,7 +294,6 @@ fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<
     }
 }
 
-/// The inline editor: a bounded line, a cursor, and the error its last apply found.
 pub(super) struct Editor {
     pub row: Row,
     text: Vec<char>,

@@ -27,16 +27,13 @@ use std::{
 use tokio::{runtime::Handle, sync::watch, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
-/// The bytes each WebTransport download stream carries.
 const STREAM_BYTES: u64 = 64 << 20;
-/// The most lanes one WebTransport session carries.
 const SESSION_LANES: usize = 16;
 /// The block an upload repeats; an attempt that handed on more than one moved bytes.
 const BLOCK_BYTES: usize = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
 const CHUNKS_PER_READ: usize = 32;
 
-/// A server's throughput path as preparation chose it, its protocol resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThroughputPath {
     pub origin: Origin,
@@ -44,18 +41,15 @@ pub struct ThroughputPath {
     pub protocol: Protocol,
 }
 
-/// What a group's lanes share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Carrier {
     /// A connection the group dials: HTTP/1.1 for one lane, HTTP/2 or HTTP/3 for many.
     Dialed,
     /// The path's HTTP/3 connection, which control requests use too.
     Path,
-    /// A WebTransport session on a connection of its own.
     Session,
 }
 
-/// One lane group: what its lanes share, their direction and their numbers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupPlan {
     pub path: ThroughputPath,
@@ -89,15 +83,12 @@ pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<G
     plans
 }
 
-/// What a direction's lanes do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Work {
     Download,
-    /// Send to the receiver of this upload ID.
     Upload(String),
 }
 
-/// A direction's lanes in their groups; dropping it ends them.
 pub struct Lanes {
     tally: Arc<Tally>,
     tasks: JoinSet<Option<Fault>>,
@@ -105,14 +96,12 @@ pub struct Lanes {
     failed: Option<Fault>,
 }
 
-/// What a direction's lanes report, shared across their runtimes.
 #[derive(Default)]
 struct Tally {
     bytes: AtomicU64,
     ready: AtomicUsize,
     /// Each lane's failure while it retries without moving bytes.
     retrying: Mutex<Vec<Option<Failure>>>,
-    /// The latest session upload lanes opened.
     session: watch::Sender<Option<Arc<Session>>>,
 }
 
@@ -216,7 +205,6 @@ impl Lanes {
         }
     }
 
-    /// The upload refusal a lane's fault stood for, once `health` saw it.
     pub fn refusal(&self) -> Option<UploadRefusal> {
         if let Some(Fault::Refused(refusal)) = self.failed {
             Some(refusal)
@@ -264,24 +252,19 @@ impl<T> Slot<T> {
     }
 }
 
-/// A group: its plan and what its lanes share, a connection or a session as the plan's carrier says.
 struct Group {
     client: Client,
     plan: GroupPlan,
     work: Work,
-    /// The block uploads repeat.
     block: Bytes,
     conn: Slot<Conn>,
     session: Slot<Arc<Session>>,
 }
 
-/// One lane's state across its attempts.
 struct Lane {
     number: usize,
     announced: bool,
-    /// The attempt consumed payload.
     moved: bool,
-    /// Bytes its upload bodies handed on.
     sent: Arc<AtomicU64>,
 }
 
@@ -294,7 +277,6 @@ impl Lane {
 }
 
 impl Group {
-    /// Runs lane `number` after `delay` until its fault stands.
     async fn run(self: Arc<Self>, number: usize, tally: Arc<Tally>, delay: Duration) -> Fault {
         tokio::time::sleep(delay).await;
         let mut lane = Lane {
@@ -468,7 +450,6 @@ async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<()
     }
 }
 
-/// Streams of a transfer's bytes, one after another, on the session.
 async fn send(
     session: &Session,
     block: &Bytes,
@@ -489,7 +470,6 @@ async fn send(
     }
 }
 
-/// A lane request's cache buster: the time in nanoseconds.
 fn cache_buster() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH);
     now.unwrap_or_default().as_nanos().to_string()

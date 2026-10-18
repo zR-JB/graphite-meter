@@ -49,7 +49,6 @@ fn id(name: &str) -> ServerId {
     ServerId::parse(name).unwrap()
 }
 
-/// The default settings for a server at meter.example.
 fn config() -> Config {
     Config {
         url: Origin::parse("https://meter.example").ok(),
@@ -72,7 +71,6 @@ fn command(effects: &[Effect]) -> &Command {
     }
 }
 
-/// The settings of the one check `effects` ask for.
 fn checked(effects: Vec<Effect>) -> Config {
     match command(&effects) {
         Command::Check(config) => config.clone(),
@@ -80,7 +78,6 @@ fn checked(effects: Vec<Effect>) -> Config {
     }
 }
 
-/// The frame's rows as drawn.
 fn rows(app: &mut App, now: Instant) -> Vec<String> {
     let mut buffer = Buffer::empty(FULL);
     app.draw(&mut buffer, now);
@@ -102,7 +99,6 @@ fn shows(app: &mut App, now: Instant, text: &str) -> bool {
     frame(app, now).iter().any(|row| row.contains(text))
 }
 
-/// Where `text` first stands in the frame, as a column and row.
 fn find(app: &mut App, now: Instant, text: &str) -> (u16, u16) {
     let rows = rows(app, now);
     let found = rows.iter().enumerate().find_map(|(row, line)| {
@@ -149,7 +145,6 @@ fn paths(origin: &Origin) -> Paths {
     }
 }
 
-/// A prepared server named after its ID.
 fn prepared_server(name: &str, origin: &Origin) -> ServerPath {
     ServerPath {
         id: id(name),
@@ -224,7 +219,6 @@ fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     app
 }
 
-/// `stage` started and measuring at `now`.
 fn measuring(app: &mut App, stage: Stage, duration: Duration, now: Instant) {
     let plan = StagePlan {
         stage,
@@ -703,7 +697,6 @@ fn the_console_follows_a_download_and_takes_presses() {
     assert!(app.hovered().is_some(), "the key lights under the pointer");
 }
 
-/// A finished download of 125 MB over `a`.
 fn downloaded(now: Instant) -> App {
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     measuring(&mut app, Stage::Download, SECOND * 10, now);

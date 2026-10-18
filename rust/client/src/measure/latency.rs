@@ -8,7 +8,6 @@ const DEADLINE_FLOOR: Duration = Duration::from_millis(250);
 const DEADLINE_CEILING: Duration = Duration::from_secs(10);
 const MIN_RTTVAR: Duration = Duration::from_millis(1);
 
-/// Says what became of one probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeOutcome {
     /// A reply matched after `rtt` and carried the server's own handling time.
@@ -18,17 +17,14 @@ pub enum ProbeOutcome {
     },
     /// The deadline passed first; a late reply does not change that.
     Timeout,
-    /// The channel ended before a verdict.
     Unresolved,
     SendFailed,
 }
 
-/// Tracks the replies, timeouts and continuity of one server's probes in one stage.
 #[derive(Debug, Clone, Default)]
 pub struct Latency {
     /// Counts replies by round trip rounded to the microsecond.
     rtts: BTreeMap<Duration, usize>,
-    /// Holds the counts only. `summary()` adds the statistics.
     counts: Summary,
     previous: Option<Duration>,
     variation: Duration,
@@ -37,7 +33,6 @@ pub struct Latency {
     handling: Duration,
 }
 
-/// Holds a population's statistics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Summary {
     pub replies: usize,
@@ -149,7 +144,6 @@ impl Latency {
 }
 
 impl Summary {
-    /// Returns the share of timeouts among resolved probes, or none without a resolved probe.
     pub fn timeout_ratio(&self) -> Option<f64> {
         let resolved = self.replies + self.timeouts;
         (resolved > 0).then(|| self.timeouts as f64 / resolved as f64)
@@ -186,7 +180,6 @@ pub fn added(loaded: Option<Duration>, idle: Option<Duration>) -> Option<f64> {
 /// A probe's deadline is SRTT + 4 × max(RTTVAR, 1 ms) within 250 ms to 10 s (RFC 6298), learnt from every reply.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Deadline {
-    /// Holds SRTT and RTTVAR once a reply arrived.
     estimate: Option<(Duration, Duration)>,
 }
 

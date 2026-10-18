@@ -31,7 +31,6 @@ use std::{
 
 const SIZE: Rect = Rect::new(0, 0, 120, 40);
 const TICK: Duration = Duration::from_millis(250);
-/// Bytes per second each way, and what the stages moved.
 const RATE: f64 = 2.35e9 / 8.0;
 const PEAK: Dir<f64> = Dir {
     down: 2.36e9 / 8.0,
@@ -42,8 +41,7 @@ const BYTES: Dir<u64> = Dir {
     up: 3_000_000_000,
 };
 
-/// `count` round trips in µs within `spread` of `median`, a few `tail` slower or a fifth of it faster, the same every
-/// run: a linear congruential walk.
+/// `count` round trips in µs within `spread` of `median`, a few `tail` slower, the same every run.
 fn rtts(median: u64, spread: u64, tail: u64, count: usize) -> impl Iterator<Item = Duration> {
     let mut state = median;
     (0..count).map(move |_| {

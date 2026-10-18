@@ -11,7 +11,6 @@ const ETHERNET: f64 = 38.0;
 /// TLS records, HTTP/2 and HTTP/3 DATA frames all carry up to 16 KiB.
 const RECORD: f64 = 16_384.0;
 
-/// The wire bytes each payload byte takes over `path` in address family `family`.
 pub fn multiplier(path: &ThroughputPath, family: IpFamily) -> f64 {
     let quic =
         path.transport != ThroughputTransport::FetchStream || path.protocol == Protocol::Http3;
@@ -36,8 +35,7 @@ pub fn multiplier(path: &ThroughputPath, family: IpFamily) -> f64 {
     application * (MTU + ETHERNET) / (MTU - ip - transport)
 }
 
-/// A stage's wire rate in bytes per second: each server's measured rates over its own path; none while a server that
-/// measured lacks its path.
+/// A stage's wire rate in bytes per second; none while a server that measured lacks its path.
 pub fn wire_rate(result: &StageResult, servers: &[ServerPath]) -> Option<f64> {
     let mut wire = 0.0;
     for server in &result.servers {

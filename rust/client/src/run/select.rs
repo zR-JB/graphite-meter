@@ -14,7 +14,6 @@ use graphite_meter_proto::{
 };
 use std::time::Duration;
 
-/// Lists a server's paths, each list in the order to check them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidates {
     pub throughput: Vec<ThroughputPath>,

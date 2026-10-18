@@ -54,8 +54,7 @@ fn stage(stage: Stage) -> Event {
     })
 }
 
-/// Views a latency then download run over `a` and `b`, where `a` leaves the download after 1.5 s and `c` had no path.
-/// Returns the failures its result records, `a`'s announced a second earlier.
+/// A latency then download run over `a` and `b`; `a` leaves the download after 1.5 s and `c` had no path.
 fn departed(b_measured: bool) -> (View, [ServerFailure; 2]) {
     let (at, mut view) = (Instant::now(), View::default());
     let plan = vec![(Stage::Latency, SECOND), (Stage::Download, SECOND)];

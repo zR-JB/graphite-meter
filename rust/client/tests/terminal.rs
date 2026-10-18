@@ -7,9 +7,7 @@ const DRIVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/terminal.py");
 
 struct Session {
     status: i64,
-    /// Counts the mode's keys that were sent.
     keys: i64,
-    /// The client wrote this to the terminal.
     text: String,
     /// Measures seconds from the termination to the exit, in the signals mode.
     exited: Option<f64>,
@@ -56,7 +54,6 @@ fn drive(mode: &str) -> Option<Session> {
     })
 }
 
-/// Picks what the client wrote after leaving the alternate screen.
 fn after_restore(session: &Session) -> &str {
     let (_, after) = session
         .text
