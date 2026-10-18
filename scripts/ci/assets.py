@@ -2,9 +2,10 @@
 """Stage the image, the server and client archives and the one source offer of a release, and verify them as the
 release does.
 
-    python3 scripts/ci/assets.py stage   # VERSION, OCI_ARCHIVE, OUT_DIR, SERVER_EXPORT, TUI_EXPORT
+    python3 scripts/ci/assets.py stage   # VERSION, OUT_DIR, SERVER_EXPORT, TUI_EXPORT
     python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, STAGED_DIR, PROFILE
-    python3 scripts/ci/assets.py upload {request,image,client,bundle}   # SOURCE, OUT_DIR, VERSION, TUI_PLATFORM
+    python3 scripts/ci/assets.py upload {request,image,client,bundle}
+        # SOURCE, OUT_DIR, VERSION, and an image's SERVER_PLATFORMS or a client's TUI_PLATFORM
 
 Verification reads the staged files as data and never runs them. Every path lies inside RUNNER_TEMP.
 """
@@ -12,18 +13,21 @@ Verification reads the staged files as data and never runs them. Every path lies
 import argparse
 import gzip
 import hashlib
+import io
+import json
 import re
 import shutil
 import stat
 import sys
 import tarfile
 import zipfile
+from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 
 import verify_oci
 from github_api import (
-    TLS_NAME, ControlPlaneError, JsonObject, append_summary, confined_path, decode_json, expect_array, expect_object,
-    fail, file_sha256, int_field, object_field, runner_path, str_field, table,
+    TLS_NAME, ControlPlaneError, JsonObject, JsonValue, append_summary, confined_path, decode_json, expect_array,
+    expect_object, fail, file_sha256, int_field, object_field, runner_path, str_field, table,
 )
 from trust import env, env_sha, exact_files
 from workspace import PRERELEASE, ROOT, VERSION, build_name, build_offer, load, offer_name, release_archive, source_txt
@@ -33,6 +37,8 @@ sys.path.append(str(ROOT))
 from scripts.legal.artifacts import add_bytes, write_archive
 
 OCI = "graphite-meter.oci.tar"
+CREATED, REFERENCE = "org.opencontainers.image.created", "vnd.docker.reference.digest"
+LAYOUT = re.compile(r"oci-layout|blobs(?:/sha256(?:/[0-9a-f]{64})?)?")
 OCI_LIMIT = 1024 * 1024 * 1024
 FILE_LIMIT = 16 * 1024 * 1024
 EXECUTABLE_LIMIT = 128 * 1024 * 1024
@@ -74,6 +80,11 @@ def release_assets(version: str) -> set[str]:
         return set()
     return {release_archive(package, version, platform)[0] for package, platform, _ in builds(version).values()} \
         | {offer_name(version)}
+
+
+def image_part(platform: str) -> str:
+    """The OCI archive of one platform's image, which staging joins into OCI."""
+    return f"graphite-meter_{platform.replace('/', '_')}.oci.tar"
 
 
 def staged_files(version: str) -> set[str]:
@@ -162,6 +173,57 @@ def merge(parts: list[Path], out: Path) -> None:
             tarfile.open(fileobj=compressed, mode="w") as archive:
         for name in sorted(members):
             add_bytes(archive, name, members[name])
+
+
+def join(parts: list[Path], out: Path) -> None:
+    """Write single-platform OCI archives as the one archive a build of all their platforms exports: their blobs and
+    an index of their images followed by their provenance manifests."""
+    images: list[JsonValue] = []
+    attestations: list[JsonValue] = []
+    created: list[str] = []
+    entries: dict[str, tuple[tarfile.TarInfo, tarfile.TarFile | bytes]] = {}
+    with ExitStack() as stack:
+        for path in parts:
+            try:
+                tar = stack.enter_context(tarfile.open(path, "r:"))
+                top = verify_oci.image_index(tar)
+                index = verify_oci.blob(tar, top, verify_oci.INDEX_TYPE)
+                own = "blobs/sha256/" + str_field(top, "digest", path.name).removeprefix("sha256:")
+                templates = tar.getmember(own), tar.getmember("index.json")
+            except (KeyError, tarfile.TarError) as exc:
+                raise ControlPlaneError(f"cannot read {path.name}: {exc}") from exc
+            # BuildKit lists a single-platform image, then its provenance, and nothing else.
+            manifests = expect_array(index.get("manifests"), path.name)
+            if index.keys() != {"schemaVersion", "mediaType", "manifests"} or len(manifests) != 2:
+                fail(f"{path.name} does not hold one image and its provenance")
+            image, attestation = (expect_object(item, path.name) for item in manifests)
+            if object_field(attestation, "annotations", path.name).get(REFERENCE) != image.get("digest"):
+                fail(f"{path.name} does not hold one image and its provenance")
+            images.append(image)
+            attestations.append(attestation)
+            created.append(str_field(object_field(top, "annotations", path.name), CREATED, path.name))
+            for info in tar.getmembers():
+                if info.name in ("index.json", own):
+                    continue
+                if LAYOUT.fullmatch(info.name) is None:
+                    fail(f"{path.name} holds {info.name!r} outside the OCI layout")
+                entries.setdefault(info.name, (info, tar))
+        index = json.dumps({"schemaVersion": 2, "mediaType": verify_oci.INDEX_TYPE,
+                            "manifests": [*images, *attestations]}, indent=2).encode()
+        digest = hashlib.sha256(index).hexdigest()
+        layout = json.dumps({"schemaVersion": 2, "mediaType": verify_oci.INDEX_TYPE, "manifests": [
+            {"mediaType": verify_oci.INDEX_TYPE, "digest": f"sha256:{digest}", "size": len(index),
+             "annotations": {CREATED: max(created)}}]}, separators=(",", ":")).encode()
+        for template, name, data in ((templates[0], f"blobs/sha256/{digest}", index),
+                                     (templates[1], "index.json", layout)):
+            info = template.replace(name=name)
+            info.size = len(data)
+            entries[name] = info, data
+        # In name order and USTAR format, as BuildKit writes it.
+        with tarfile.open(out, "w", format=tarfile.USTAR_FORMAT) as joined:
+            for name in sorted(entries):
+                info, source = entries[name]
+                joined.addfile(info, io.BytesIO(source) if isinstance(source, bytes) else source.extractfile(info))
 
 
 def stage_assets(version: str, server_export: Path, tui_export: Path, out: Path) -> None:
@@ -406,8 +468,11 @@ def upload_names(kind: str) -> set[str]:
         if platform not in load().tui:
             fail(f"{platform} is not a TUI platform")
         return {release_archive(CLIENT, version, platform)[0], build_offer(CLIENT, platform)}
-    offers = {build_offer(SERVER, platform) for platform in load().server}
-    return {OCI, *(set() if prerelease(version) else offers)}
+    platforms = env("SERVER_PLATFORMS").split()
+    if not set(platforms) <= load().server.keys():
+        fail(f"{platforms} are not server platforms")
+    offers = {build_offer(SERVER, platform) for platform in platforms}
+    return {*map(image_part, platforms), *(set() if prerelease(version) else offers)}
 
 
 def command_upload(kind: str) -> None:
@@ -419,13 +484,19 @@ def command_upload(kind: str) -> None:
     exact_files(out, names)
 
 
+def stage(version: str, server_export: Path, tui_export: Path, out: Path) -> None:
+    """Join the image's platform archives and, for a stable release, stage its assets."""
+    parts = find(server_export, {image_part(platform) for platform in load().server})
+    join([path for _, path in sorted(parts.items())], confined_path(out / OCI, out))
+    (out / f"{OCI}.sha256").write_text(f"{file_sha256(out / OCI)}  {OCI}\n")
+    if not prerelease(version):
+        stage_assets(version, server_export, tui_export, out)
+
+
 def command_stage() -> None:
     version, out = release_version(env("VERSION")), runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(runner_path("OCI_ARCHIVE"), confined_path(out / OCI, out))
-    (out / f"{OCI}.sha256").write_text(f"{file_sha256(out / OCI)}  {OCI}\n")
-    if not prerelease(version):
-        stage_assets(version, runner_path("SERVER_EXPORT"), runner_path("TUI_EXPORT"), out)
+    stage(version, runner_path("SERVER_EXPORT"), runner_path("TUI_EXPORT"), out)
     summarize(out, version)
 
 

@@ -13,9 +13,9 @@ from pathlib import Path, PurePosixPath
 from typing import cast
 from unittest.mock import patch
 
-from assets import CLIENT, OCI, SERVER, prerelease, stage_assets
+from assets import CLIENT, CREATED, OCI, SERVER, image_part, prerelease, stage
 from github_api import ControlPlaneError, JsonObject, JsonValue
-from verify_oci import STAGE
+from verify_oci import STAGE, image_index
 from workspace import ROOT, build_name, build_offer, load, offer_name, release_archive, source_txt
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
@@ -88,9 +88,9 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
               arch_files: Mapping[str, Mapping[str, bytes]] | None = None,
               extra_layer: Mapping[str, bytes] | None = None,
               stage: tuple[str, str | None] = STAGE, arch_labels: Mapping[str, Mapping[str, str]] | None = None,
-              edit: Callable[[bytes], bytes] = lambda data: data) -> str:
-    """Write the OCI layout BuildKit exports for two labelled images of `files` (a str value is a symlink target), with
-    `edit` applied to each JSON blob; return its image index digest."""
+              edit: Callable[[bytes], bytes] = lambda data: data, arches: tuple[str, ...] = ("amd64", "arm64")) -> str:
+    """Write the OCI layout BuildKit exports for a labelled image of `files` (a str value is a symlink target) per
+    architecture of `arches`, with `edit` applied to each JSON blob; return its image index digest."""
     blobs: dict[str, bytes] = {}
 
     def add(data: bytes, media: str, **extra: JsonValue) -> JsonObject:
@@ -129,7 +129,7 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
             "Labels": labels | dict((arch_labels or {}).get(arch, {}))}}, CONFIG_TYPE),
         "layers": [layer({**files, **(arch_files or {}).get(arch, {})}),
                    *([layer(extra_layer, directories=False)] if extra_layer else [])],
-    }, MANIFEST_TYPE, platform={"architecture": arch, "os": "linux"}) for arch in ("amd64", "arm64")}
+    }, MANIFEST_TYPE, platform={"architecture": arch, "os": "linux"}) for arch in arches}
 
     # A local context's Dockerfile is named without its directory.
     source: JsonObject = {"path": PurePosixPath(stage[0]).name}
@@ -153,7 +153,8 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
                                       "vnd.docker.reference.digest": image["digest"]})
                 for image in images.values()]
     top = add_json(index(*images.values(), *attested), INDEX_TYPE)
-    write_tar(path, {"oci-layout": b'{"imageLayoutVersion":"1.0.0"}', "index.json": json.dumps(index(top)).encode(),
+    layout = index(top | {"annotations": {CREATED: "2026-01-01T00:00:00Z"}})
+    write_tar(path, {"oci-layout": b'{"imageLayoutVersion":"1.0.0"}', "index.json": json.dumps(layout).encode(),
                      **{"blobs/sha256/" + digest.removeprefix("sha256:"): data for digest, data in blobs.items()}},
               compressed=False)
     return str(top["digest"])
@@ -226,34 +227,33 @@ def write_client(directory: Path, version: str, platform: str, changes: Mapping[
         write_tar(directory / archive, files)
 
 
-def write_exports(root: Path, version: str, revision: str, repository: str, profile: str = "release") -> str:
-    """Write what the builds export into `root` and return the image index digest."""
+def write_exports(root: Path, version: str, revision: str, repository: str, profile: str = "release") -> None:
+    """Write what the builds export into `root`: a prerelease only the image's platform archives."""
     workspace = load()
     server, client = root / "server-export", root / "tui-export"
-    client.mkdir(parents=True)
-    files: dict[str, Mapping[str, bytes]] = {}
     for platform, target in workspace.server.items():
-        build = build_name(SERVER, platform)
-        (server / platform.replace("/", "_")).mkdir(parents=True)
-        write_part(server / platform.replace("/", "_") / build_offer(SERVER, platform), version, SERVER, platform,
-                   profile)
-        files[platform.split("/")[1]] = {
-            "usr/share/licenses/graphite-meter/SOURCE.txt": source_txt(REPOSITORY_URL, version, build, target).encode(),
-            "graphite-meter": server_binary(platform)}
-    for platform in workspace.tui:
-        write_part(client / build_offer(CLIENT, platform), version, CLIENT, platform, profile)
-        write_client(client, version, platform)
-    return write_oci(root / OCI, repository, revision, version, remote=prerelease(version), arch_files=files)
+        build, arch, part = build_name(SERVER, platform), platform.split("/")[1], server / platform.replace("/", "_")
+        source = source_txt(REPOSITORY_URL, version, build, target).encode()
+        files = {"usr/share/licenses/graphite-meter/SOURCE.txt": source, "graphite-meter": server_binary(platform)}
+        server.mkdir(exist_ok=True)
+        write_oci(server / image_part(platform), repository, revision, version, remote=prerelease(version),
+                  arch_files={arch: files}, arches=(arch,))
+        if not prerelease(version):
+            part.mkdir()
+            write_part(part / build_offer(SERVER, platform), version, SERVER, platform, profile)
+    if not prerelease(version):
+        client.mkdir(parents=True)
+        for platform in workspace.tui:
+            write_part(client / build_offer(CLIENT, platform), version, CLIENT, platform, profile)
+            write_client(client, version, platform)
 
 
 def write_staged(out: Path, version: str, revision: str, repository: str) -> str:
     """Stage a release of `version` into `out` as assets.py stage does; return the image index digest."""
     with tempfile.TemporaryDirectory() as directory:
         exports = Path(directory)
-        digest = write_exports(exports, version, revision, repository)
+        write_exports(exports, version, revision, repository)
         out.mkdir(parents=True, exist_ok=True)
-        (out / OCI).write_bytes((exports / OCI).read_bytes())
-        (out / f"{OCI}.sha256").write_text(f"{hashlib.sha256((out / OCI).read_bytes()).hexdigest()}  {OCI}\n")
-        if not prerelease(version):
-            stage_assets(version, exports / "server-export", exports / "tui-export", out)
-    return digest
+        stage(version, exports / "server-export", exports / "tui-export", out)
+    with tarfile.open(out / OCI) as archive:
+        return str(image_index(archive)["digest"])

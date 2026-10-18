@@ -54,9 +54,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "PROFILE: release\n", "PROFILE: release\n          TOKEN: ${{ github.token }}\n", "read the token"),
     (REQUEST, "          GH_TOKEN: ${{ github.token }}\n", "", "GH_TOKEN must be exactly"),
     (IMAGE, "--provenance mode=max \\", "--provenance false --provenance mode=max \\", "one OCI archive export"),
-    (IMAGE, 'build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \\\n  --output "type=oci,',
-     '# --provenance mode=max \\\n  --output "type=oci,\n'
-     'build --target server --platform linux/amd64,linux/arm64 --provenance false \\\n  --output "type=oci,',
+    (IMAGE, 'build --target server --platform "$platform" --provenance mode=max \\\n    --output "type=oci,',
+     '# --provenance mode=max \\\n    --output "type=oci,\n'
+     'build --target server --platform "$platform" --provenance false \\\n    --output "type=oci,',
      "one OCI archive export"),
     (IMAGE, "--provenance false --load", "--provenance mode=min --load", "one OCI archive export"),
     (IMAGE, BUILD, "--attest type=sbom " + BUILD, "--attest"),
@@ -125,8 +125,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "platform: [linux/amd64, linux/arm64, windows/amd64]", "as release.py expects"),
     (REQUEST, "\njobs:\n", "\njobs:\n  other:\n    name: Another job\n    runs-on: ubuntu-26.04\n"
      "    steps:\n      - run: true\n", "as release.py expects"),
-    (REQUEST, "    name: Build server image\n    needs: request\n", "    name: Build server image\n",
-     "every build must need request"),
+    (REQUEST, "    name: Build server image (${{ matrix.platform }})\n    needs: request\n",
+     "    name: Build server image (${{ matrix.platform }})\n", "every build must need request"),
+    (REQUEST, "platform: [linux/amd64, linux/arm64]\n", "platform: [linux/amd64]\n", "as release.py expects"),
     (REQUEST, None, "\n  again:\n    name: Assemble request\n    needs: request\n    runs-on: ubuntu-26.04\n"
      "    steps:\n      - run: true\n", "once each"),
     (REQUEST, "    needs: [request, image, client]\n", "    needs: [image, client]\n", "every build must need request"),

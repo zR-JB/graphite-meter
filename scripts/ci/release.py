@@ -37,7 +37,7 @@ from workspace import PRERELEASE, STABLE, load, offer_name
 
 REQUEST_LIMIT = 2 * assets.OCI_LIMIT
 # The release request's jobs; the last writes its one artifact.
-VALIDATE_JOB, IMAGE_JOB, ASSEMBLE_JOB = "Validate request", "Build server image", "Assemble request"
+VALIDATE_JOB, ASSEMBLE_JOB = "Validate request", "Assemble request"
 # Seconds between reads while GitHub's read path catches up with a write.
 DELAYS = (0.25, 0.5, 1, 2, 4, 8)
 REQUEST_KEYS = {"schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId", "requestRunAttempt"}
@@ -73,13 +73,18 @@ def request_title(mode: str, release: Release) -> str:
     return f"{release.tag} · {mode} · {f'PR #{release.pr}@{release.sha}' if release.pr else 'main'}"
 
 
+def image_job(platform: str) -> str:
+    return f"Build server image ({platform})"
+
+
 def client_job(platform: str) -> str:
     return f"Build client ({platform})"
 
 
 def request_jobs() -> set[str]:
     """Every job of a request run; a prerelease's client jobs skip their builds."""
-    return {VALIDATE_JOB, IMAGE_JOB, ASSEMBLE_JOB, *(client_job(platform) for platform in load().tui)}
+    workspace = load()
+    return {VALIDATE_JOB, ASSEMBLE_JOB, *map(image_job, workspace.server), *map(client_job, workspace.tui)}
 
 
 def built_from(release: Release) -> str:

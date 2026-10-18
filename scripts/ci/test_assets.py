@@ -2,7 +2,6 @@ import gzip
 import io
 import json
 import os
-import shutil
 import tarfile
 import tempfile
 import unittest
@@ -11,14 +10,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from assets import (
-    CLIENT, OCI, SERVER, command_upload, find, main, merge, native_executable, staged_files, verify, verify_archive,
-    verify_offer,
+    CLIENT, OCI, SERVER, command_upload, find, join, main, merge, native_executable, staged_files, upload_names, verify,
+    verify_archive, verify_offer,
 )
 from fixtures import (
     REPOSITORY_URL, executable, notices, outcome, reviewed, server_binary, write_client, write_exports, write_oci,
     write_staged, write_tar,
 )
 from github_api import ControlPlaneError, file_sha256
+from verify_oci import INDEX_TYPE, blob, image_index
 from workspace import ROOT, build_name, load, offer_name, source_txt
 
 REPO, SHA = "zR-JB/graphite-meter", "f" * 40
@@ -53,8 +53,7 @@ class Scratch(unittest.TestCase):
     def stage(self, version: str, out: Path, exports: Path) -> None:
         env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "OUT_DIR": str(out),
                "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
-               "OCI_ARCHIVE": str(exports / OCI), "SERVER_EXPORT": str(exports / "server-export"),
-               "TUI_EXPORT": str(exports / "tui-export")}
+               "SERVER_EXPORT": str(exports / "server-export"), "TUI_EXPORT": str(exports / "tui-export")}
         with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "stage"]):
             main()
 
@@ -92,6 +91,47 @@ class StagingTests(Scratch):
         self.assertEqual({name.split("/")[2] for name in names if "/builds/" in name},
                          {build_name(SERVER, platform) for platform in workspace.server}
                          | {build_name(CLIENT, platform) for platform in workspace.tui})
+
+    def test_joining_the_platform_archives_writes_the_layout_one_build_of_both_platforms_exports(self) -> None:
+        directory = self.fresh()
+        write_oci(directory / "both.oci.tar", REPO, SHA, remote=False)
+        parts = [directory / f"{arch}.oci.tar" for arch in ("amd64", "arm64")]
+        for part in parts:
+            write_oci(part, REPO, SHA, remote=False, arches=(part.name.split(".")[0],))
+        join(parts, directory / OCI)
+
+        def layout(path: Path) -> tuple[object, set[str]]:
+            """The image index and every member but the index blob."""
+            with tarfile.open(path) as archive:
+                top = image_index(archive)
+                return blob(archive, top, INDEX_TYPE), set(archive.getnames()) - {
+                    "blobs/sha256/" + str(top["digest"]).removeprefix("sha256:")}
+
+        self.assertEqual(layout(directory / "both.oci.tar"), layout(directory / OCI))
+        # BuildKit's encoding: an indented index, a compact layout, USTAR in name order.
+        with tarfile.open(directory / OCI) as archive:
+            names, top = archive.getnames(), image_index(archive)
+            index = blob(archive, top, INDEX_TYPE)
+            files = {entry.name: handle.read() for entry in archive if (handle := archive.extractfile(entry))}
+        self.assertEqual(files["blobs/sha256/" + str(top["digest"]).removeprefix("sha256:")],
+                         json.dumps(index, indent=2).encode())
+        listed = {"schemaVersion": 2, "mediaType": INDEX_TYPE, "manifests": [top]}
+        self.assertEqual(files["index.json"], json.dumps(listed, separators=(",", ":")).encode())
+        self.assertEqual(names, sorted(names))
+        self.assertEqual((directory / OCI).read_bytes()[257:263], b"ustar\0")
+        with self.assertRaisesRegex(ControlPlaneError, "does not hold one image and its provenance"):
+            join([directory / "both.oci.tar"], directory / "again.oci.tar")
+
+    def test_an_image_job_uploads_its_platform_s_archive_and_for_a_stable_release_its_offer(self) -> None:
+        archive = "graphite-meter_linux_arm64.oci.tar"
+        offer = "graphite-meter-server_linux_arm64_third-party-source.tar.gz"
+        for version, platforms, expected in (("1.2.3", "linux/arm64", {archive, offer}),
+                                             ("1.2.3-rc.1", "linux/arm64", {archive}),
+                                             ("1.2.3", "windows/arm64", None)):
+            with self.subTest(version=version, platforms=platforms), \
+                    patch.dict(os.environ, {"VERSION": version, "SERVER_PLATFORMS": platforms}):
+                self.assertEqual(outcome(self, None if expected else "are not server platforms",
+                                         lambda: upload_names("image")), expected)
 
     def test_merging_refuses_conflicting_unsafe_or_unbounded_members(self) -> None:
         link = tarfile.TarInfo(f"{TOP}/link")
@@ -321,9 +361,6 @@ class VerifyTests(Scratch):
         self.assertEqual(staged_files(version), {OCI, f"{OCI}.sha256"})
         exports, out = self.fresh(), self.fresh()
         write_exports(exports, version, SHA, REPO)
-        # A prerelease's build exports no client archives or source offer parts.
-        for export in ("server-export", "tui-export"):
-            shutil.rmtree(exports / export)
         self.stage(version, out, exports)
         self.assertEqual({path.name for path in out.iterdir()}, staged_files(version))
         self.assertEqual(verify(version, SHA, out)[0], file_sha256(out / OCI))
