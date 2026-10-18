@@ -8,7 +8,7 @@ the GitHub API and the checked-out commit and writes release files as the builds
 real commands.
 
 ```sh
-mise run workflow-check    # jactionlint, zizmor, workflow_policy.py, tool pins
+mise run workflow-check    # jactionlint, zizmor, workflow_policy.py with the tool pins, dashes.py
 mise run pipeline-test     # ty type check, control-plane and legal tests
 ```
 
@@ -121,7 +121,9 @@ credentials and no dangerous triggers other than the reviewed `workflow_run`. `w
 own trust rules, and `test_workflow_policy.py` breaks a copy of the repository once per rule: pinned runner images,
 secrets only in the approved publish job, release identity only from the run context, no development build anywhere
 CI or a release reaches (`--development` or `scripts.build`), a code owner for every dependency manifest, lockfile,
-toolchain pin, Cargo configuration and build script, and a Dependabot entry for every lockfile.
+toolchain pin, Cargo configuration and build script, and a Dependabot entry for every lockfile. `dashes.py` refuses
+an em or en dash in any tracked text file outside `legal/`, except where the clients define and draw the missing-value
+glyph: write ranges as "1 to 4" and asides with commas, colons or sentences.
 
 When adding an external action, review it and its composite dependencies, allow it in repository settings, pin the SHA
 with a version comment for Dependabot and run the checks above.

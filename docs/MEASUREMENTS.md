@@ -99,7 +99,7 @@ An RTT is the client's monotonic send-to-receive interval for a matched probe. W
 download, upload and bidirectional stages keep separate populations; a failed population shows its median only
 after three replies and timeouts.
 
-| Behavior        | Rule                                                                                                             |
+| Behavior         | Rule                                                                                                             |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Cadence          | The idle default is reply-driven and the loaded default is Medium. Fast 80 ms, Medium 250 ms and Slow 600 ms are start-to-start. |
 | Reply-driven     | The latest probe's reply sends the next at once, a late one never; a backup timer covers a missing reply.        |
@@ -126,9 +126,9 @@ encoding ([wire protocol](../api/wire.md#reflector-handling-time)). The paired p
 replies with a valid handling time. A handling time above that reply's raw RTT, or one the client cannot represent
 exactly, omits the pair but keeps the raw reply; values are never clamped. Malformed replies are ignored.
 
-Handling time is a diagnostic of parsing and handling alone. The server's receive queue, its
-wait for a thread, TLS and the reply's encoding and write fall outside it, so under load the server's share of an RTT
-can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added latency.
+Handling time is a diagnostic of parsing and handling alone. The server's receive queue, its wait for a thread, TLS
+and the reply's encoding and write fall outside it, so under load the server's share of an RTT can exceed it. Raw
+RTT stays primary for latency, jitter, deadlines and added latency.
 
 ## Client differences
 
@@ -186,18 +186,16 @@ pins:
 ## Saved history
 
 When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB.
-A record at schema 6 holds the build and the result. The result covers the selected servers and survivors, each
-server's engine version, path evidence and stage statuses, latency populations with exact probe
-counts, at most 128 recent intervals, failures with reasons, byte totals, and the headline with its peak,
-stability and wire estimate. Missing measurements stay null, and grants and socket tickets are never saved. Records
-of earlier releases at schemas 4 and 5 are upgraded once when the database opens (a schema 5 record's one engine
-version goes to its latency-focus server), while records that cannot be read stay in
-storage, are skipped and are reported.
+A record holds the build and the result. The result covers the selected servers and survivors, each server's engine
+version, path evidence and stage statuses, latency populations with exact probe counts, at most 128 recent intervals,
+failures with reasons, byte totals, and the headline with its peak, stability and wire estimate. Missing
+measurements stay null, and grants and socket tickets are never saved. Records that earlier releases saved at
+schemas 4 and 5 are upgraded to the current schema 6 once when the database opens, and records that cannot be read
+stay in storage, are skipped and are reported.
 
 Before saving, a result must be coherent: every failure has one of the seven reasons; a failed or partial stage has
 a failure in its scope; a complete stage has none, every lane and, for transfers, an interval with 800 ms of evidence;
 a skipped stage has no evidence; some stage ran; a complete transfer stage's intervals span at least 75 % of its
 planned time (52 % with early finish); and the outcome follows the stage statuses, so any failed stage makes it
 Incomplete and otherwise any failure makes it Partial. The run applies the same span rule as each stage ends, so
-History agrees with what was shown.
-An incoherent result is logged as an error and saved as Incomplete.
+History agrees with what was shown. An incoherent result is logged as an error and saved as Incomplete.

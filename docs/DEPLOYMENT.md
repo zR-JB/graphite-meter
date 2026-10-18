@@ -6,6 +6,8 @@ clear HTTP/1.1 on port 7246, and native TLS listeners add HTTP/1.1 over TLS, HTT
 | Setup                       | Start here                                                              | You need                                         |
 | --------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
 | Local or trusted LAN        | [One container](#one-container)                                         | TCP 7246.                                        |
+| Linux without containers    | [Without Docker](#without-docker)                                       | Linux on amd64 or arm64, and systemd for a service. |
+| Windows                     | [On Windows](#on-windows)                                               | Docker Desktop or WSL2.                          |
 | Existing HTTPS ingress      | [Reverse proxies](#reverse-proxies) and [authentication](#authentication) | A hostname, a TLS proxy and its address.       |
 | Direct protocol comparisons | [Native TLS](#native-tls)                                               | A trusted certificate; TCP 7247 to 7249, UDP 7249. |
 | systemd under your own user | [Podman Quadlet](../container/quadlet/README.md)                        | Linux, Podman and systemd.                       |
@@ -25,6 +27,62 @@ docker run -d --name graphite-meter --restart unless-stopped -p 7246:7246 ghcr.i
 Open <http://localhost:7246>, or `http://SERVER_IP:7246` from another device. Over clear HTTP the test measures
 HTTP/1.1 throughput and WebSocket latency. Browsers expose WebTransport only in a secure context, so remote
 WebTransport needs HTTPS and the native HTTP/3 listener.
+
+## Without Docker
+
+From the next stable release on, each release also attaches the server alone for Linux as
+`graphite-meter-server_X.Y.Z_linux_amd64.tar.gz` and `graphite-meter-server_X.Y.Z_linux_arm64.tar.gz`. Each holds the
+same static executable as the image, with its license notices, and needs nothing else installed. Download one with
+`checksums.txt`, check it and start it:
+
+```sh
+curl -fLO https://github.com/zR-JB/graphite-meter/releases/download/vX.Y.Z/graphite-meter-server_X.Y.Z_linux_amd64.tar.gz
+curl -fLO https://github.com/zR-JB/graphite-meter/releases/download/vX.Y.Z/checksums.txt
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf graphite-meter-server_X.Y.Z_linux_amd64.tar.gz
+./graphite-meter-server_X.Y.Z_linux_amd64/graphite-meter-server
+```
+
+It listens on port 7246 on every address and takes the same `GM_*` variables and flags as the image, listed in the
+[server reference](REFERENCE.md#settings). For OIDC sign-in it finds the system CA bundle on Debian, Ubuntu, Fedora,
+RHEL, openSUSE, Alpine and Arch without configuration.
+
+To keep it running, install it, create an unprivileged user and a settings file, which may stay empty:
+
+```sh
+sudo install -m 755 graphite-meter-server_X.Y.Z_linux_amd64/graphite-meter-server /usr/local/bin/
+sudo useradd --system graphite-meter
+sudo install -d /etc/graphite-meter && sudo touch /etc/graphite-meter/env
+```
+
+Save this unit as `/etc/systemd/system/graphite-meter.service`, put `GM_*` lines in the settings file, and start it
+with `sudo systemctl enable --now graphite-meter`:
+
+```ini
+[Unit]
+Description=Graphite Meter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=graphite-meter
+EnvironmentFile=/etc/graphite-meter/env
+ExecStart=/usr/local/bin/graphite-meter-server
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`journalctl -u graphite-meter` shows the log. The server writes no files, so the user needs only read access to the
+TLS key and secret files you name. The default ports are above 1024 and need no privileges; only a port below 1024
+needs `AmbientCapabilities=CAP_NET_BIND_SERVICE` in the unit. For HTTP/3 above about 1 Gbit/s, raise the
+[UDP buffers](#udp-buffers).
+
+### On Windows
+
+The server ships for Linux only. On Windows, run the image with Docker Desktop, or run the Linux archive above under
+WSL2. The [terminal client](TERMINAL.md#install) ships natively for Windows on amd64 and arm64.
 
 ## Docker Compose
 
@@ -76,9 +134,9 @@ docker compose -f container/docker-compose.yml -f container/docker-compose.build
 mise run server-build && rust/target/release/graphite-meter-server                                # binary
 ```
 
-Stop any container already bound to 7246 first. Source builds carry a development identity, and release automation
-stamps the version and source revision. The image's builder needs an amd64 host and cross-compiles arm64, so on
-arm64 hosts run a published tag.
+Stop any container already bound to 7246 first. Source builds report a development version, and the binary build
+says `UNREVIEWED DEVELOPMENT BUILD` because its license notices are unreviewed, so do not redistribute it. The
+image's builder needs an amd64 host and cross-compiles arm64, so on arm64 hosts run a published tag.
 
 ### Container user
 
@@ -99,11 +157,11 @@ by it:
 
 ## Native listeners
 
-Each listener has its own address and advertised origin, so a client can select a protocol deterministically. The
+Each listener has its own address and advertised origin, so a client picks a protocol by picking an address. The
 clear HTTP/1.1 listener on `GM_H1_ADDR` is required and also serves the UI and discovery. The other listeners stay
-off until they get an address. HTTP/3 serves WebTransport and needs TCP for the Alt-Svc bootstrap and UDP on its
-port end to end. All TLS listeners share `GM_TLS_CERT` and `GM_TLS_KEY`. The server hot-reloads a valid replacement
-PEM pair and keeps the previous pair through an incomplete renewal.
+off until they get an address. HTTP/3 serves WebTransport and needs its port open for both TCP and UDP end to
+end. All TLS listeners share `GM_TLS_CERT` and `GM_TLS_KEY`. The server reloads a valid replacement certificate and
+key on its own and keeps the previous pair through an incomplete renewal.
 
 ```env
 GM_H1_TLS_ADDR=:7247
@@ -242,7 +300,7 @@ WebSockets and WebTransport. Password mode needs one hash source. OIDC needs an 
 source and at least one allowed group. Hybrid needs both and keeps the password usable while the provider is down.
 
 ```sh
-docker run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
+docker run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password   # or: graphite-meter-server hash-password
 ```
 
 Register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client with PKCE S256,
@@ -262,9 +320,9 @@ Sign-out revokes the grant.
 ## Server catalog
 
 A test runs against one to four selected test servers on one stage schedule, and the default is the server that
-serves the page. Every server runs the same image and configures itself. Servers never contact each other. Clients
-connect directly to each selected server and never import a peer's catalog, so there are no shared keys, database
-or discovery service.
+serves the page. Every server runs the same software and configures itself. Servers never contact each other.
+Clients connect directly to each selected server and never import a peer's catalog, so there are no shared keys,
+database or discovery service.
 
 Set `GM_SERVER_CATALOG` to inline JSON, or set `GM_SERVER_CATALOG_FILE` to an absolute path that is normally
 mounted read-only, and restart. Usually a list of the other servers' origins is enough:
@@ -334,6 +392,7 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 | An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.          |
 | A local peer fails only from a hosted page | Check local-network permission and HTTPS; see the [server catalog](#server-catalog).        |
 | A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the terminal client accepts literals.     |
+| Connections from one address are refused   | The `admission` warning names it; set `GM_TRUSTED_PROXIES` for a proxy, or raise `GM_MAX_CONNECTIONS_PER_CLIENT` for clients sharing an address. |
 | Uploads fail behind a proxy                | Disable request buffering and body-size limits; allow streaming progress and long requests. |
 | Throughput is lower than expected          | Check CPU, browser, Wi-Fi, proxy and container networking, and compare the terminal client on a direct listener. |
 | Timeouts or missing values appear          | Inspect stage evidence, because unfinished probes and missing receiver counters are not zero. |

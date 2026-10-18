@@ -5,8 +5,8 @@ terminal client has [its own flags](TERMINAL.md#flags).
 
 ## Commands
 
-The server binary is `/graphite-meter` in the image and `graphite-meter-server` in a source build. Besides
-serving, it takes one command:
+The server executable is `/graphite-meter` in the image and `graphite-meter-server` in a release archive or a
+source build. Besides serving, it takes these commands:
 
 | Command                | Effect                                                                                              |
 | ---------------------- | --------------------------------------------------------------------------------------------------- |
@@ -47,8 +47,8 @@ process arguments. Durations take units such as `90s`, `5m` or `2h`, and boolean
 | `GM_MAX_BUFFER_BYTES`                   | `--max-buffer-bytes`                   | `8589934592`     | Bytes of HTTP/2 and QUIC connection buffers ([resources](#resources)).                 |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client; a trusted proxy counts only toward `GM_MAX_CONNECTIONS`. |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Lifetime of a request-shaped measurement. When unset, it grows to at least the stage limit plus 1 min. |
-| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Lifetime of a WebTransport session. When unset, it grows to at least the operation lifetime. |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Lifetime of a request-shaped measurement.                                              |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Lifetime of a WebTransport session.                                                    |
 | `GM_MAX_STAGE_DURATION`                 | `--max-stage-duration`                 | `5m`             | Longest stage clients may plan, `1s` to `24h`; sent in `/preflight`.                   |
 | `GM_TRUSTED_PROXIES`                    | _env only_                             | empty            | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `GM_AUTH_MODE`                          | `--auth-mode`                          | `off`            | `off`, `password`, `oidc` or `hybrid`.                                                 |
@@ -64,11 +64,14 @@ process arguments. Durations take units such as `90s`, `5m` or `2h`, and boolean
 | `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalog](#server-catalog) JSON.                                                |
 | `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalog file path without `..`; exclusive with the inline form.               |
 | `TZ`                                    | _env only_                             | UTC              | IANA zone name for [log times](#logs), from zone data built into the release.          |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | _env only_                             | empty            | Proxy for OIDC requests, read as the [terminal client](TERMINAL.md#environment) reads them. |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR`         | _env only_                             | the system's     | CA roots for OIDC requests instead of the system bundle.                               |
 
 - Listener addresses must differ. Numeric limits must be positive, per-client limits may not exceed their global
   limit, sessions may not exceed handlers, and the session duration must be at least the operation duration.
-  Lifetimes left unset cover the stage limit plus a minute, so a server that allows multi-hour stages never cuts
-  their lanes on a short default. Set them to keep lanes shorter, and clients reconnect across each cut. Something
+  Lifetimes left unset grow to cover the stage limit plus a minute, so the operation lifetime is 6 min by default
+  and a server that allows multi-hour stages never cuts their lanes on a short default. The session lifetime grows to
+  at least the operation lifetime. Set them to keep lanes shorter, and clients reconnect across each cut. Something
   must carry throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or
   `GM_PUBLIC_THROUGHPUT_ORIGINS`, or startup fails with "configuration advertises no throughput endpoint".
 - A client identity is a login or measurement grant, and its subject shares twice its limit. Every password login

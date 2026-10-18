@@ -30,7 +30,15 @@ tar -xzf graphite-meter-client_X.Y.Z_linux_amd64.tar.gz
 ./graphite-meter-client_X.Y.Z_linux_amd64/graphite-meter-client --url http://192.168.1.20:7246
 ```
 
-To build it from source, see the [development guide](DEVELOPMENT.md#commands).
+On Windows, extract the zip and run the client in PowerShell:
+
+```powershell
+Expand-Archive graphite-meter-client_X.Y.Z_windows_amd64.zip -DestinationPath .
+.\graphite-meter-client_X.Y.Z_windows_amd64\graphite-meter-client.exe --url http://192.168.1.20:7246
+```
+
+The server itself ships for Linux; on Windows, see [running the server on Windows](DEPLOYMENT.md#on-windows). To
+build the client from source, see the [development guide](DEVELOPMENT.md#commands).
 
 ## The server address
 
@@ -136,8 +144,8 @@ columns when stdout is a file or pipe.
 | 1      | The test ended Partial, Incomplete, Stopped or Failed, or an error such as "Sign-in required" occurred. |
 | 2      | The flags or arguments were invalid, or report mode had no server address.      |
 | 130    | SIGINT (ctrl+c) stopped the test.                                               |
-| 143    | SIGTERM stopped the test.                                                       |
 | 141    | The report was written into a closed pipe.                                      |
+| 143    | SIGTERM stopped the test.                                                       |
 
 A signal stops the test, and the report still prints. A second signal exits at once with its own status, and a
 signal after the test finished does not change the status.
