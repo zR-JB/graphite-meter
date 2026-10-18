@@ -15,7 +15,7 @@ and timeouts bound how long the read may take.
 | Throughput / latency endpoints | ≤ 32 each, counted as sent (an input bound, before any target is skipped); `transport` (and a throughput target's `protocol`) required and nonempty on every target, never inferred from its absence. A value outside the enumerations in [preflight.schema.json](preflight.schema.json) skips that target, so newer servers stay usable ([preflight.forward.golden.json](preflight.forward.golden.json)). |
 | Endpoint `baseUrl` | `.` (the origin that served discovery) or an HTTP(S) origin ≤ 2048 bytes, no credentials, path, query or fragment. |
 | Server name, location, engine version, generation | ≤ 256 UTF-8 bytes; generation nonempty. |
-| Probe evidence | Published IP-version, source and negotiated-protocol values; IP text 1–64 bytes; optional `load` with integers `active` ≥ 0 and `max` ≥ 1. |
+| Probe evidence | Published IP-version, source and negotiated-protocol values; IP text 1 to 64 bytes; optional `load` with integers `active` ≥ 0 and `max` ≥ 1. |
 | Token and upload ID | Nonempty strings ≤ 8192 bytes. |
 | Socket-ticket mint response | `token` plus `expires` (safe integer, epoch ms); authentication off returns `{ "token": "", "expires": 0 }`. |
 
@@ -64,7 +64,7 @@ milliseconds:
 | Request | Answers |
 | --- | --- |
 | `POST /auth/cli/token` `{"verifier": "…"}` (≤ 128 bytes) | `202 {"status":"pending"}` until approved, also for a malformed body; `200 {"token", "expires"}`; `410` once a repeated exchange's 30 s have passed; `429` at grant capacity. |
-| `POST /auth/browser/token` `{"verifier": "…"}` (32–128 bytes) from an exact HTTPS `Origin` | `202 {"status":"pending"}` until approved; `200 {"token", "expires", "remainingMs", "maximumLifetimeMs"}`; `410` once a repeated exchange's 30 s have passed; `429` at grant capacity; `403` for a malformed body or origin. |
+| `POST /auth/browser/token` `{"verifier": "…"}` (32 to 128 bytes) from an exact HTTPS `Origin` | `202 {"status":"pending"}` until approved; `200 {"token", "expires", "remainingMs", "maximumLifetimeMs"}`; `410` once a repeated exchange's 30 s have passed; `429` at grant capacity; `403` for a malformed body or origin. |
 | `GET /auth/session` with the session cookie | `200 {"name", "provider", "expires", "csrf", "remainingMs", "maximumLifetimeMs"}`; `403` without a session. |
 
 Auth routes read at most 4 KiB of request body and answer with `Cache-Control: no-store`, `X-Frame-Options: DENY`
