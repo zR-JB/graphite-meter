@@ -49,7 +49,7 @@ async fn a_quiet_bus_closes_idle_within_the_contract_bound() {
     let started = Instant::now();
     assert_eq!(closed(&mut socket).await, (4001, "idle".into()));
     let elapsed = started.elapsed();
-    // Paused time may run ahead while the close frame is in flight. The contract allows 30–45 s.
+    // Paused time may run ahead while the close frame is in flight. The contract allows 30 to 45 s.
     assert!(elapsed > Duration::from_secs(29) && elapsed <= Duration::from_secs(45), "{elapsed:?}");
 }
 

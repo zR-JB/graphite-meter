@@ -183,7 +183,7 @@ export interface Catalog {
   defaultSelection: string[];
 }
 
-/** The originating server's catalog holds `self` first, unique IDs and origins, and 1–4 default IDs. Any violation
+/** The originating server's catalog holds `self` first, unique IDs and origins, and 1 to 4 default IDs. Any violation
     refuses the whole document. */
 export function catalog(value: unknown, pageOrigin: string): Catalog {
   const document = object({

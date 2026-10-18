@@ -19,7 +19,7 @@ export interface DockWidths {
   max: number;
 }
 
-/** Each open side within 360–720 px, the stage keeping 800 px. Past the budget the excess comes out of each side in
+/** Each open side within 360 to 720 px, the stage keeping 800 px. Past the budget the excess comes out of each side in
     proportion to how far it sits above the minimum, except that `priority` (the side resized last) keeps its own
     width so a dragged edge follows the pointer. Preferences never change here. */
 export function resolveDocks(

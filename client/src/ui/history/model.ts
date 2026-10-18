@@ -138,7 +138,7 @@ export function span(records: readonly HistoryEntry[]): string {
   const [from, to] = [dateLabel(first), dateLabel(last)];
   if (from === to) return from;
   const sameYear = new Date(first).getFullYear() === new Date(last).getFullYear();
-  return `${sameYear ? DATES.day.format(first) : from} – ${to}`;
+  return `${sameYear ? DATES.day.format(first) : from} to ${to}`;
 }
 
 export interface Cell {

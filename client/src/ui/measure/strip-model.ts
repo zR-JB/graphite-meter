@@ -66,7 +66,7 @@ export class Lane {
   }
 }
 
-/** Tangents of the monotone cubic (Fritsch–Carlson, weighted harmonic mean) through `n` points, written to `out`:
+/** Tangents of the monotone cubic (Fritsch-Carlson, weighted harmonic mean) through `n` points, written to `out`:
     the curve passes every point and never overshoots between two of them. */
 export function monotoneTangents(
   x: ArrayLike<number>,

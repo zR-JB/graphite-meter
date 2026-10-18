@@ -32,7 +32,7 @@ pub fn round_trip(duration: Duration) -> String {
 /// Fastest to slowest, both ends even when they read the same.
 pub fn latency_range(fastest: Duration, slowest: Duration) -> String {
     let ms = |duration: Duration| latency(duration.as_secs_f64() * 1e3);
-    format!("{}–{} ms", ms(fastest), ms(slowest))
+    format!("{} to {} ms", ms(fastest), ms(slowest))
 }
 
 /// Added latency in milliseconds, always signed; what rounds to zero is `+0.0`.

@@ -354,11 +354,11 @@ test("two docked sheets open and close beside the stage in every frame", async (
         const stage = document.querySelector('[data-flip="stage"]')!.getBoundingClientRect();
         const run = document.querySelector(".run-button")!.getBoundingClientRect();
         for (const box of sheets("left"))
-          if (box.right > stage.left + 1.5) found.push(`left ${box.left}–${box.right}, stage ${stage.left}`);
+          if (box.right > stage.left + 1.5) found.push(`left ${box.left} to ${box.right}, stage ${stage.left}`);
         for (const box of sheets("right"))
-          if (box.left < stage.right - 1.5) found.push(`right ${box.left}–${box.right}, stage ${stage.right}`);
+          if (box.left < stage.right - 1.5) found.push(`right ${box.left} to ${box.right}, stage ${stage.right}`);
         if (run.left < stage.left - 1.5 || run.right > stage.right + 1.5)
-          found.push(`run key ${run.left}–${run.right} outside the stage`);
+          found.push(`run key ${run.left} to ${run.right} outside the stage`);
       }
     })();
     for (const [name, ms] of [

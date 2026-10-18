@@ -20,7 +20,7 @@ const BAND: f64 = 0.08;
 const TRACK: f64 = 0.03;
 const BEAD: f64 = 0.16;
 
-/// One arc reaches this far, 0–1 of the sweep, in its color.
+/// One arc reaches this far, 0 to 1 of the sweep, in its color.
 pub struct Arc {
     pub to: f64,
     pub color: Color,

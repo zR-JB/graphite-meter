@@ -152,7 +152,7 @@ impl<'a> Canvas<'a> {
     }
 }
 
-/// Writes `color` as `profile` does. The 16-color profile writes indexed colors 0–15.
+/// Writes `color` as `profile` does. The 16-color profile writes indexed colors 0 to 15.
 pub fn paint(color: Option<Color>, profile: Profile) -> Option<Paint> {
     let color = color?;
     let [_, red, green, blue] = color.rgb.to_be_bytes();

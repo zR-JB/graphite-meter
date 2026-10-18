@@ -188,9 +188,9 @@ test("progress, ticks, ranges and counts read as documented", () => {
   ] as const;
   for (const [value, text] of ticks) expect(fmtTick(value), `${value}`).toBe(text);
   expect([fmtLatencyRange(0.04, 12.34), fmtLatencyRange(12.31, 12.34), fmtLatencyRange(12, 250)]).toEqual([
-    "< 0.1–12.3 ms",
-    "12.3–12.3 ms",
-    "12.0–250 ms",
+    "< 0.1 to 12.3 ms",
+    "12.3 to 12.3 ms",
+    "12.0 to 250 ms",
   ]);
   const counted = [0, 1, 2, 1_204, 1_234_567.891].map((count) => fmtCounted(count, "reply", "replies"));
   expect(counted).toEqual(["0 replies", "1 reply", "2 replies", "1,204 replies", "1,234,567.891 replies"]);

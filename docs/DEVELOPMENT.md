@@ -179,9 +179,9 @@ Before each release, `mise run screenshots vX.Y.Z` renders the README images in 
 and the result merges like any change. The browser app runs on the E2E fleet with fakes for the network and the run's
 clock (`client/scripts/screenshots`), and the terminal client draws a simulated run
 (`rust/client/examples/screenshot.rs`), so the same code in the same browser gives the same pixels.
-`docs/assets/screenshots.json` records the version and a hash of the sources that draw them, and a stable release
-request refuses screenshots of another version or of changed sources
-(`python3 scripts/ci/screenshots.py check vX.Y.Z`). The README captions name that version, so update them with it.
+`docs/assets/screenshots.json` records the version and a hash of the sources that draw them, and the same stamp writes
+that version into the README captions. A stable release request refuses screenshots of another version, of changed
+sources or under captions naming another version (`python3 scripts/ci/screenshots.py check vX.Y.Z`).
 
 ## Toolchain pins
 
