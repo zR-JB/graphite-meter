@@ -541,7 +541,7 @@ async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
                 signs_in_with(&Provider::start().await, twist).await,
                 accepted,
                 "{row}"
-            )
+            );
         })
     });
     for row in rows {

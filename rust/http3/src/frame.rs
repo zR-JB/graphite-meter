@@ -216,7 +216,7 @@ mod tests {
                     match piece {
                         Piece::Header { kind, .. } => frames.push((kind, Vec::new())),
                         Piece::Payload(bytes) => {
-                            frames.last_mut().unwrap().1.extend_from_slice(&bytes)
+                            frames.last_mut().unwrap().1.extend_from_slice(&bytes);
                         }
                     }
                 }

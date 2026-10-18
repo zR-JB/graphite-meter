@@ -776,7 +776,7 @@ impl App {
                     ));
                 }
                 Err(failure) => {
-                    entries.push(Entry::Text(Line::styled(&failure.text, palette.warn)))
+                    entries.push(Entry::Text(Line::styled(&failure.text, palette.warn)));
                 }
             }
             if let Some(run) = &self.view.run {

@@ -367,10 +367,10 @@ impl App {
         for cell in 0..inner {
             match () {
                 _ if state == State::Warmup && self.sweeping(cell, inner) => {
-                    rule.push('━', Style::fg(hue))
+                    rule.push('━', Style::fg(hue));
                 }
                 _ if state == State::Ended(StageStatus::Partial) && cell % 3 == 2 => {
-                    rule.push(' ', Style::default())
+                    rule.push(' ', Style::default());
                 }
                 _ if 2 * cell + 2 <= halves => rule.push('━', Style::fg(bar)),
                 _ if 2 * cell + 1 == halves => rule.push('╸', Style::fg(bar)),

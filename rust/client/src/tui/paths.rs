@@ -193,7 +193,7 @@ pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
     label: format::throughput_transport,
     chosen: |paths| (paths.throughput_origin.as_ref(), paths.throughput_transport),
     choose: |paths, origin, transport| {
-        (paths.throughput_origin, paths.throughput_transport) = (origin, transport)
+        (paths.throughput_origin, paths.throughput_transport) = (origin, transport);
     },
     offered: |offered, served| {
         let streams = offered.throughput.iter();
@@ -216,7 +216,7 @@ pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
     label: format::latency_transport,
     chosen: |paths| (paths.latency_origin.as_ref(), paths.latency_transport),
     choose: |paths, origin, transport| {
-        (paths.latency_origin, paths.latency_transport) = (origin, transport)
+        (paths.latency_origin, paths.latency_transport) = (origin, transport);
     },
     offered: |offered, served| {
         let offer = |target: &LatencyTarget| {

@@ -573,19 +573,19 @@ impl Registry {
                 match active.streams.try_send(stream) {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Full(mut stream)) => {
-                        stream.stop(Code::WT_BUFFERED_STREAM_REJECTED)
+                        stream.stop(Code::WT_BUFFERED_STREAM_REJECTED);
                     }
                     Err(mpsc::error::TrySendError::Closed(mut stream)) => {
-                        stream.stop(Code::WT_SESSION_GONE)
+                        stream.stop(Code::WT_SESSION_GONE);
                     }
                 }
             }
             _ if self.gone_through.is_some_and(|gone| session <= gone) => {
-                stream.refuse(Code::WT_SESSION_GONE)
+                stream.refuse(Code::WT_SESSION_GONE);
             }
             _ if self.early.len() < MAX_EARLY => {
                 self.early
-                    .push_back((Instant::now() + EARLY_WAIT, session, stream))
+                    .push_back((Instant::now() + EARLY_WAIT, session, stream));
             }
             _ => stream.refuse(Code::WT_BUFFERED_STREAM_REJECTED),
         }

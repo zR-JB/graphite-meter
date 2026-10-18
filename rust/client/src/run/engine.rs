@@ -483,7 +483,7 @@ impl Engine {
                 seat.probing = Probing::Drained;
             }
             ProberEvent::Down { at, failure } => {
-                self.latency_failed(index, failure.clone(), *at, out)
+                self.latency_failed(index, failure.clone(), *at, out);
             }
             ProberEvent::Outcome { .. } | ProberEvent::Drained => {}
         }
@@ -573,7 +573,7 @@ impl Engine {
                     &mut tick.decisions,
                 ),
                 false => {
-                    self.latency_failed(index, failure.clone(), input.now, &mut tick.decisions)
+                    self.latency_failed(index, failure.clone(), input.now, &mut tick.decisions);
                 }
             }
         }

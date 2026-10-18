@@ -104,7 +104,7 @@ async fn network_failures_last_until_the_deadline_which_reports_one_unless_the_l
     assert_eq!(started.elapsed(), Duration::from_mins(2));
     match failed {
         Err(Unapproved::Failed(failure)) => {
-            assert_eq!(failure.reason, FailureReason::ConnectionLost)
+            assert_eq!(failure.reason, FailureReason::ConnectionLost);
         }
         other => panic!("{other:?}"),
     }

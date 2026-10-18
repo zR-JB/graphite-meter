@@ -133,7 +133,7 @@ impl Http2 {
                         cx.waker().wake_by_ref();
                     }
                     Poll::Ready(Some(Ok((_, mut respond)))) => {
-                        respond.send_reset(Reason::REFUSED_STREAM)
+                        respond.send_reset(Reason::REFUSED_STREAM);
                     }
                     Poll::Ready(Some(Err(_)) | None) => return Poll::Ready(()),
                     Poll::Pending => break,

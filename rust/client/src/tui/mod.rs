@@ -344,7 +344,7 @@ impl App {
                 match end {
                     SignInEnd::Approved => self.notify(Line::styled("Signed in", self.palette.ok)),
                     SignInEnd::Expired => {
-                        self.notify(Line::styled(approval::EXPIRED, self.palette.warn))
+                        self.notify(Line::styled(approval::EXPIRED, self.palette.warn));
                     }
                     SignInEnd::Failed | SignInEnd::Canceled => {}
                 }
@@ -425,7 +425,7 @@ impl App {
                 match self.overlay {
                     Overlay::Settings { .. } => self.move_focus(step),
                     Overlay::Details | Overlay::Help => {
-                        self.scroll = self.scroll.saturating_add_signed(3 * step)
+                        self.scroll = self.scroll.saturating_add_signed(3 * step);
                     }
                     Overlay::Chooser(_) => {
                         let key = if step < 0 { KeyCode::Up } else { KeyCode::Down };
@@ -540,7 +540,7 @@ impl App {
             }
             // The chooser closes back to the settings, as esc does.
             Action::Close if matches!(self.overlay, Overlay::Chooser(_)) => {
-                self.overlay = Overlay::SETTINGS
+                self.overlay = Overlay::SETTINGS;
             }
             Action::Start => return self.start(),
             Action::Stop => return self.stop(),

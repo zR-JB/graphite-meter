@@ -75,7 +75,7 @@ fn down(server: &str, bytes: u64) -> Sample {
 fn checkpoint(server: &str, bytes: u64, nanos: u64) -> Sample {
     let counters = Counters::new(bytes, nanos);
     with(sample(server), |reading| {
-        reading.up = Some(Receiver { id: 0, counters })
+        reading.up = Some(Receiver { id: 0, counters });
     })
 }
 
@@ -265,7 +265,7 @@ fn a_late_timer_resumes_evidence_and_a_slow_checkpoint_does_not() {
         let mut script = Script::new(plan(stage, &["a"], false));
         let samples = |at: Duration| {
             vec![with(up("a", moved(at, STAGE), at), |reading| {
-                reading.down = Some(moved(at, STAGE))
+                reading.down = Some(moved(at, STAGE));
             })]
         };
         script.run_until(ms(3000), samples);

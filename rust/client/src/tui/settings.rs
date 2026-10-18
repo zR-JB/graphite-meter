@@ -74,7 +74,7 @@ impl App {
             }
             Row::LoadedLatency => self.config.loaded_latency = on,
             Row::ForceStreams => {
-                self.config.streams.forced = NonZero::new(self.config.streams.auto).filter(|_| on)
+                self.config.streams.forced = NonZero::new(self.config.streams.auto).filter(|_| on);
             }
             Row::Insecure => self.config.insecure = on,
             _ => {}

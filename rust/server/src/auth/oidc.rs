@@ -271,7 +271,7 @@ impl Oidc {
             .send(&provider.token, authorization, Some(form))
             .await;
         let answer = answer.inspect_err(|error| {
-            security.debug(format_args!("OIDC token exchange failed: {error}"))
+            security.debug(format_args!("OIDC token exchange failed: {error}"));
         });
         let tokens = answer
             .ok()
@@ -296,7 +296,7 @@ impl Oidc {
         let bearer = Some((header::AUTHORIZATION, bearer));
         let answer = self.client.send(&provider.userinfo, bearer, None).await;
         let answer = answer.inspect_err(|error| {
-            security.debug(format_args!("OIDC user information failed: {error}"))
+            security.debug(format_args!("OIDC user information failed: {error}"));
         });
         let answer = answer.ok()?;
         if answer.media != "application/jwt" {

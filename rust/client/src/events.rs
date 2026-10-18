@@ -288,7 +288,7 @@ impl View {
                     (servers.clone(), catalog.clone(), Check::Ready);
             }
             Event::CheckFailed(failure) if self.check == Check::Checking => {
-                self.check = Check::Failed(failure.clone())
+                self.check = Check::Failed(failure.clone());
             }
             Event::SignIn(prompt) => self.sign_in = Some(prompt.clone()),
             Event::SignInEnded(end) => {

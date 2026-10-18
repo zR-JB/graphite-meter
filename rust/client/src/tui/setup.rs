@@ -246,7 +246,7 @@ impl App {
             }
             Row::Streams => help.push_str(&format!(" ←→ ±1, from 1 to {MAX_STREAMS}.")),
             Row::LoadedLatency | Row::Insecure | Row::ForceStreams => {
-                help.push_str(" Space switches it.")
+                help.push_str(" Space switches it.");
             }
             _ => {}
         }
