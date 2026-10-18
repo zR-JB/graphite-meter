@@ -1,5 +1,4 @@
-// One saved result as the console showed it: the console's cards and latency lanes in the result's own unit tier, then
-// one server at a time, how it was reached, its probe outcomes and the builds that measured it.
+// One saved result as the console showed it, then each server's path, probe outcomes and builds.
 import type { App } from "../../app/app";
 import type { HistoryRecord } from "../../app/history/records";
 import type { LatencySummary } from "../../engine/measure/latency";

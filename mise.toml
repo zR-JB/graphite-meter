@@ -69,11 +69,12 @@ description = "Update required toolchain literals from mise.toml"
 run = "python3 scripts/ci/toolchains.py sync"
 
 [tasks.workflow-check]
-description = "Lint workflows and validate trust boundaries"
+description = "Lint workflows, validate trust boundaries and keep dashes out of the text"
 run = [
   "jactionlint --no-online --shellcheck= --pyflakes=",
   "zizmor --offline --no-progress --config .github/zizmor.yml .github",
   "python3 scripts/ci/workflow_policy.py",
+  "python3 scripts/ci/dashes.py",
 ]
 
 [tasks.python-check]
@@ -106,10 +107,10 @@ run = [
 ]
 
 [tasks.client-ci]
-description = "Check client formatting, types, dependencies, and tests"
+description = "Check client formatting, lints, types, dependencies, and tests"
 run = [
   { task = "doctor" },
-  "cd client && bun run format:check",
+  "cd client && bun run lint",
   { task = "client-check" },
   # Duplicate compatible versions are advisory; frozen installs enforce the lockfile.
   "cd client && bun dedupe --dry-run",

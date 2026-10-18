@@ -1,5 +1,4 @@
-// Runs timeouts for the page that hidden-tab throttling cannot stretch. The owner posts {id, ms} (ms null cancels)
-// and gets the id back when it fires.
+// Timeouts that hidden-tab throttling cannot stretch: post {id, ms} (null ms cancels), get the id back on firing.
 const timers = new Map<number, ReturnType<typeof setTimeout>>();
 
 self.onmessage = ({ data: { id, ms } }: MessageEvent<{ id: number; ms: number | null }>) => {

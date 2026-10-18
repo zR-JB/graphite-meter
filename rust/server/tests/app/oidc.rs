@@ -1,5 +1,4 @@
-//! OIDC sign-in over the app against a fake provider over TLS: the round trip, transaction binding, ID token and
-//! key checks, group membership, discovery and the exchange bound.
+//! OIDC sign-in over the app against a fake provider over TLS.
 
 use super::{
     auth::{HASH, PUBLIC, public, store, tls},

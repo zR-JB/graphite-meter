@@ -1,5 +1,4 @@
-// The Details sheet's body: the server shown and how it was reached, what it supports, the builds, and a diagnostic
-// report. Inspecting a server only reads; this browser's address is in the page only while its key is pressed.
+// The Details sheet's body; this browser's address shows only while its key is pressed.
 import "./details.css";
 import type { App } from "../../app/app";
 import { describeStreams, needsPings } from "../../engine/net/streams";

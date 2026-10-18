@@ -1,7 +1,5 @@
-//! The Linux endpoint set: `SO_REUSEPORT` sockets on one address. Where the kernel takes the set's routing program, it
-//! delivers each datagram to the socket its connection ID names, and a new connection starts on the endpoint holding
-//! the fewest, so that a client's latency session and its transfers run on different threads while there are threads
-//! to spare; otherwise a connection runs where it arrived. Either way a socket forwards what names another endpoint.
+//! The Linux endpoint set: `SO_REUSEPORT` sockets on one address. Where the kernel routes by connection ID, a new
+//! connection starts on the least loaded endpoint so a latency session and its transfers get separate threads.
 
 use super::HANDSHAKE_BOUND;
 use noq::{AsyncUdpSocket, ConnectionId, ConnectionIdGenerator, InvalidCid, UdpSender, udp::RecvMeta};
@@ -98,9 +96,8 @@ pub(super) fn forwarding_bytes(max_datagram: usize) -> Option<usize> {
         .checked_add(size_of::<FirstFlight>().checked_mul(FIRST_FLIGHTS)?)
 }
 
-/// Has the kernel deliver each datagram to the socket of the `SO_REUSEPORT` group that its connection ID names, as
-/// `named` reads it; a client's own ID, or an index past the group, takes the kernel's hash. Sockets join the group in
-/// endpoint order, so a socket's index is its endpoint's.
+/// Has the kernel deliver each datagram to the group socket its connection ID names (see `named`), else hash it.
+/// Sockets join in endpoint order, so a socket's index is its endpoint's.
 pub(super) fn route_in_kernel(socket: &std::net::UdpSocket) -> io::Result<()> {
     cfg_select! {
         target_os = "linux" => {

@@ -1,5 +1,4 @@
-// Turns every number into text, from rates in the page's unit, latency, bytes, durations, typed times, counts, shares
-// and ranges to progress and dial ticks. Missing or non-finite values read MISSING with no unit, never NaN or Infinity.
+// Turns every number into text; missing or non-finite values read MISSING with no unit, never NaN or Infinity.
 import type { Preferences } from "../app/preferences";
 
 export const MISSING = "–";
@@ -58,11 +57,11 @@ export const fmtMs = guarded((ms) => (ms >= 0 && ms < 0.1 ? "< 0.1" : fixedMs(ms
 
 export const fmtLatency = (ms: Value) => withUnit(fmtMs(ms), "ms");
 
-/** Reads fastest to slowest, both ends even when they read the same: 12.3–12.3 ms. */
+/** Reads fastest to slowest, both ends even when they read the same: 12.3 to 12.3 ms. */
 export function fmtLatencyRange(fastest: Value, slowest: Value): string {
   const from = fmtMs(fastest);
   const to = fmtMs(slowest);
-  return from === MISSING || to === MISSING ? MISSING : `${from}–${to} ms`;
+  return from === MISSING || to === MISSING ? MISSING : `${from} to ${to} ms`;
 }
 
 /** The latency a load added, signed by its rounded figure, so a tiny reduction reads +0.0 and a real one takes "−". */

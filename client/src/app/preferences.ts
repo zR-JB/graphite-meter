@@ -1,5 +1,4 @@
-// The browser's own settings in localStorage "graphite-meter:v1": the next test's settings and display preferences.
-// The key and its shape are shared with the pre-paint script and the sign-in pages.
+// Browser settings in localStorage, a key and shape shared with the pre-paint script and the sign-in pages.
 import { STORAGE_KEY } from "../../auth/theme";
 import { normalizeStreamCount } from "../engine/net/streams";
 import { CADENCE_MS, type PingCadence, type TestConfig } from "../engine/types";
@@ -163,9 +162,8 @@ function read(storage: Storage | null): unknown {
   }
 }
 
-/** Loads the preferences, saves changes once edits pause and before the page goes, and follows the History
-    choices other tabs make. A save rewrites only the fields this tab changed over what is stored, read afresh, so two
-    tabs keep each other's changes to other fields (the test settings are one field); loading writes nothing. */
+/** Loads, saves and follows other tabs' History choices; a save rewrites only this tab's changed fields over a fresh
+    read, so tabs keep each other's changes. */
 export function createPreferences(
   storage: Storage | null,
   target: Pick<Window, "addEventListener" | "removeEventListener">,

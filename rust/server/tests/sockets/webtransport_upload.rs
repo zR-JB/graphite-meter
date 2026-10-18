@@ -1,5 +1,4 @@
-//! Tests WebTransport uploads, with client streams and datagrams into one aggregate beside HTTP, the progress feed on
-//! a server stream and receive credit.
+//! WebTransport uploads: streams and datagrams into one aggregate beside HTTP, the feed and receive credit.
 
 use super::{
     http3::{Connection, H3, transport},

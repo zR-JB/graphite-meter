@@ -1,6 +1,4 @@
-// One stage's lanes per server and direction, from one model of each HTTP/1.1 origin's browser connection pool:
-// control requests reserve connections by name, lanes share the rest, and the lanes the pool can run are the lanes
-// that must deliver before the stage is ready.
+// One stage's lanes per server and direction, from a model of each HTTP/1.1 origin's browser connection pool.
 import { activities, type Activity } from "../run/schedule";
 import type { Direction, FetchTarget, HttpProtocol, LatencyTarget, TestConfig, ThroughputTarget } from "../types";
 
@@ -60,9 +58,8 @@ function deal(available: number, ceilings: readonly number[]): number[] {
   return dealt;
 }
 
-/** Lanes per server and direction for one stage. Each HTTP/1.1 origin's pool (unproven negotiated HTTP counts as
-    HTTP/1.1) is dealt among its lanes, refusing a stage where some lane would get no connection; Automatic opens what
-    is dealt, forced counts open exactly and only the lanes their pool can run gate readiness. */
+/** Deals each HTTP/1.1 origin's pool (unproven HTTP counts) among its lanes, refusing a stage that leaves a lane none;
+    only lanes the pool can run gate readiness. */
 export function planStreams(servers: readonly PlanServer[], activity: Activity, policy: StreamPolicy): StreamPlan {
   const count = normalizeStreamCount(policy.count);
   const forced = policy.mode === "forced";

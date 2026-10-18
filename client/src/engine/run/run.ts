@@ -1,6 +1,4 @@
-// One run: a stage schedule over one to four servers (docs/MEASUREMENTS.md). It opens each server's resources stage
-// by stage, folds their evidence into the throughput aggregate and the latency populations, judges silence, stalls
-// and dropouts, finishes stable stages early, reshapes the timeline on live changes, and reduces it all to a result.
+// One run: a stage schedule over one to four servers (docs/MEASUREMENTS.md), reduced to a result.
 import { safeDetail } from "../../protocol/documents";
 import type { FailureReason } from "../../protocol/reasons";
 import {

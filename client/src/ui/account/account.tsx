@@ -1,5 +1,4 @@
-// Who is signed in, and the two ways out: this session, or every session after a confirmation. Rendered only once
-// the session answers; without it the meter works on, and the run reports a lost sign-in itself.
+// Who is signed in, and signing out of this session or all; without a session the meter works on.
 import "./account.css";
 import type { App } from "../../app/app";
 import { csrfHeaders, type Account } from "../../engine/net/page";

@@ -1,6 +1,4 @@
-// Holds per-server credentials, which are none, the page's own sign-in, or a measurement grant a peer approved. The
-// requests they authorize stay on the server's allowed destinations, a grant only on its issuer's HTTPS hostname and
-// never in a URL. A grant ends by the monotonic clock or the wall clock, whichever runs out first.
+// Per-server credentials; a grant goes only to its issuer's HTTPS host, never in a URL, and expires on either clock.
 import { grant as grantDocument, readJSON, release, signInMarker, type CatalogEntry } from "../../protocol/documents";
 import { AUTH_ROUTES, ROUTES } from "../../protocol/routes";
 import { delay } from "../run/clock";
@@ -168,9 +166,8 @@ const MAX_GRANT_MS = 8 * 3_600_000;
 const POLL_MS = 1_000;
 const EXCHANGE_TIMEOUT_MS = 5_000;
 
-/** Polls the peer's verifier-bound exchange until the user approves, within the approval's lifetime. A network
-    failure, a slow answer or a failing hop is retried in the next round, which the server answers with the grant it
-    already issued. A refusal is final. */
+/** Polls the verifier-bound exchange until the user approves; failures retry next round, which answers the grant
+    already issued, and a refusal is final. */
 export async function exchangeGrant(
   entry: CatalogEntry,
   verifier: string,

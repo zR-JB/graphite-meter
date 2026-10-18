@@ -839,7 +839,7 @@
     }
   }
 
-  /* The run key over the chips, both as wide as the chip row: as many chips to a line as fit, 140–172 px each. */
+  /* The run key over the chips, both as wide as the chip row: as many chips to a line as fit, 140 to 172 px each. */
   .stage-track {
     container: track / inline-size;
     display: grid;
@@ -1544,6 +1544,7 @@
   .phase-toast {
     position: fixed;
     right: var(--space-4);
+    /* biome-ignore lint/suspicious/noDuplicateProperties: the line above is the fallback without anchor positioning */
     right: calc(anchor(--stage right) + var(--space-4));
     bottom: 40px;
     z-index: var(--z-toast);

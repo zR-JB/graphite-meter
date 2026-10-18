@@ -1,5 +1,4 @@
-// Decodes the control documents the servers answer (api/discovery.md). They are small JSON bodies, read with a 64 KiB
-// bound and decoded strictly before anything acts on them.
+// Decodes the servers' control documents (api/discovery.md), bounded to 64 KiB and strict before anything acts.
 import { array, DecodeError, integer, object, oneOf, string, type Decoded, type Decoder } from "../lib/decode";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -42,8 +41,7 @@ export async function readJSON(response: Response, maxBytes = MAX_BODY_BYTES): P
   }
 }
 
-// Controls and direction formatting could disguise a server's displayed identity. The set matches
-// rust/proto/src/text.rs.
+// Controls and direction marks could disguise a server's identity; the set matches rust/proto/src/text.rs.
 const UNSAFE_TEXT = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
 /** Text a view shows is bounded, and refused when it carries controls or direction overrides. */
@@ -183,7 +181,7 @@ export interface Catalog {
   defaultSelection: string[];
 }
 
-/** The originating server's catalog holds `self` first, unique IDs and origins, and 1–4 default IDs. Any violation
+/** The originating server's catalog holds `self` first, unique IDs and origins, and 1 to 4 default IDs. Any violation
     refuses the whole document. */
 export function catalog(value: unknown, pageOrigin: string): Catalog {
   const document = object({

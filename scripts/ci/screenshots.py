@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Record and check which release and which sources the README screenshots show (docs/assets/screenshots.json).
+"""Record and check which release and which sources the README screenshots show (docs/assets/screenshots.json),
+and keep the README captions naming that release.
 
     python3 scripts/ci/screenshots.py stamp TAG
     python3 scripts/ci/screenshots.py check TAG
@@ -8,6 +9,7 @@
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +17,8 @@ from pathlib import Path
 from workspace import ROOT, VERSION
 
 RECORD = Path("docs/assets/screenshots.json")
+README = Path("README.md")
+CAPTION = re.compile(r"(?m)^(<sub>(?:Browser app|Terminal client) )(\S+) ")
 # What draws the images: the browser app and its build, the terminal client, the pipeline and its harness.
 SOURCES = ("client/src", "client/public", "client/index.html", "client/build.ts", "client/bundle.ts", "client/auth",
            "client/e2e/fleet.ts", "client/e2e/webview.ts", "client/e2e/servers.ts", "client/scripts", "rust/client/src",
@@ -42,6 +46,8 @@ def version_of(tag: str) -> str:
 def stamp(tag: str, root: Path = ROOT) -> None:
     record = {"version": version_of(tag), "ui_hash": ui_hash(root)}
     (root / RECORD).write_text(json.dumps(record, indent=2) + "\n")
+    readme = root / README
+    readme.write_text(CAPTION.sub(rf"\g<1>{record['version']} ", readme.read_text()))
 
 
 def stale(tag: str, root: Path = ROOT) -> str | None:
@@ -52,6 +58,8 @@ def stale(tag: str, root: Path = ROOT) -> str | None:
         record = {}
     if record != {"version": version_of(tag), "ui_hash": ui_hash(root)}:
         return f"Screenshots are stale: run mise run screenshots {tag} and merge it before releasing"
+    if captions := {match[2] for match in CAPTION.finditer((root / README).read_text())} - {record["version"]}:
+        return f"README captions name {', '.join(sorted(captions))}: run mise run screenshots {tag}"
     return None
 
 

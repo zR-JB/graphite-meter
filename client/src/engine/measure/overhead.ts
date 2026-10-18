@@ -1,5 +1,4 @@
-// Estimates the wire rate (docs/MEASUREMENTS.md) as payload throughput times a modeled protocol overhead at a
-// 1,500 B MTU. The terminal client shares its multipliers (api/wirerate.testvectors.json).
+// The wire rate at a 1,500 B MTU (docs/MEASUREMENTS.md); shares api/wirerate.testvectors.json with the terminal.
 
 type Framing = "http3-data" | "webtransport-stream" | "webtransport-datagram";
 type WireTransport = "http1-clear" | "https-tls" | "http2" | "http3-quic";

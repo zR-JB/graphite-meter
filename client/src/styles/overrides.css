@@ -55,8 +55,7 @@
   }
 }
 
-/* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint; a loop runs
-   only while the thing it describes is live. Reduced motion lands every one at its end state (base.css). */
+/* The motion vocabulary: compositor-only moves, loops only while live, end states under reduced motion (base.css). */
 /* A mark that confirms something (a check, a result's bead) pops in on the spring. */
 @keyframes pop {
   from {

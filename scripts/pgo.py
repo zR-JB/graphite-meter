@@ -2,10 +2,8 @@
 
     python3 -m scripts.pgo TARGET [--profile {ci,release}] [--runner COMMAND]
 
-Builds the server and the TUI for TARGET, a shipped target, instrumented; runs them through every listener in both
-directions and a loaded WebTransport latency stage; and merges what they recorded into the profile that reviewed builds
-of TARGET's architecture use (scripts/legal/rust.py). RUNNER runs the binaries, such as an emulator for another
-architecture. The instrumented binaries are never shipped.
+Runs instrumented server and TUI builds for TARGET through every listener and merges the profile that reviewed builds
+of its architecture use. RUNNER runs the binaries, such as an emulator; instrumented binaries are never shipped.
 """
 
 import argparse

@@ -3,7 +3,7 @@ import { resolveDocks } from "./layout";
 
 const both = { left: true, right: true };
 
-test("docks keep their preference within 360–720 px while the stage keeps 800 px", () => {
+test("docks keep their preference within 360 to 720 px while the stage keeps 800 px", () => {
   expect(resolveDocks(1_200, { left: 420, right: 0 }, { left: true, right: false }).left).toEqual({
     column: 400,
     max: 400,

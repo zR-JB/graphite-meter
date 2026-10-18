@@ -1,9 +1,5 @@
 //! Log lines with a time, level, topic and source, and limits for lines peers or load can repeat.
-//!
-//! A message states what happened, then after `: ` its detail, then after `; ` what to do or what happens next:
-//! `certificate renewal rejected: <error>; keeping the current certificate`. It starts lowercase, has no full stop and
-//! uses one word for one meaning: `failed` (an operation did not complete), `refused` (the server declined),
-//! `unavailable` (a dependency did not answer), `missing`, `ready`.
+//! Messages read `what happened: detail; what next`, lowercase, no full stop, and keep one word per meaning.
 
 use jiff::{Timestamp, tz::TimeZone};
 use std::{

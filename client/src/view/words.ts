@@ -1,6 +1,4 @@
-// The words the views share, one per concept: stages and their state in the shown run, outcomes, run phases and the
-// run key, failure reasons, latency populations, paths, transports, HTTP versions, readiness, connectivity, servers,
-// themes, starting over and the explainers, with tones.
+// The words the views share, one per concept, with tones.
 import { HISTORY_LIMIT } from "../app/history/records";
 import type { Theme } from "../app/preferences";
 import { PEAK_WINDOW_MS } from "../engine/measure/aggregate";
@@ -127,9 +125,7 @@ export interface StageFacts {
   ended: "complete" | "stopped" | "error" | null;
 }
 
-/** The plan decides first, then a settled status; a stall reads Recovering, in warmup too. A stopped or failed run
-    leaves the stage it was in stopped or failed, and any other stage it never settled unreached. Checking paths
-    before the first stage is not that stage yet. */
+/** A stage's state: planned, then settled; a stall reads Recovering, an ended run leaves unsettled stages unreached. */
 export function stageState({ planned, settled, phase, stalled, ended }: StageFacts): StageState {
   if (!planned || settled === "not-run") return "skipped";
   if (settled) return settled;

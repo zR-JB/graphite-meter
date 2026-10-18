@@ -210,7 +210,7 @@ impl App {
                 help.push_str(&format!(" ←→ picks one of {kind}."));
             }
             Row::Protocol if self.fixed_protocol().is_some() => {
-                help = "Fixed by this path; pick another path to change it.".into()
+                help = "Fixed by this path; pick another path to change it.".into();
             }
             Row::Servers => help.push_str(&format!(" Enter picks up to {MAX_SELECTED}.")),
             Row::Stage(_) => help.push_str(" ←→ steps its time; Space switches it."),

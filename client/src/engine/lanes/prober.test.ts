@@ -33,8 +33,8 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
         if (kind === "unconfirmed") return new Promise<void>(() => {});
         if (typeof kind === "object") {
           replies.push({ id, at: clock.now + kind.reply });
-          // The clock settles this thenable in step with replies and timers.
           return {
+            // biome-ignore lint/suspicious/noThenProperty: the clock settles this thenable in step with replies and timers
             then: (confirm: () => void) => void confirms.push({ at: clock.now + kind.confirmed, confirm }),
           } as unknown as Promise<void>;
         }

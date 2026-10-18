@@ -1,5 +1,4 @@
-//! The binary without the interface against canned peers: a protected server, and a run whose server refuses its
-//! download.
+//! The binary without the interface against canned peers.
 #![cfg(unix)]
 
 use std::{process::Stdio, time::Duration};

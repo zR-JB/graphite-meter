@@ -1,5 +1,4 @@
-// A path picker lists the role's choices on the selected servers, unavailable ones folded under one line, and the
-// line that states the role's check with what fixes it.
+// A path picker: the role's choices on the selected servers, unavailable ones folded, and the role's check.
 import type { App } from "../../app/app";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";

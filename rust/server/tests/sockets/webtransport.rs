@@ -1,5 +1,4 @@
-//! WebTransport sessions: datagram downloads, minimal credit, the idle ending and connections that carried only
-//! sessions.
+//! WebTransport sessions: datagram downloads, minimal credit, the idle ending and session-only connections.
 
 use super::{
     http3::{Connection, H3, pass, transport},

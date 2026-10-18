@@ -1,5 +1,4 @@
-//! The wire rate a payload rate takes: every layer's headers at a 1,500 B MTU, as the browser estimates it
-//! (`client/src/engine/measure/overhead.ts`, its central estimate).
+//! The wire rate a payload rate takes at a 1,500 B MTU, as `client/src/engine/measure/overhead.ts` estimates it.
 use crate::{model::StageResult, net::ThroughputPath, run::prepare::ServerPath};
 use graphite_meter_proto::{
     discovery::{IpFamily, Protocol, ThroughputTransport},

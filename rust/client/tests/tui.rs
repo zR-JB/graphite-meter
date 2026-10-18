@@ -27,7 +27,10 @@ use graphite_meter_proto::{
     origin::{BaseUrl, Origin},
     reason::FailureReason,
 };
-use ratatui_core::{buffer::Buffer, layout::Rect};
+use ratatui_core::{
+    buffer::{Buffer, Cell},
+    layout::Rect,
+};
 use std::{
     assert_matches,
     sync::Arc,
@@ -78,7 +81,7 @@ fn checked(effects: Vec<Effect>) -> Config {
 fn rows(app: &mut App, now: Instant) -> Vec<String> {
     let mut buffer = Buffer::empty(FULL);
     app.draw(&mut buffer, now);
-    let row = |cells: &[ratatui_core::buffer::Cell]| cells.iter().map(|cell| cell.symbol()).collect::<String>();
+    let row = |cells: &[Cell]| cells.iter().map(Cell::symbol).collect::<String>();
     buffer.content().chunks(usize::from(FULL.width)).map(row).collect()
 }
 
@@ -421,7 +424,7 @@ fn idle_latency_fills_its_lane_live_from_the_replies() {
         .find(|row| row.contains("≈ Idle"))
         .unwrap();
     assert!(lane.contains("19.5 ms") && lane.contains("4.8%"), "{lane:?}");
-    assert!(shows(&mut app, later, "Range 10.0–29.0 ms") && shows(&mut app, later, "Replies 20"));
+    assert!(shows(&mut app, later, "Range 10.0 to 29.0 ms") && shows(&mut app, later, "Replies 20"));
     assert!(shows(&mut app, later, "1 timeout in a row"), "the dial notes the streak");
 }
 

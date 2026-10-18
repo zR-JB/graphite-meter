@@ -1,5 +1,4 @@
-// The console body: dial, lanes, run key, chips and cards. Its width classes come from its measured box, as a size
-// container would restyle the whole instrument on every frame that changes a figure.
+// The console body; width classes come from its measured box, as a size container would restyle every frame.
 import type { App } from "../../app/app";
 import { Show } from "../../lib/dom";
 import { computed, effect } from "../../lib/signal";

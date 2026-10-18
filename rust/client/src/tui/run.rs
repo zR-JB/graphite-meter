@@ -28,7 +28,7 @@ pub struct Live {
     /// Scales the dial while idle latency is measured, in milliseconds. It only grows during a run.
     pub rtt_scale: f64,
     pub pick: Option<ServerId>,
-    /// Records where the needle stands, 0–1 of the sweep, and when it last moved.
+    /// Records where the needle stands, 0 to 1 of the sweep, and when it last moved.
     needle: Cell<(f64, Option<Instant>)>,
     /// Records when the result began to sweep in, and from where.
     sweep: Option<(Instant, f64)>,
@@ -113,7 +113,7 @@ impl Live {
         }
     }
 
-    /// Moves the needle at `now` on its way to `to`, 0–1 of the sweep.
+    /// Moves the needle at `now` on its way to `to`, 0 to 1 of the sweep.
     pub fn needle(&self, to: f64, now: Instant) -> f64 {
         let to = to.clamp(0.0, 1.0);
         let (at, then) = self.needle.get();

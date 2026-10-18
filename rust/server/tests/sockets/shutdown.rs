@@ -1,5 +1,4 @@
-//! Tests every listener at once. A stop closes them all, ends the running work of each transport with its shutdown
-//! ending, and the server returns once their connections drained.
+//! A stop closes every listener, ends each transport's work with its shutdown ending and waits for drains.
 
 use super::{
     http3::{H3, pass, read, transport},

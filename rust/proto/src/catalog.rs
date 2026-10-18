@@ -15,7 +15,7 @@ pub const MAX_SELECTED: usize = 4;
 /// An entry names at most this many additional origins.
 const MAX_ADDITIONAL_ORIGINS: usize = 32;
 
-/// A catalog server ID: 1–64 ASCII letters, digits, `.`, `_` or `-`; clones share the text.
+/// A catalog server ID: 1 to 64 ASCII letters, digits, `.`, `_` or `-`; clones share the text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ServerId(Arc<str>);
 

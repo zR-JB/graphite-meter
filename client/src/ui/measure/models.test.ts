@@ -140,7 +140,7 @@ test("a card keeps the same facts from Start to its result, and a one-direction 
     true,
   );
   expect([latency.figure, latency.unit, latency.jitter]).toEqual(["12.3", "ms", "0.8 ms"]);
-  expect(facts(latency)).toEqual(["stability 93.6%", "range 8.6–61.2 ms", "replies 38", "timeouts 5.0%"]);
+  expect(facts(latency)).toEqual(["stability 93.6%", "range 8.6 to 61.2 ms", "replies 38", "timeouts 5.0%"]);
 });
 
 test("a running card follows its own stage only, says when replies stop, and a stopped one keeps its last value", () => {

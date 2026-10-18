@@ -16,7 +16,7 @@ pub struct Identity {
 
 /// The certificate is valid from the start of last year to the end of next year.
 fn params(names: &[&str], common_name: &str, ca: bool) -> Result<CertificateParams, Error> {
-    let mut params = CertificateParams::new(names.iter().map(|name| name.to_string()).collect::<Vec<_>>())?;
+    let mut params = CertificateParams::new(names.iter().map(ToString::to_string).collect::<Vec<_>>())?;
     params.distinguished_name.push(DnType::CommonName, common_name);
     let year = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() / 31_556_952 + 1970;
     let year = i32::try_from(year)?;

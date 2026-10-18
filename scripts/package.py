@@ -2,11 +2,8 @@
 
     python3 -m scripts.package VERSION [--profile {ci,release}] [--platform P] [--output DIR] [--check]
 
-Builds the client with reviewed notices for every TUI platform of rust/Cargo.toml's workspace metadata, or one. It runs in
-the pinned builder image (container/Dockerfile), which provides the toolchain and the cross compilers; a build for
-the builder's own system and architecture is run to check its version and allocator setting. Archives are
-reproducible: fixed times, owners and modes. --check builds nothing: it runs the client built for this machine out
-of its archive in DIR; scripts/ci/assets.py verifies every archive and the source offer as a release does.
+Builds reproducible archives for every TUI platform, or one, in the pinned builder image (container/Dockerfile).
+--check builds nothing: it runs this machine's client out of its archive in DIR.
 """
 
 import argparse

@@ -1,5 +1,4 @@
-// The Test servers checklist and what stands in its way: a catalog that did not load, a saved selection that
-// changed, and each selected server's problem with its Retry or Sign in.
+// The Test servers checklist and what stands in its way, with each server's Retry or Sign in.
 import type { App } from "../../app/app";
 import type { Approval } from "../../engine/net/servers";
 import { MAX_SELECTED } from "../../engine/types";
