@@ -17,7 +17,7 @@ platform-record = "legal/rust-platform-debian-trixie.json"
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.99.0"
+rust-version = "1.99.1"
 license = "AGPL-3.0-or-later"
 publish = false
 
