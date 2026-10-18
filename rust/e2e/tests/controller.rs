@@ -1,5 +1,4 @@
-//! Drives the server through the controller, covering the sign-ins a protected server asks for where none can
-//! happen.
+//! Drives the server through the controller, including sign-ins a protected server asks for where none can happen.
 use graphite_meter_client::{
     config::Config,
     controller::{Command, Controller, SIGN_IN},
@@ -15,7 +14,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 const HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
 const LIMIT: Duration = Duration::from_secs(20);
 
-/// Configures a one-second latency run at `url` without warmup.
 fn config(url: &Origin, args: &[&str]) -> Config {
     let url = url.to_string();
     e2e::config(

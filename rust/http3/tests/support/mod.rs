@@ -46,8 +46,7 @@ impl noq::SharedBudget for Budget {
     }
 }
 
-/// Sets how the peers connect, from the server budget's limit and the client's receive windows, unidirectional
-/// stream limit and reliable reset offer, to the SETTINGS a raw client sends, if it is raw.
+/// How the peers connect: server budget, client windows, stream limit, reliable reset, and a raw client's SETTINGS.
 #[derive(Clone, Copy)]
 pub struct Setup {
     pub limit: usize,
@@ -149,7 +148,6 @@ pub struct Served<T = ()> {
 }
 
 impl Peers {
-    /// Serves each request on its own task until the connection closes.
     pub fn serve<F, H>(self, handler: H) -> Served
     where
         H: Fn(http::Request<()>, RequestStream) -> F + Send + Sync + 'static,
@@ -207,14 +205,12 @@ impl Peers {
         ))
     }
 
-    /// Opens a raw client request stream that has sent `bytes`.
     pub async fn bi(&self, bytes: &[u8]) -> Result<(noq::SendStream, noq::RecvStream), TestError> {
         let (mut send, recv) = self.client.open_bi().await?;
         send.write_all(bytes).await?;
         Ok((send, recv))
     }
 
-    /// Sends a raw GET and waits for the full answer.
     pub async fn get(&self) -> Result<(), TestError> {
         let (mut send, mut recv) = self.bi(&request_head(&[])).await?;
         send.finish()?;
@@ -252,7 +248,6 @@ where
     }
 }
 
-/// Answers with an empty 200.
 pub async fn respond(_: http::Request<()>, stream: RequestStream) {
     let mut send = stream.split().0;
     send.send_response(http::Response::new(())).await.unwrap();
@@ -264,7 +259,6 @@ pub fn client(peers: &Peers) -> (Task, client::SendRequest) {
     (tokio::spawn(async move { driver.drive().await }), requests)
 }
 
-/// Opens our client's session at /wt, which the server accepts.
 pub async fn accepted(requests: &client::SendRequest) -> Result<Session, TestError> {
     Ok(Session::connect(requests, get("/wt"))
         .await?
@@ -306,7 +300,6 @@ pub async fn charged(budget: &Budget, above: usize) -> usize {
         .expect("the layer charges the budget")
 }
 
-/// Waits for every layer charge to be refunded.
 pub async fn settled(budget: &Budget) {
     let refunded = async {
         while budget.used.load(Ordering::Relaxed) != 0 {
@@ -405,7 +398,6 @@ pub fn close_capsule(code: u32, reason: &str) -> Vec<u8> {
     )
 }
 
-/// Builds a control stream's type, then SETTINGS of `pairs`.
 pub fn control(pairs: &[(u64, u64)]) -> Vec<u8> {
     let payload: Vec<u8> = pairs
         .iter()
@@ -449,7 +441,6 @@ pub async fn stopped(send: &noq::SendStream) -> Option<Code> {
         .map(Code::from)
 }
 
-/// Reports whether STOP_SENDING has already arrived for a raw stream.
 pub async fn stopped_yet(send: &noq::SendStream) -> bool {
     yields().await;
     std::future::poll_fn(|cx| Poll::Ready(std::pin::pin!(send.stopped()).poll(cx).is_ready())).await
@@ -464,7 +455,6 @@ pub fn closed(code: Code) -> Error {
     }
 }
 
-/// Waits up to 5 s for the code a connection closed with.
 pub async fn closed_with(quic: &noq::Connection) -> Code {
     match tokio::time::timeout(Duration::from_secs(5), quic.closed()).await {
         Ok(noq::ConnectionError::ApplicationClosed(close)) => close.error_code.into(),

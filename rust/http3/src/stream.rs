@@ -17,7 +17,6 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
-/// A request stream, from [`crate::server::Request::resolve`] or [`crate::client::SendRequest::send_request`].
 pub struct RequestStream {
     pub(crate) send: SendHalf,
     pub(crate) recv: RecvHalf,
@@ -34,7 +33,6 @@ pub(crate) fn charges(budget: &Budget) -> Option<(Charge, Charge)> {
     ))
 }
 
-/// Writes what remains of `header`.
 pub(crate) fn poll_write_header(
     header: &mut Header,
     stream: &mut noq::SendStream,
@@ -89,7 +87,6 @@ impl RequestStream {
         self.send.stream.id().into()
     }
 
-    /// Answers `code` in both directions.
     pub(crate) fn abort(&mut self, code: Code) -> Error {
         self.recv.stop(code);
         self.send.reset(code);
@@ -113,7 +110,6 @@ pub struct RecvHalf {
     charge: Charge,
     /// The client's request method: a HEAD response has no body, and a successful CONNECT one no length.
     pub(crate) method: http::Method,
-    /// FIN arrived, or the stream was stopped.
     done: bool,
     /// Wire bytes the peer may still send, beyond which the stream is H3_EXCESSIVE_LOAD.
     pub(crate) left: u64,
@@ -146,7 +142,6 @@ impl RecvHalf {
         }
     }
 
-    /// The next DATA payload, or `None` once the message is complete.
     pub async fn data(&mut self) -> Result<Option<Bytes>, Error> {
         poll_fn(|cx| self.poll_data(cx)).await
     }
@@ -234,7 +229,6 @@ impl RecvHalf {
         Error::Protocol(code)
     }
 
-    /// Whether FIN already arrived unread, after a complete message.
     fn finished_unread(&mut self) -> bool {
         let mut cx = Context::from_waker(Waker::noop());
         let complete =
@@ -269,7 +263,6 @@ pub struct SendHalf {
     end: End,
 }
 
-/// How a send half ended: open still, finished with FIN, or cut short by a reset or a failed write.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum End {
     Open,
@@ -278,7 +271,6 @@ enum End {
 }
 
 impl SendHalf {
-    /// Writes whatever frame is pending.
     pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         ready!(poll_write_header(&mut self.header, &mut self.stream, cx))?;
         while !self.payload.is_empty() {

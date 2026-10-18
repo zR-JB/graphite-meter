@@ -3,7 +3,6 @@ use graphite_meter_testkit::Identity;
 use rustls::CertificateError::{Expired, ExpiredContext};
 use std::time::Duration;
 
-/// Wraps a scratch directory whose paths tests pass around as text.
 struct Scratch(graphite_meter_testkit::Scratch);
 
 impl Scratch {

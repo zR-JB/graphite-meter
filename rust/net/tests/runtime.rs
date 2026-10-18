@@ -37,7 +37,6 @@ async fn a_current_thread_runtime_is_refused_and_an_inline_pool_serves_on_the_ca
     assert_eq!(thread_of(pool.next()).await, caller);
 }
 
-/// Reads the calling thread's nice value from Linux's `/proc`.
 #[cfg(target_os = "linux")]
 fn nice() -> i64 {
     let stat = std::fs::read_to_string("/proc/thread-self/stat").unwrap();

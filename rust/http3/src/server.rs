@@ -37,7 +37,6 @@ impl Connection {
     }
 }
 
-/// A request whose head has not been read.
 pub struct Request(RequestStream);
 
 impl Request {
@@ -57,7 +56,6 @@ impl Request {
     }
 }
 
-/// Reads the head into a request, or answers its refusal.
 async fn head(stream: &mut RequestStream) -> Result<http::Request<()>, Error> {
     let invalid = match poll_fn(|cx| stream.recv.poll_head(cx)).await {
         Ok(section) => match fields::decode_request(&section, stream.shared().field_limit()) {

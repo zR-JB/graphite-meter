@@ -14,11 +14,8 @@ use std::{
 /// A server serves the browser's notice at this path from the report's suffix.
 pub const BROWSER_NOTICE: &str = "legal/THIRD_PARTY_NOTICES.txt";
 
-/// Holds the notices a build embedded.
 pub struct Notices {
-    /// Holds the zlib-compressed report and its length.
     payload: Option<(&'static [u8], usize)>,
-    /// The browser's notice starts here in the report.
     browser: Option<usize>,
     /// The build's plain marker is a development build's, a reviewed build's with its report's SHA-256, or nothing.
     marker: &'static str,
@@ -58,7 +55,6 @@ impl Notices {
         Some(report)
     }
 
-    /// Returns the browser's notice in a server build that embeds the browser app.
     pub fn browser(&self) -> Option<&[u8]> {
         let start = self.browser?;
         Some(&self.report()?[start..])

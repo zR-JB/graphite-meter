@@ -7,7 +7,6 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-/// The longest origin text a contract accepts.
 const MAX_ORIGIN_BYTES: usize = 2048;
 
 table! {
@@ -156,7 +155,6 @@ impl BaseUrl {
         }
     }
 
-    /// The origin this names, given the origin that served the document.
     pub fn resolve<'a>(&'a self, served: &'a Origin) -> &'a Origin {
         match self {
             Self::Served => served,

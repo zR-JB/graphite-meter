@@ -3,25 +3,20 @@
 use crate::text::{clean, quote};
 use std::{ffi::OsString, iter};
 
-/// Holds one row of a binary's option table.
 pub struct Flag<T> {
     /// Stays empty for a row only the environment sets.
     pub name: &'static str,
     /// Stands in for the value in usage. It is empty for a switch, which its name alone turns on.
     pub value: &'static str,
     pub usage: &'static str,
-    /// This environment variable sets the same value.
     pub env: Option<&'static str>,
-    /// Applies a value, or tells why it is refused.
     pub set: fn(&mut T, &str) -> Result<(), String>,
     /// Formats the value as usage shows a default. Empty shows none.
     pub show: fn(&T) -> String,
 }
 
-/// Says what follows the options on a command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
-    /// `-h` or `--help` asked for the usage.
     Help,
     Arguments(Vec<OsString>),
 }
@@ -102,7 +97,6 @@ pub fn options<T>(flags: &[Flag<T>], defaults: &T) -> String {
     lines
 }
 
-/// Reads `true`, `false`, `1` or `0`, in any case.
 pub fn parse_bool(text: &str) -> Result<bool, &'static str> {
     match text {
         "1" => Ok(true),

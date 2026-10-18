@@ -65,7 +65,6 @@ impl Reader {
         Ok(None)
     }
 
-    /// Whether the stream may end here without truncating a capsule.
     pub(crate) fn at_boundary(&self) -> bool {
         self.frames.at_boundary()
     }
@@ -81,7 +80,6 @@ pub(crate) fn close(code: u32, reason: &str) -> Vec<u8> {
     capsule
 }
 
-/// Splits an HTTP datagram into its session and its payload.
 pub(crate) fn datagram(mut payload: Bytes) -> Result<(SessionId, Bytes), Code> {
     let (quarter, size) = varint::decode(&payload).ok_or(Code::H3_DATAGRAM_ERROR)?;
     let session = SessionId::from_quarter(quarter).ok_or(Code::H3_DATAGRAM_ERROR)?;
@@ -89,7 +87,6 @@ pub(crate) fn datagram(mut payload: Bytes) -> Result<(SessionId, Bytes), Code> {
     Ok((session, payload))
 }
 
-/// The prefix of every datagram in session `id`.
 pub(crate) fn datagram_prefix(id: SessionId) -> Vec<u8> {
     let mut prefix = Vec::with_capacity(8);
     varint::put(id.quarter(), &mut prefix);

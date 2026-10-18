@@ -4,7 +4,6 @@ use std::{
     net::{SocketAddr, UdpSocket},
 };
 
-/// The UDP buffer each QUIC socket asks for.
 const BUFFER_BYTES: usize = 7 << 20;
 /// The least each of several sockets on one address keeps: a single fast connection's headroom.
 const SHARED_BUFFER_FLOOR: usize = 2 << 20;

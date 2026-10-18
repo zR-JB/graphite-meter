@@ -16,7 +16,6 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-/// Completes an in-memory handshake and returns the suite it agreed on.
 fn handshake(
     client: Arc<ClientConfig>,
     server: &Identity,
@@ -46,7 +45,6 @@ fn untrusted(result: Result<rustls::CipherSuite, Error>) -> bool {
     matches!(result, Err(Error::InvalidCertificate(UnknownIssuer)))
 }
 
-/// Trusts only the roots of `file` and `directory`, as their variables would name them.
 fn trust(file: &Path, directory: &Path) -> Verify {
     let (file, directory) = (
         file.as_os_str().to_owned(),

@@ -4,7 +4,6 @@ mod table;
 
 use crate::code::Code;
 
-/// Why a field section was refused; a stream answers each differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Invalid {
     Qpack,
@@ -26,7 +25,6 @@ impl Invalid {
     }
 }
 
-/// Calls `field` for each line of an encoded field section, in order.
 pub(crate) fn decode(
     section: &[u8],
     mut field: impl FnMut(&[u8], &[u8]) -> Result<(), Invalid>,
@@ -95,7 +93,6 @@ pub(crate) fn encoder_stream(input: &[u8]) -> Result<(), Code> {
 /// The peer's decoder stream (RFC 9204 §4.4), read in chunks: only Stream Cancellation fits a non-inserting encoder.
 #[derive(Default)]
 pub(crate) struct DecoderStream {
-    /// Within a Stream Cancellation's stream ID.
     continuing: bool,
 }
 

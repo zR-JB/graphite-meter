@@ -44,7 +44,6 @@ fn params(names: &[&str], common_name: &str, ca: bool) -> Result<CertificatePara
 const LOCAL: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 impl Identity {
-    /// Generates a CA and a server certificate it signed.
     pub fn generate() -> Result<Self, Error> {
         Self::signed(params(&LOCAL, "localhost", false)?)
     }
@@ -80,7 +79,6 @@ impl Identity {
             key: key.serialize_pem(),
         })
     }
-    /// Builds a TLS 1.3 server config presenting the leaf.
     pub fn server(&self, alpn: &[&[u8]]) -> rustls::ServerConfig {
         let chain =
             CertificateDer::pem_slice_iter(self.certificate.as_bytes()).collect::<Result<_, _>>();
@@ -95,7 +93,6 @@ impl Identity {
         config
     }
 
-    /// Builds a TLS 1.3 client config trusting only the CA.
     pub fn client(&self, alpn: &[&[u8]]) -> rustls::ClientConfig {
         let mut roots = rustls::RootCertStore::empty();
         roots

@@ -39,7 +39,6 @@ mod testing {
         [bytes, payload.to_vec()].concat()
     }
 
-    /// `fields` as our QPACK encodes them.
     pub fn section(fields: &[(&str, &str)]) -> Vec<u8> {
         let mut section = Vec::new();
         let fields = fields

@@ -10,9 +10,7 @@ pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
 const MAX_TARGETS: usize = 32;
 /// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
 const MAX_METADATA_BYTES: usize = 256;
-/// A server's stage limit unless its operator sets one.
 pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_mins(5);
-/// The stage limits a server may advertise.
 pub const STAGE_LIMITS: RangeInclusive<Duration> =
     Duration::from_secs(1)..=Duration::from_hours(24);
 
@@ -139,7 +137,6 @@ impl Preflight {
 }
 
 impl Capabilities {
-    /// The longest stage a client may plan against this server.
     pub fn stage_limit(&self) -> Duration {
         Duration::from_millis(self.max_stage_ms)
     }

@@ -1,5 +1,4 @@
-//! Whole runs against the server on pinned runtimes: every stage over each transport and a server that departs
-//! mid-stage.
+//! Whole runs on pinned runtimes: every stage over each transport, and a server that departs mid-stage.
 use graphite_meter_client::{
     config::Config,
     events::{Event, Events},
@@ -33,7 +32,6 @@ const SHORT: [&str; 11] = [
 /// The stages whose lanes differ by transport; the HTTP/1.1 run covers the rest once.
 const TRANSFERS: &str = "upload,bidirectional";
 
-/// `args` at `url` without warmup, two HTTP/1.1 lanes a direction.
 fn config(url: &Origin, args: &[&str]) -> Config {
     let url = url.to_string();
     e2e::config(&[&["-url", &url, "-warmup", "0s", "-auto-streams", "2"], args].concat())
@@ -97,7 +95,6 @@ fn results(events: &[Event]) -> Vec<&StageResult> {
     finished.collect()
 }
 
-/// A run of every stage, or of the `-stages` in `args`, completes with what each stage measures.
 async fn completes(server: &Server, args: &[&str]) {
     let args = [SHORT.as_slice(), args].concat();
     let config = config(&server.http1, &args);

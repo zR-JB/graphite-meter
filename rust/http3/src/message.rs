@@ -33,7 +33,6 @@ pub(crate) struct Message {
     /// A field section split across chunks; its capacity is the frame's declared length.
     section: Vec<u8>,
     limit: u64,
-    /// Body bytes the head's content-length still owes.
     pub(crate) owed: Option<u64>,
     /// A response, on which a server could interleave PUSH_PROMISE.
     response: bool,
@@ -180,7 +179,6 @@ impl Message {
         }
     }
 
-    /// Bytes of a field section being assembled across chunks.
     pub(crate) fn buffered(&self) -> usize {
         self.section.capacity()
     }

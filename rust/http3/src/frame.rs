@@ -93,7 +93,6 @@ impl Header {
         self.end
     }
 
-    /// The bytes not yet written.
     pub(crate) fn rest(&self) -> &[u8] {
         &self.bytes[usize::from(self.written)..usize::from(self.end)]
     }
@@ -107,7 +106,6 @@ impl Header {
     }
 }
 
-/// Reads two varints in sequence.
 #[derive(Default)]
 pub(crate) struct Pair {
     first: Option<u64>,
@@ -147,19 +145,13 @@ impl Pair {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Piece<K> {
-    Header {
-        kind: K,
-        length: u64,
-    },
-    /// Holds part of the current frame's payload, sliced from the input without copying.
+    Header { kind: K, length: u64 },
     Payload(Bytes),
 }
 
-/// Splits a stream into headers of `K`, frame or capsule types, and payload slices.
 #[derive(Default)]
 pub(crate) struct Reader<K> {
     header: Pair,
-    /// The current frame still owes this many payload bytes.
     pub(crate) remaining: u64,
     kind: PhantomData<K>,
 }
@@ -183,7 +175,6 @@ impl<K: Kind> Reader<K> {
         Some(Piece::Payload(input.split_to(take)))
     }
 
-    /// Reports whether the stream may end here without truncating a frame.
     pub(crate) fn at_boundary(&self) -> bool {
         self.remaining == 0 && self.header.is_empty()
     }

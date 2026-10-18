@@ -1,6 +1,5 @@
 //! Holds the QPACK static table (RFC 9204 Appendix A).
 
-/// An entry's index is its position.
 pub(super) const STATIC: [(&str, &str); 99] = [
     (":authority", ""),
     (":path", "/"),

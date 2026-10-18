@@ -24,7 +24,6 @@ table! {
 }
 
 impl LaneEnding {
-    /// Picks the refusal that answers an HTTP upload ending so.
     pub const fn upload_refusal(self) -> Option<UploadRefusal> {
         match self {
             Self::Idle => Some(UploadRefusal::Idle),

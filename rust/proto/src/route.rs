@@ -1,13 +1,11 @@
 //! The fixed routes the server mounts and the clients request (`api/routes.txt`).
 
 table! {
-    /// The transport that reaches a route.
     pub enum Kind {
         name.0: &'static str,
     } {
         Http => ("http",),
         WebSocket => ("ws",),
-        /// An HTTP/3 extended-CONNECT session.
         WebTransport => ("wt",),
     }
 }

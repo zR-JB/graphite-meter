@@ -5,9 +5,7 @@ use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// The peer reset the stream this side reads.
     Reset(Code),
-    /// The peer stopped the stream this side writes.
     Stopped(Code),
     /// The peer broke HTTP/3 on this stream, which the layer aborted with this code.
     Protocol(Code),
@@ -17,9 +15,7 @@ pub enum Error {
         code: Code,
         reason: Bytes,
     },
-    /// QUIC failed below HTTP/3.
     Transport(noq::ConnectionError),
-    /// A protocol deadline passed.
     TimedOut,
     /// The peer's SETTINGS do not enable WebTransport, so no session starts.
     NoWebTransport,
@@ -34,7 +30,6 @@ pub enum Error {
 }
 
 impl Error {
-    /// This side closed the connection with `code`.
     pub(crate) fn local(code: Code) -> Self {
         Self::Connection {
             local: true,

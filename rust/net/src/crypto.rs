@@ -47,7 +47,6 @@ pub fn aes_hardware() -> bool {
     }
 }
 
-/// Says how a client checks server certificates.
 #[derive(Clone, Debug)]
 pub enum Verify {
     /// The client checks against these roots, which their first configuration loads.

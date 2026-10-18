@@ -14,7 +14,6 @@ const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(30);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_PROBES: u32 = 9;
 
-/// The addresses `host` names, without a lookup for an IP address.
 pub(crate) async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
     match host {
         Host::Ip(ip) => Ok(vec![SocketAddr::new(*ip, port)]),

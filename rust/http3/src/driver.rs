@@ -56,26 +56,22 @@ impl Role {
     }
 }
 
-/// What a connection's streams and handles share with its driver.
 pub(crate) struct Shared {
     pub(crate) quic: noq::Connection,
     pub(crate) budget: Budget,
     pub(crate) role: Role,
     /// The peer's SETTINGS, once they arrived and agree with its transport parameters.
     pub(crate) peer: watch::Sender<Option<Peer>>,
-    /// Request stream halves alive.
     live: AtomicUsize,
     going_away: AtomicBool,
     /// A request other than a CONNECT arrived.
     pub(crate) served: AtomicBool,
-    /// The code this side closed the connection with.
     closed: OnceLock<Code>,
     wake: Notify,
     sessions: Mutex<Registry>,
 }
 
 impl Shared {
-    /// The largest field section this side accepts, as its SETTINGS say.
     pub(crate) fn field_limit(&self) -> u64 {
         match self.role {
             Role::Server => settings::SERVER_FIELD_SECTION,
@@ -89,7 +85,6 @@ impl Shared {
             .and_then(|peer| peer.max_field_section_size)
     }
 
-    /// Whether the server sent GOAWAY, after which this client starts nothing new.
     pub(crate) fn going_away(&self) -> bool {
         self.going_away.load(Ordering::Relaxed)
     }
@@ -130,7 +125,6 @@ impl Shared {
         }
     }
 
-    /// Takes what the peer's control stream says.
     fn control(&self, event: ControlEvent) -> Result<(), Code> {
         match event {
             ControlEvent::Settings(peer) => {
@@ -416,7 +410,6 @@ const FLOOR: u8 = 3;
 /// The peer's unidirectional streams: classified in time, then read as control or QPACK, or handed to WebTransport.
 struct Incoming {
     streams: Vec<PeerStream>,
-    /// Whether the peer opened its control, QPACK encoder and QPACK decoder streams.
     critical: [bool; 3],
     floor: u8,
 }
@@ -442,7 +435,6 @@ enum Kind {
     Session(SessionId),
 }
 
-/// What reading a stream came to.
 enum Read {
     Pending,
     Done,
@@ -498,7 +490,6 @@ impl Incoming {
         Poll::Pending
     }
 
-    /// Stops streams that did not declare their type in time.
     fn expire(&mut self, now: Instant) {
         self.streams.retain_mut(|peer| match peer.kind {
             Kind::Unknown { deadline, .. } if deadline <= now => {
@@ -589,7 +580,6 @@ fn classify(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ControlEvent {
     Settings(Peer),
-    /// The server's GOAWAY: no new request.
     Goaway,
 }
 
@@ -605,7 +595,6 @@ struct ControlReader {
 }
 
 impl ControlReader {
-    /// Reads `input` from `peer`, passing each event on. Errors carry the close code.
     fn read(
         &mut self,
         peer: Role,

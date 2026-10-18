@@ -28,7 +28,6 @@ impl Fields {
         }
     }
 
-    /// Pseudo-header fields precede all others.
     fn pseudo(&self) -> Result<(), Invalid> {
         if self.regular {
             Err(Invalid::Malformed)
@@ -205,7 +204,6 @@ pub(crate) fn check_trailers(section: &[u8], limit: u64) -> Result<(), Invalid> 
     })
 }
 
-/// Encodes a request head; `protocol` makes it an extended CONNECT.
 pub(crate) fn encode_request(
     request: &http::request::Parts,
     protocol: Option<&str>,

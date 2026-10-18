@@ -28,7 +28,6 @@ impl Connection {
 pub struct SendRequest(pub(crate) Arc<Shared>);
 
 impl SendRequest {
-    /// Whether the server sent GOAWAY, after which this connection takes no new request.
     pub fn going_away(&self) -> bool {
         self.0.going_away()
     }

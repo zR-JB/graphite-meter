@@ -25,9 +25,7 @@ use tokio::{
     time::Instant,
 };
 
-/// How long a server waits for its client's SETTINGS.
 const SETTINGS_WAIT: Duration = Duration::from_secs(5);
-/// How long the refusal of a CONNECT without a dialect may take to write.
 const REFUSAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// State a session keeps apart from its CONNECT stream: queue slots, the capsule reader and both sides' close reasons.
 const SESSION_BYTES: usize = size_of::<Session>()
@@ -76,7 +74,6 @@ impl SessionId {
         (id.is_multiple_of(4) && id <= varint::MAX).then_some(Self(id))
     }
 
-    /// The session a datagram's quarter stream ID names.
     pub(crate) fn from_quarter(quarter: u64) -> Option<Self> {
         Self::new(quarter.checked_mul(4)?)
     }
@@ -217,12 +214,10 @@ impl Session {
         })
     }
 
-    /// The next stream the peer opened in this session; `None` once the session ended.
     pub async fn accept_uni(&self) -> Option<RecvStream> {
         self.streams.lock().await.recv().await
     }
 
-    /// The next datagram in this session; `None` once the session ended.
     pub async fn read_datagram(&self) -> Option<Bytes> {
         self.datagrams.lock().await.recv().await
     }
@@ -262,7 +257,6 @@ impl Session {
         })
     }
 
-    /// Sends a datagram once the queue has room.
     pub async fn send_datagram_wait(&self, payload: &[u8]) -> Result<(), Error> {
         self.prepare_datagram(payload)?.send_wait().await
     }
@@ -329,7 +323,6 @@ const MAX_DEFERRED_RESETS: usize = 64;
 pub(crate) struct Sessions {
     connects: Vec<Connect>,
     resets: Vec<PendingReset>,
-    /// Whether the connection carried a session.
     pub(crate) carried: bool,
     /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended arrives first.
     pub(crate) linger: Option<Instant>,
@@ -513,7 +506,6 @@ impl Connect {
         Ok(())
     }
 
-    /// The first ending stands.
     pub(crate) fn end(&self, ending: Result<SessionClose, Error>) {
         self.phase.send_if_modified(|phase| {
             !phase.is_ended() && {
@@ -529,7 +521,6 @@ const MAX_EARLY: usize = 64;
 pub(super) const STREAM_QUEUE: usize = 32;
 pub(super) const DATAGRAM_QUEUE: usize = 256;
 
-/// A peer's session stream before it reaches its session.
 pub(crate) struct Unrouted {
     pub(crate) stream: noq::RecvStream,
     /// Bytes that followed the stream header in its first chunk.
@@ -549,7 +540,6 @@ pub(crate) struct Registry {
     early: VecDeque<(Instant, SessionId, Unrouted)>,
     /// Sessions at or below this ID have ended.
     gone_through: Option<SessionId>,
-    /// The close every session gets once the server shuts down.
     shutdown: Option<SessionClose>,
     /// CONNECT streams and cancelled streams the driver has yet to take.
     handed: (Vec<Connect>, Vec<PendingReset>),
@@ -598,7 +588,6 @@ impl Registry {
         }
     }
 
-    /// Refuses streams that waited too long for their session.
     pub(crate) fn expire(&mut self, now: Instant) {
         while let Some((_, _, stream)) = self.early.pop_front_if(|(deadline, ..)| *deadline <= now)
         {
@@ -697,7 +686,6 @@ impl Registry {
     }
 }
 
-/// How long a cancelled stream may take to deliver its association header.
 const RESET_DEADLINE: Duration = Duration::from_secs(10);
 
 /// A peer's stream in a session: noq's chunks as they arrived. Dropping it unread cancels the lane.
@@ -725,7 +713,6 @@ impl RecvStream {
         }
     }
 
-    /// The next chunk, `None` at the stream's end.
     pub async fn read_chunk(&mut self) -> Result<Option<Bytes>, Error> {
         let mut chunk = [Bytes::new()];
         let read = self.read_chunks(&mut chunk).await?;
@@ -798,7 +785,6 @@ impl SendStream {
         Ok(opened)
     }
 
-    /// The stream, refused once its session ended.
     fn stream(&mut self) -> Result<(&mut noq::SendStream, &watch::Receiver<Phase>), Error> {
         if self.session.borrow().is_ended() {
             return Err(Error::SessionEnded);

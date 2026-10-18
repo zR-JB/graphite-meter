@@ -61,7 +61,6 @@ fn latency(base_url: &str, transport: LatencyTransport) -> LatencyTarget {
     }
 }
 
-/// Builds the preflight `preflight.golden.json` describes.
 fn preflight() -> Preflight {
     let tls = "https://speed.example:7249";
     Preflight {
@@ -98,7 +97,6 @@ fn preflight() -> Preflight {
     }
 }
 
-/// Builds the probe `probe.golden.json` describes.
 fn probe() -> Probe {
     Probe {
         client_ip: "198.51.100.4".into(),

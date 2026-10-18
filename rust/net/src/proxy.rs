@@ -30,7 +30,6 @@ impl fmt::Display for UnusableProxy {
 
 impl std::error::Error for UnusableProxy {}
 
-/// A SOCKS5 username and password.
 pub(crate) type Login = (Vec<u8>, Vec<u8>);
 
 /// A request goes through this proxy. It prints without its credentials.
@@ -58,7 +57,6 @@ impl Upstream {
     }
 }
 
-/// Prints without credentials.
 impl fmt::Debug for Upstream {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -107,7 +105,6 @@ impl Proxy {
         }
     }
 
-    /// Picks the proxy `target` goes through, if any.
     pub fn route(&self, target: &Origin) -> Result<Option<&Upstream>, UnusableProxy> {
         let setting = match target.scheme {
             Scheme::Https => &self.https,
@@ -186,7 +183,6 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
     }
 }
 
-/// Tells whether a `host[:port]` authority writes a port.
 fn explicit_port(authority: &str) -> bool {
     let tail = authority
         .rsplit_once(']')

@@ -17,8 +17,7 @@ use tokio::{
 /// One loopback address spelled three ways: listeners must differ, and discovery advertises the asked host.
 const ADDRESSES: [&str; 3] = ["127.0.0.7:0", "127.0.7:0", "127.7:0"];
 
-/// The server on local ports, serving cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3 on the test's runtime until
-/// dropped.
+/// The server on local ports: cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3, until dropped.
 pub struct Server {
     pub http1: Origin,
     pub http2: Origin,
@@ -34,14 +33,12 @@ impl Server {
         Self::with(&[]).await
     }
 
-    /// The server with `settings` over the test configuration.
     pub async fn with(settings: &[(&str, &str)]) -> Self {
         Self::try_serve(settings, &Identity::generate().unwrap())
             .await
             .unwrap()
     }
 
-    /// The server with `settings` over the test configuration presenting `identity`, or why it could not bind.
     pub async fn try_serve(settings: &[(&str, &str)], identity: &Identity) -> Result<Self, String> {
         let scratch = Scratch::new().unwrap();
         let certificate = scratch.file("cert.pem", &identity.certificate).unwrap();
@@ -93,7 +90,6 @@ impl Server {
     }
 }
 
-/// The client's run settings for `args`.
 pub fn config(args: &[&str]) -> Config {
     match config::parse(args.iter().map(OsString::from)) {
         Ok(Parsed::Run(config)) => *config,

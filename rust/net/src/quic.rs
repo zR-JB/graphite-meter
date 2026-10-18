@@ -13,9 +13,7 @@ use std::{
 };
 use tokio::time::{Instant, timeout, timeout_at};
 
-/// The receive window autotuning grows each stream to.
 const STREAM_RECEIVE_WINDOW: u32 = 32 << 20;
-/// The receive window autotuning grows each connection to.
 pub const RECEIVE_WINDOW: u32 = 48 << 20;
 /// The first connection receive window, from which autotuning starts.
 pub const INITIAL_RECEIVE_WINDOW: u32 = 768 << 10;
@@ -26,7 +24,6 @@ pub const MIN_SEND_WINDOW: u64 = 2 << 20;
 /// The client's send window and the ceiling of the server's tuning.
 pub const MAX_SEND_WINDOW: u64 = 16 << 20;
 
-/// The unidirectional streams a client accepts from a server.
 const CLIENT_UNI_STREAMS: u32 = 36;
 /// The client's three HTTP/3 streams, the 16-lane WebTransport cap and four streams of credit headroom.
 const SERVER_UNI_STREAMS: u32 = 3 + 16 + 4;
@@ -78,8 +75,7 @@ const SILENT: Duration = Duration::from_secs(3);
 /// How long an answering address may take to finish the handshake.
 const ANSWERING: Duration = Duration::from_secs(5);
 
-/// A client connection to `host` with its own endpoint: each address in turn, IPv4 first, each given its share of the
-/// dial timeout as a TCP dial gives it; the last one's error if none connects.
+/// A client connection to `host` on its own endpoint: each address in turn, IPv4 first, each with its share of the dial timeout.
 pub async fn dial(
     host: &Host,
     port: u16,

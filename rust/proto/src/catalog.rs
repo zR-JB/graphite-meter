@@ -8,11 +8,8 @@ use crate::{
 use serde::{Deserialize, Serialize, de::Error as _};
 use std::{collections::HashSet, fmt, sync::Arc};
 
-/// A catalog holds at most this many servers, `self` included.
 const MAX_SERVERS: usize = 32;
-/// A selection holds at most this many servers.
 pub const MAX_SELECTED: usize = 4;
-/// An entry names at most this many additional origins.
 const MAX_ADDITIONAL_ORIGINS: usize = 32;
 
 /// A catalog server ID: 1 to 64 ASCII letters, digits, `.`, `_` or `-`; clones share the text.
@@ -71,7 +68,6 @@ pub struct ServerCatalog {
 }
 
 table! {
-    /// Why a catalog, or one entry of it, is invalid.
     pub enum CatalogError {
         message.0: &'static str,
     } {
@@ -92,14 +88,12 @@ impl fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
-/// A received entry left out, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejected {
     pub id: String,
     pub error: CatalogError,
 }
 
-/// A received catalog: its valid entries, and the entries left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Received {
     pub catalog: ServerCatalog,
@@ -107,7 +101,6 @@ pub struct Received {
 }
 
 impl ServerCatalog {
-    /// The catalog of a server configured without one.
     pub fn singleton() -> Self {
         let own = ServerEntry {
             id: ServerId::own(),
@@ -122,7 +115,6 @@ impl ServerCatalog {
         }
     }
 
-    /// Checks a catalog before a server publishes it.
     pub fn validate(&self) -> Result<(), CatalogError> {
         if !self
             .servers
@@ -199,7 +191,6 @@ impl ServerEntry {
         })
     }
 
-    /// This entry's faults, given the entries before it.
     fn check(&self, earlier: &[Self]) -> Result<(), CatalogError> {
         if !is_metadata(&self.name) || !is_metadata(&self.location) {
             return Err(CatalogError::Identity);

@@ -12,13 +12,11 @@ use std::{
 const DEVELOPMENT: &str = "UNREVIEWED DEVELOPMENT BUILD";
 /// Precedes the SHA-256 of a reviewed build's report in its executable, where release verification reads it.
 const REVIEWED: &str = "graphite-meter reviewed notices sha256:";
-/// A build embeds a report at most this long.
 const MAX_REPORT_BYTES: usize = 16 << 20;
 /// A reviewed legal directory's notices cover the browser build in this subdirectory.
 const BROWSER_ASSETS: &str = "browser-assets";
 
-/// Checks `GM_ENGINE_VERSION` and, if set, the reviewed notices in `GM_LEGAL_DIR`, then writes `legal.rs` to
-/// `OUT_DIR`. With `browser` the report must end with the browser's notice, and the covered browser build is returned.
+/// Checks `GM_ENGINE_VERSION` and any reviewed notices in `GM_LEGAL_DIR`, then writes `legal.rs`; `browser` returns the covered browser build.
 pub fn embed(browser: bool) -> Result<Option<PathBuf>, String> {
     for name in ["GM_ENGINE_VERSION", "GM_LEGAL_DIR"] {
         println!("cargo:rerun-if-env-changed={name}");
@@ -43,7 +41,6 @@ pub fn checkout() -> Result<PathBuf, String> {
     canonical(&Path::new(&package).join("../.."))
 }
 
-/// Resolves `path`, which must lie inside the resolved `root`.
 pub fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let resolved = canonical(path)?;
     match resolved.starts_with(root) {

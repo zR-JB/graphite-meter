@@ -2,7 +2,6 @@
 
 use serde::Serialize;
 
-/// A token or upload ID holds at most this many bytes.
 const MAX_TOKEN_BYTES: usize = 8192;
 
 /// Whether `token` can be a token or upload ID: nonempty and bounded.
@@ -18,7 +17,6 @@ pub struct SocketTicket {
 }
 
 impl SocketTicket {
-    /// The answer with authentication off.
     pub fn unauthenticated() -> Self {
         Self {
             token: String::new(),

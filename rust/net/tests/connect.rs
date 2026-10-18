@@ -25,7 +25,6 @@ async fn connect(connector: &Connector, target: &str) -> Result<Connection, Conn
         .await
 }
 
-/// A peer on a loopback port that runs `serve` on its one connection.
 async fn peer<F, T>(
     serve: impl FnOnce(TcpStream) -> F + Send + 'static,
 ) -> (SocketAddr, JoinHandle<T>)

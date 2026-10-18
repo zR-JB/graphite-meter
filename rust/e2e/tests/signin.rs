@@ -1,5 +1,4 @@
-//! Native sign-in against a password-mode server, by a client that trusts the server's CA alone: the operator's
-//! browser approves over HTTP and the run completes.
+//! Native sign-in against a password-mode server trusted by its CA alone: the operator's browser approves and the run completes.
 use graphite_meter_client::{
     config::Config,
     controller::{Command, Controller},
@@ -32,8 +31,7 @@ fn trusting(ca: &Path, directory: &Path) -> Verify {
     })))
 }
 
-/// A password-mode server whose public origin is its HTTPS HTTP/1.1 listener, on a port found free; another
-/// process may take that port before the server binds it, so a few ports are tried.
+/// A password-mode server on its HTTPS HTTP/1.1 listener; another process may take a free port first, so a few are tried.
 async fn protected(identity: &Identity) -> (Server, SocketAddr) {
     let mut failures = Vec::new();
     for _ in 0..8 {
@@ -57,7 +55,6 @@ async fn protected(identity: &Identity) -> (Server, SocketAddr) {
     panic!("no free port held: {failures:?}");
 }
 
-/// A check of a download run at `address` over verified TLS.
 fn config(address: SocketAddr) -> Config {
     let url = format!("https://{address}");
     e2e::config(&[
@@ -70,7 +67,6 @@ fn config(address: SocketAddr) -> Config {
     ])
 }
 
-/// The prompt an interactive check of `config` shows.
 async fn prompted(
     config: &Config,
     verify: Verify,
@@ -89,7 +85,6 @@ async fn prompted(
     (controller, received, prompt.clone())
 }
 
-/// Sends `request` over TLS to `address` and reads the answer to its end.
 async fn exchange(identity: &Identity, address: SocketAddr, request: &str) -> String {
     let connector = TlsConnector::from(Arc::new(identity.client(&[b"http/1.1"])));
     let stream = TcpStream::connect(address).await.unwrap();

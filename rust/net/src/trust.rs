@@ -56,7 +56,6 @@ impl Trust {
         }
     }
 
-    /// Shares the process's roots among every client that verifies against them.
     pub fn system() -> Arc<Self> {
         static SYSTEM: LazyLock<Arc<Trust>> =
             LazyLock::new(|| Arc::new(Trust::from_lookup(|name| std::env::var_os(name))));
@@ -89,7 +88,6 @@ pub(crate) async fn verifier(
         .cloned()
 }
 
-/// Builds a verifier that refuses every certificate for `reason`.
 pub(crate) fn refusing(reason: impl Error + Send + Sync + 'static) -> Arc<dyn ServerCertVerifier> {
     Arc::new(Verifier::Empty(Some(Arc::new(reason))))
 }
@@ -118,7 +116,6 @@ struct Locations {
 }
 
 impl Locations {
-    /// Takes `SSL_CERT_FILE`'s file and `SSL_CERT_DIR`'s path list.
     fn new(file: Option<OsString>, directories: Option<OsString>) -> Self {
         Self {
             files: file.into_iter().map(PathBuf::from).collect(),
@@ -198,7 +195,6 @@ fn certificates(data: &[u8]) -> impl Iterator<Item = CertificateDer<'static>> + 
     blocks.flat_map(|block| CertificateDer::pem_slice_iter(block).filter_map(Result::ok))
 }
 
-/// Says how server certificates are checked. Handshake signatures are checked in every case.
 #[derive(Debug)]
 enum Verifier {
     /// webpki checks against the loaded roots and takes a leaf that is itself a trusted root as its own chain.
@@ -208,7 +204,6 @@ enum Verifier {
     },
     /// Every certificate fails because no root loaded, with the reason the store could not be read if one is known.
     Empty(Option<Reason>),
-    /// Every certificate passes.
     Insecure,
 }
 

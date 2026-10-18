@@ -21,7 +21,6 @@ pub struct Bottleneck {
     pub queue: Duration,
 }
 
-/// When packets leave a direction's bottleneck.
 struct Pace {
     bottleneck: Option<Bottleneck>,
     free: Instant,
@@ -51,7 +50,6 @@ impl Pace {
     }
 }
 
-/// A relay to one target; dropping it stops relaying.
 pub struct Link {
     pub address: SocketAddr,
     stalled: watch::Sender<bool>,

@@ -17,8 +17,7 @@ use tokio::sync::{Notify, mpsc};
 const DRAFT02_SETTINGS: &[(u64, u64)] = &[(0x2b603742, 1), (0x33, 1)];
 const DRAFT02: Setup = raw(DRAFT02_SETTINGS);
 
-/// Every lane ending's code and reason reach the peer as CLOSE then FIN, a peer that answers with FIN never
-/// sees STOP_SENDING, and the connection outlasts the CLOSE by a second.
+/// Every lane ending's code and reason reach the peer as CLOSE then FIN, without STOP_SENDING to a FIN-answering peer.
 #[tokio::test]
 async fn the_close_code_table_reaches_the_peer() -> Result<(), TestError> {
     for (code, reason) in [
@@ -121,8 +120,7 @@ async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError
     Ok(())
 }
 
-/// Session streams wait until the 200 head is buffered: sent first, their data would take the small
-/// connection window the head needs, and the client reads no stream before its session starts.
+/// Session streams wait for the 200 head to buffer, or their data would take the connection window the head needs.
 #[tokio::test]
 async fn session_streams_wait_for_the_head_with_a_small_connection_window() -> Result<(), TestError>
 {

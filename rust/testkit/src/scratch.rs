@@ -43,7 +43,6 @@ impl Scratch {
         Ok(self.0.join(name))
     }
 
-    /// Writes `contents` to `name`, creating its directories.
     pub fn file(&self, name: &str, contents: &str) -> io::Result<PathBuf> {
         let path = self.inside(name)?;
         std::fs::create_dir_all(path.parent().unwrap_or(&self.0))?;

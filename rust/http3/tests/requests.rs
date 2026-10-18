@@ -384,8 +384,7 @@ async fn a_peer_stream_declares_its_type_within_10_seconds() -> Result<(), TestE
     Ok(())
 }
 
-/// A download the client cancels is reset with plain RESET_STREAM when the client does not offer reliable
-/// reset, and the connection carries the next request.
+/// A download the client cancels gets plain RESET_STREAM without reliable reset, and the connection carries the next request.
 #[tokio::test]
 async fn a_cancelled_download_without_reliable_reset_leaves_the_connection_usable()
 -> Result<(), TestError> {

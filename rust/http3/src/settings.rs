@@ -111,7 +111,6 @@ impl Reader {
         })
     }
 
-    /// Takes the next part of the payload; returns the settings once the frame is complete.
     pub(crate) fn read(&mut self, payload: &mut impl Buf) -> Result<Option<Peer>, Code> {
         self.remaining -= payload.remaining() as u64;
         while let Some((id, value)) = self.pair.read(payload) {

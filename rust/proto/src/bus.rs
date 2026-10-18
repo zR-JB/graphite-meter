@@ -24,7 +24,6 @@ impl Ping {
         String::from_utf8_lossy(self.write(&mut [0; Self::MAX_BYTES])).into_owned()
     }
 
-    /// The probe's bytes, written into `bytes` without allocating.
     pub fn write(self, bytes: &mut [u8; Self::MAX_BYTES]) -> &[u8] {
         let mut id = NumBuffer::new();
         let id = self.id.format_into(&mut id).as_bytes();
@@ -49,7 +48,6 @@ impl Ping {
         }
     }
 
-    /// The reply echoing this probe's id.
     pub fn reply(self, handling_nanos: u64) -> Pong {
         Pong {
             id: self.id,

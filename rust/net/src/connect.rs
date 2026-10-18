@@ -15,7 +15,6 @@ use tokio::{
 };
 use tokio_rustls::TlsConnector;
 
-/// A proxy may send a CONNECT response head at most this long.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
 /// A proxy's handshake may take this long past the TCP connect.
 const PROXY_TIMEOUT: Duration = Duration::from_mins(1);
@@ -31,7 +30,6 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 /// Holds an open connection to a target, past any proxy and through TLS for HTTPS.
 pub struct Connection {
     pub stream: Box<dyn Stream>,
-    /// The target's TLS handshake agreed on this protocol.
     pub alpn: Option<Vec<u8>>,
     pub form: RequestForm,
 }
@@ -60,15 +58,12 @@ impl fmt::Debug for RequestForm {
     }
 }
 
-/// Says why a connection could not be opened, decided where it failed.
 #[derive(Debug)]
 pub enum ConnectError {
     Proxy(UnusableProxy),
     /// The target or proxy resolved or connected nowhere in the dial timeout, or a handshake overran its bound.
     Unreachable(io::Error),
-    /// The proxy refused the connection or broke its protocol.
     Refused(String),
-    /// The TLS handshake with the target or an HTTPS proxy failed.
     Tls(rustls::Error),
     Io(io::Error),
 }
@@ -118,7 +113,6 @@ impl Connector {
         Self { proxy, verify }
     }
 
-    /// Connects to `target`, offering `alpn` in its TLS handshake when it is HTTPS.
     pub async fn connect(
         &self,
         target: &Origin,
