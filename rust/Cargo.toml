@@ -75,6 +75,14 @@ unsafe_code = "forbid"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+cloned_instead_of_copied = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+redundant_clone = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
 
 # Unoptimized, one Argon2id hash at the server's cost takes most of a second, and the tests hash many.
 [profile.dev.package.argon2]
