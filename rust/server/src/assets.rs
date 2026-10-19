@@ -11,7 +11,7 @@ use bytes::Bytes;
 use graphite_meter_legal::{BROWSER_NOTICE, Notices};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use ring::digest::{SHA256, digest};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::OnceLock};
 
 pub struct Asset {
     pub path: &'static str,
@@ -42,7 +42,7 @@ struct File {
 pub struct Assets {
     files: HashMap<&'static str, File>,
     notices: &'static Notices,
-    notice_tag: Option<HeaderValue>,
+    notice_tag: OnceLock<HeaderValue>,
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
     inline: [String; 2],
@@ -118,7 +118,7 @@ impl Assets {
         Self {
             files,
             notices,
-            notice_tag: notices.browser().map(tag),
+            notice_tag: OnceLock::new(),
             index,
             inline,
             trusted_types,
@@ -147,7 +147,7 @@ impl Assets {
                 "text/plain; charset=utf-8",
                 "no-cache",
                 Bytes::from_static(bytes),
-                self.notice_tag.as_ref(),
+                Some(self.notice_tag.get_or_init(|| tag(bytes))),
             )
         } else {
             let name = path.strip_prefix('/')?;
