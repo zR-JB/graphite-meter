@@ -38,7 +38,7 @@ export const DEFAULT_CONFIG: TestConfig = {
   duration: { ...DURATION_PRESETS.medium },
   pingCadence: "reply-driven",
   loadedPingCadence: "medium",
-  transferStreams: { mode: "auto", count: 4 },
+  transferStreams: { mode: "auto", count: 6 },
   experimentalDatagramThroughput: false,
   transports: { throughputTarget: "auto", latencyTarget: "auto" },
   adaptive: true,
