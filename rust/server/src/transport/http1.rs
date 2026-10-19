@@ -1,7 +1,7 @@
 //! HTTP/1.1 through hyper: an IO wrapper closing when exchange, reply or lane calls for it; WebSocket hand-off.
 
 use super::{
-    Burst, Rehome,
+    Burst, Feed, Rehome,
     body::{Aborted, Body, ReplyBound},
     tls,
     websocket::{self, Socket},
@@ -12,6 +12,7 @@ use crate::{
     lock,
 };
 use bytes::Bytes;
+use futures_util::task::AtomicWaker;
 use graphite_meter_http3::CONNECTION_IDLE;
 use http::{Method, Request, Response};
 use http_body::{Frame, SizeHint};
@@ -148,7 +149,10 @@ where
     let mut stream = io.into_inner().inner;
     // A socket that cannot move still works through its first runtime's driver.
     let _ = stream.rehome();
-    websocket::serve(stream, read_buf, socket).await;
+    match socket {
+        Socket::Feed(..) => websocket::serve(Feed::new(stream), read_buf, socket).await,
+        _ => websocket::serve(stream, read_buf, socket).await,
+    }
 }
 
 /// Answers one request; an error closes the connection unanswered.
@@ -181,6 +185,9 @@ struct Shared {
     started: Mutex<Option<Instant>>,
     /// The reply's body ended, so the flush after it delivers the reply.
     complete: AtomicBool,
+    unflushed: AtomicBool,
+    flushed: AtomicWaker,
+    feed: AtomicBool,
 }
 
 impl Shared {
@@ -201,6 +208,8 @@ impl Shared {
     fn reply(self: &Arc<Self>, response: Response<Body>, head: bool) -> Response<H1Reply> {
         let complete = head || http_body::Body::is_end_stream(response.body());
         self.complete.store(complete, Ordering::Release);
+        self.feed
+            .store(response.body().is_feed(), Ordering::Release);
         self.post(State::Reply(ReplyBound::of(response.body())));
         response.map(|body| H1Reply {
             body,
@@ -223,7 +232,18 @@ impl http_body::Body for H1Reply {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Aborted>>> {
         let this = self.get_mut();
+        // A feed takes its next line only once the last left hyper's buffer, so a stall queues no stale lines.
+        let feed = this.body.is_feed();
+        if feed && this.shared.unflushed.load(Ordering::Acquire) {
+            this.shared.flushed.register(cx.waker());
+            if this.shared.unflushed.load(Ordering::Acquire) {
+                return Poll::Pending;
+            }
+        }
         let frame = ready!(Pin::new(&mut this.body).poll_frame(cx));
+        if feed && matches!(frame, Some(Ok(_))) {
+            this.shared.unflushed.store(true, Ordering::Release);
+        }
         if frame.is_none() || this.body.is_end_stream() {
             this.shared.complete.store(true, Ordering::Release);
         }
@@ -245,6 +265,7 @@ struct Io<S> {
     deadline: Pin<Box<Sleep>>,
     shared: Arc<Shared>,
     burst: Burst,
+    feed: bool,
 }
 
 enum State {
@@ -267,6 +288,7 @@ impl<S> Io<S> {
             deadline,
             shared,
             burst: Burst::default(),
+            feed: false,
         }
     }
 
@@ -375,7 +397,17 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
     }
 }
 
-impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
+impl<S: Rehome> Io<S> {
+    fn match_feed(&mut self) {
+        let feed = self.shared.feed.load(Ordering::Acquire);
+        if feed != self.feed {
+            self.feed = feed;
+            Feed::bound(&mut self.inner, feed);
+        }
+    }
+}
+
+impl<S: AsyncWrite + Rehome + Unpin> AsyncWrite for Io<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -383,8 +415,12 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
+        this.match_feed();
         ready!(this.burst.poll_turn(cx));
-        let result = Pin::new(&mut this.inner).poll_write(cx, bytes);
+        let result = match this.feed && Feed::<S>::RECORDS {
+            true => Feed::poll_send(&mut this.inner, cx, &[io::IoSlice::new(bytes)]),
+            false => Pin::new(&mut this.inner).poll_write(cx, bytes),
+        };
         this.written(cx, result)
     }
 
@@ -395,8 +431,12 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
+        this.match_feed();
         ready!(this.burst.poll_turn(cx));
-        let result = Pin::new(&mut this.inner).poll_write_vectored(cx, bytes);
+        let result = match this.feed && Feed::<S>::RECORDS {
+            true => Feed::poll_send(&mut this.inner, cx, bytes),
+            false => Pin::new(&mut this.inner).poll_write_vectored(cx, bytes),
+        };
         this.written(cx, result)
     }
 
@@ -407,7 +447,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = &mut *self;
         this.check(cx)?;
-        match Pin::new(&mut this.inner).poll_flush(cx) {
+        let flushed = Pin::new(&mut this.inner).poll_flush(cx);
+        if flushed.is_ready() && this.shared.unflushed.swap(false, Ordering::AcqRel) {
+            this.shared.flushed.wake();
+        }
+        match flushed {
             Poll::Pending => {
                 this.blocked(cx)?;
                 Poll::Pending

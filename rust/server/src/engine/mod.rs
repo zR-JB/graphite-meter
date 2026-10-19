@@ -145,7 +145,7 @@ impl Drop for UploadSink {
     }
 }
 
-/// After the first accepted chunk a `progress` record follows this often.
+/// After the first accepted chunk a `progress` record falls on every multiple of this.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 const HEARTBEAT_AFTER: Duration = Duration::from_secs(1);
 
@@ -156,7 +156,7 @@ pub struct ProgressFeed {
     reader: u64,
     ready: bool,
     ended: bool,
-    next_tick: Instant,
+    next_tick: Option<Instant>,
     last_line: Instant,
 }
 
@@ -169,15 +169,15 @@ enum Step {
 
 impl ProgressFeed {
     fn new(uploads: Uploads, aggregate: Arc<Aggregate>, reader: u64) -> Self {
-        let now = Instant::now();
+        let next_tick = aggregate.next_tick(PROGRESS_INTERVAL);
         Self {
             uploads,
             aggregate,
             reader,
             ready: false,
             ended: false,
-            next_tick: now + PROGRESS_INTERVAL,
-            last_line: now,
+            next_tick,
+            last_line: Instant::now(),
         }
     }
 
@@ -201,11 +201,20 @@ impl ProgressFeed {
                     return None;
                 }
             }
+            // A late tick is not repeated: a stalled reader gets one fresh record, then the grid.
+            self.next_tick = self
+                .next_tick
+                .or_else(|| aggregate.next_tick(PROGRESS_INTERVAL));
+            let tick = self
+                .next_tick
+                .unwrap_or_else(|| Instant::now() + PROGRESS_INTERVAL);
             ticked = tokio::select! {
+                biased;
                 () = changed => false,
-                () = sleep_until(self.next_tick) => {
-                    self.next_tick = Instant::now() + PROGRESS_INTERVAL;
-                    true
+                () = sleep_until(tick) => {
+                    let on_grid = self.next_tick.is_some();
+                    self.next_tick = aggregate.next_tick(PROGRESS_INTERVAL);
+                    on_grid
                 }
                 () = sleep_until(self.last_line + HEARTBEAT_AFTER) => {
                     return Some(self.line(Bytes::from_static(HEARTBEAT.as_bytes())));

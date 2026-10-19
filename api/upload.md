@@ -78,7 +78,11 @@ to the upload ID and survives feed replacement.
 After the first accepted chunk, progress records continue every 100 ms even when
 the byte count is unchanged, with advancing receiver time. This provides evidence
 of zero delivery in that receiver window. A blank heartbeat or missing record
-provides no byte/time evidence.
+provides no byte/time evidence. Records fall on a 100 ms grid from the first
+accepted chunk, and a reader that falls behind gets one fresh record, then the
+grid again, never the records it missed. Over clear TCP, the HTTP/1.1 feed and the
+progress socket also leave at most about 1 KiB of records unsent while a reader is
+stalled; over TLS, HTTP/2 and HTTP/3 the transport's own buffers decide.
 
 Malformed or unknown records are not observations. An invalid or stale
 `complete` record is not evidence that the receiver aggregate finalized. EOF

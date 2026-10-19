@@ -100,6 +100,10 @@ impl Body {
         }
     }
 
+    pub(crate) fn is_feed(&self) -> bool {
+        matches!(self.content, Content::Feed(_))
+    }
+
     pub(crate) fn bound_by_default(&mut self, deadline: Instant) {
         self.bound.get_or_insert(Bound::Until(deadline));
     }
