@@ -1,18 +1,9 @@
 //! Serves download payloads from one random block that every download repeats.
 
 use super::{Meter, Transfer};
-use crate::{
-    limits::{Budget, Lease},
-    log,
-};
+use crate::limits::{Budget, Lease};
 use bytes::Bytes;
-use std::{
-    fs::File,
-    io,
-    sync::Arc,
-    task::{Context, Poll, ready},
-};
-use tokio::{io::Interest, net::TcpStream};
+use std::sync::Arc;
 
 /// The block is this large, as is the largest chunk a source hands out.
 pub const BLOCK_BYTES: usize = 256 << 10;
@@ -21,62 +12,8 @@ pub const BLOCK_BYTES: usize = 256 << 10;
 #[derive(Debug)]
 pub struct Block {
     bytes: Bytes,
-    file: Option<Arc<BlockFile>>,
     meter: Meter,
     _lease: Lease,
-}
-
-/// The block's bytes in a memory file, which a plain TCP socket sends without copying them.
-#[derive(Debug)]
-pub struct BlockFile {
-    file: File,
-    /// Keeps the block's memory, so that no other allocation takes its addresses.
-    block: Bytes,
-}
-
-impl BlockFile {
-    fn new(block: &Bytes) -> io::Result<Self> {
-        cfg_select! {
-            target_os = "linux" => {
-                use rustix::fs::{MemfdFlags, memfd_create};
-                use std::io::Write;
-                let mut file = File::from(memfd_create("graphite-meter-block", MemfdFlags::CLOEXEC)?);
-                file.write_all(block)?;
-                Ok(Self { file, block: block.clone() })
-            }
-            _ => Err(io::ErrorKind::Unsupported.into()),
-        }
-    }
-
-    pub fn offset(&self, slice: &[u8]) -> Option<u64> {
-        let start = (slice.as_ptr() as usize).checked_sub(self.block.as_ptr() as usize)?;
-        (!slice.is_empty() && start + slice.len() <= self.block.len()).then_some(start as u64)
-    }
-
-    pub fn poll_send(
-        &self,
-        cx: &mut Context<'_>,
-        socket: &TcpStream,
-        offset: u64,
-        length: usize,
-    ) -> Poll<io::Result<usize>> {
-        loop {
-            ready!(socket.poll_write_ready(cx))?;
-            let sent = socket.try_io(Interest::WRITABLE, || {
-                cfg_select! {
-                    target_os = "linux" => {
-                        let mut offset = offset;
-                        Ok(rustix::fs::sendfile(socket, &self.file, Some(&mut offset), length)?)
-                    }
-                    _ => Err(io::ErrorKind::Unsupported.into()),
-                }
-            });
-            match sent {
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                sent => return Poll::Ready(sent),
-            }
-        }
-    }
 }
 
 impl Block {
@@ -87,14 +24,8 @@ impl Block {
             .ok_or("the buffer budget cannot cover the download block")?;
         let mut bytes = vec![0; BLOCK_BYTES];
         getrandom::fill(&mut bytes).map_err(|error| format!("download block: {error}"))?;
-        let bytes = Bytes::from(bytes);
-        let file = BlockFile::new(&bytes)
-            .inspect_err(|error| log!(Warn, "download", "downloads copy the block: {error}"))
-            .ok()
-            .map(Arc::new);
         Ok(Self {
-            bytes,
-            file,
+            bytes: bytes.into(),
             meter,
             _lease: lease,
         })
@@ -108,10 +39,6 @@ impl Block {
             remaining: bytes,
             transfer,
         }
-    }
-
-    pub fn file(&self) -> Option<&Arc<BlockFile>> {
-        self.file.as_ref()
     }
 
     pub fn meter(&self) -> &Meter {

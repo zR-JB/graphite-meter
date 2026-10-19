@@ -8,7 +8,6 @@ use super::{
 };
 use crate::{
     app::{App, Connection, Endpoint, Outcome},
-    engine::download::BlockFile,
     exchange::{EXCHANGE_BOUND, Exchange, Watch},
     lock,
 };
@@ -25,7 +24,7 @@ use hyper::{
 use hyper_util::rt::TokioIo;
 use std::{
     future::Future,
-    io::{self, IoSlice},
+    io,
     net::SocketAddr,
     pin::{Pin, pin},
     sync::{
@@ -89,9 +88,8 @@ impl Http1 {
     where
         S: AsyncRead + AsyncWrite + Rehome + Unpin + Send + 'static,
     {
-        let file = S::PLAIN.then(|| self.app.block().file().cloned()).flatten();
         let shared = Arc::new(Shared::default());
-        let io = Io::new(stream, shared.clone(), start + EXCHANGE_BOUND, file);
+        let io = Io::new(stream, shared.clone(), start + EXCHANGE_BOUND);
         let bus = Bus::default();
         let service = {
             let (app, bus) = (self.app.clone(), bus.clone());
@@ -247,7 +245,6 @@ struct Io<S> {
     deadline: Pin<Box<Sleep>>,
     shared: Arc<Shared>,
     burst: Burst,
-    file: Option<Arc<BlockFile>>,
 }
 
 enum State {
@@ -261,7 +258,7 @@ enum State {
 }
 
 impl<S> Io<S> {
-    fn new(inner: S, shared: Arc<Shared>, deadline: Instant, file: Option<Arc<BlockFile>>) -> Self {
+    fn new(inner: S, shared: Arc<Shared>, deadline: Instant) -> Self {
         *lock(&shared.started) = Some(deadline);
         let (state, deadline) = (State::Exchange(None), Box::pin(sleep_until(deadline)));
         Self {
@@ -270,7 +267,6 @@ impl<S> Io<S> {
             deadline,
             shared,
             burst: Burst::default(),
-            file,
         }
     }
 
@@ -379,7 +375,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
     }
 }
 
-impl<S: AsyncWrite + Rehome + Unpin> AsyncWrite for Io<S> {
+impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -395,22 +391,12 @@ impl<S: AsyncWrite + Rehome + Unpin> AsyncWrite for Io<S> {
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        bytes: &[IoSlice<'_>],
+        bytes: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
         ready!(this.burst.poll_turn(cx));
-        let file = this.file.as_deref();
-        let result = match (file, bytes.first()) {
-            (Some(file), Some(first)) if let Some(offset) = file.offset(first) => {
-                file.poll_send(cx, this.inner.socket(), offset, first.len())
-            }
-            _ => {
-                let block = |slice: &IoSlice| file.is_some_and(|file| file.offset(slice).is_some());
-                let end = bytes.iter().position(block).unwrap_or(bytes.len());
-                Pin::new(&mut this.inner).poll_write_vectored(cx, &bytes[..end])
-            }
-        };
+        let result = Pin::new(&mut this.inner).poll_write_vectored(cx, bytes);
         this.written(cx, result)
     }
 

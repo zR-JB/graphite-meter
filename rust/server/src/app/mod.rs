@@ -135,10 +135,6 @@ impl App {
         &self.config
     }
 
-    pub fn block(&self) -> &Block {
-        &self.block
-    }
-
     pub fn budget(&self) -> &Budget {
         &self.budget
     }
