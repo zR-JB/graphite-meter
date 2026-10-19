@@ -155,3 +155,36 @@ fn observations_from_concurrent_readers_never_regress() {
         "a later observation has fewer bytes"
     );
 }
+
+async fn progress_at(feed: &mut ProgressFeed, start: Instant) -> Duration {
+    let line = feed.next().await.unwrap();
+    assert!(line.starts_with(b"{\"type\":\"progress\""), "{line:?}");
+    start.elapsed()
+}
+
+#[tokio::test(start_paused = true)]
+async fn progress_falls_on_a_grid_from_the_first_chunk_and_a_stall_skips_missed_ticks() {
+    let (uploads, owner, id) = fixture();
+    let mut feed = uploads.subscribe(&id, Some(&owner)).unwrap();
+    assert!(
+        feed.next()
+            .await
+            .unwrap()
+            .starts_with(b"{\"type\":\"ready\"")
+    );
+    advance(Duration::from_millis(30)).await;
+    let mut sink = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
+    sink.record(1);
+    let start = Instant::now();
+    let ms = Duration::from_millis;
+    assert_eq!(progress_at(&mut feed, start).await, ms(100));
+    assert_eq!(progress_at(&mut feed, start).await, ms(200));
+    advance(ms(350)).await;
+    let late = progress_at(&mut feed, start).await;
+    assert_eq!(late, ms(550), "one record after a stall");
+    assert_eq!(
+        progress_at(&mut feed, start).await,
+        ms(600),
+        "then the grid"
+    );
+}

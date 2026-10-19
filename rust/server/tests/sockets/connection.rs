@@ -164,3 +164,34 @@ async fn discovery_names_the_bound_port_of_a_listener_configured_with_port_zero(
         format!("http://test:{port}")
     );
 }
+
+#[tokio::test]
+async fn a_feed_the_peer_stops_reading_holds_no_backlog_of_stale_records() {
+    let server = start(&[]).await;
+    let id = server.upload_id().await;
+    let mut client = server.connect().await;
+    client.request(&format!("POST /upload?id={id}"), "x").await;
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(16 << 10).unwrap();
+    let mut feed = Client::new(socket.connect(server.address).await.unwrap());
+    feed.send(&format!(
+        "GET /upload/progress?id={id} HTTP/1.1\r\nHost: test\r\n\r\n"
+    ))
+    .await;
+    // 1500 ticks pass while the peer reads nothing.
+    for _ in 0..1500 {
+        advance_clock(Duration::from_millis(100)).await;
+    }
+    // What the peer finds waiting once it reads again, without waiting for new records.
+    std::thread::sleep(Duration::from_millis(50));
+    let (mut buffered, mut chunk) = (Vec::new(), [0; 4096]);
+    while let Ok(read @ 1..) = feed.stream.get_ref().try_read(&mut chunk) {
+        buffered.extend_from_slice(&chunk[..read]);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let records = buffered
+        .split(|&byte| byte == b'\n')
+        .filter(|line| line.starts_with(b"{"))
+        .count();
+    assert!(records < 120, "{records} records were waiting");
+}

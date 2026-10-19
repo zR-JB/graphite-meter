@@ -138,6 +138,14 @@ impl Aggregate {
         Counters::new(bytes, nanos)
     }
 
+    /// The next point of a grid of `period`s from the first accepted chunk.
+    pub(super) fn next_tick(&self, period: Duration) -> Option<Instant> {
+        let first = *self.first.get()?;
+        let (now, period) = (self.clock.now(), period.as_nanos() as u64);
+        let next = first + (now.saturating_sub(first) / period + 1) * period;
+        Some(self.clock.0 + Duration::from_nanos(next))
+    }
+
     pub(super) fn ended(&self) -> bool {
         self.life().phase != Phase::Open
     }

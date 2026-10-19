@@ -11,11 +11,14 @@ mod window;
 
 use crate::log::{Level, RateLimited};
 use std::{
-    io,
-    pin::pin,
-    task::{Context, Poll},
+    io::{self, IoSlice},
+    pin::{Pin, pin},
+    task::{Context, Poll, ready},
 };
-use tokio::{io::BufReader, net::TcpStream};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, BufReader, Interest, ReadBuf},
+    net::TcpStream,
+};
 use tokio_rustls::server::TlsStream;
 
 /// Connection failures any peer can cause, such as a refused TLS handshake.
@@ -57,8 +60,102 @@ impl Burst {
     }
 }
 
+const FEED_NOTSENT_LOWAT: u32 = 1 << 10;
+
+/// A feed's stream: on a plain socket each write is a record the kernel never appends to, so the unsent bound holds.
+pub(crate) struct Feed<S>(pub S);
+
+impl<S: Rehome> Feed<S> {
+    pub const RECORDS: bool = S::PLAIN && cfg!(target_os = "linux");
+
+    pub fn new(mut stream: S) -> Self {
+        Self::bound(&mut stream, true);
+        Self(stream)
+    }
+
+    pub fn bound(stream: &mut S, feed: bool) {
+        let lowat = if feed { FEED_NOTSENT_LOWAT } else { 0 };
+        #[cfg(target_os = "linux")]
+        let _ = socket2::SockRef::from(&*stream.socket()).set_tcp_notsent_lowat(lowat);
+    }
+
+    pub fn poll_send(
+        stream: &mut S,
+        cx: &mut Context<'_>,
+        bytes: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let socket = stream.socket();
+        loop {
+            ready!(socket.poll_write_ready(cx))?;
+            let sent = socket.try_io(Interest::WRITABLE, || {
+                cfg_select! {
+                    target_os = "linux" => {
+                        use rustix::net::{SendAncillaryBuffer, SendFlags, sendmsg};
+                        let flags = SendFlags::EOR | SendFlags::NOSIGNAL;
+                        Ok(sendmsg(&*socket, bytes, &mut SendAncillaryBuffer::default(), flags)?)
+                    }
+                    _ => Err(io::ErrorKind::Unsupported.into()),
+                }
+            });
+            match sent {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                sent => return Poll::Ready(sent),
+            }
+        }
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Feed<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buffer)
+    }
+}
+
+impl<S: AsyncWrite + Rehome + Unpin> AsyncWrite for Feed<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match Self::RECORDS {
+            true => Self::poll_send(&mut self.0, cx, &[IoSlice::new(bytes)]),
+            false => Pin::new(&mut self.0).poll_write(cx, bytes),
+        }
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        match Self::RECORDS {
+            true => Self::poll_send(&mut self.0, cx, bytes),
+            false => Pin::new(&mut self.0).poll_write_vectored(cx, bytes),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        Self::RECORDS || self.0.is_write_vectored()
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
 /// A stream over one TCP socket, which can move to another runtime's I/O driver.
 pub(crate) trait Rehome {
+    /// Whether bytes written to the stream reach the socket unchanged.
+    const PLAIN: bool;
+
     fn socket(&mut self) -> &mut TcpStream;
 
     /// Registers the socket with the calling runtime's driver through a duplicate descriptor; on an error it stays put.
@@ -72,12 +169,16 @@ pub(crate) trait Rehome {
 }
 
 impl Rehome for TcpStream {
+    const PLAIN: bool = true;
+
     fn socket(&mut self) -> &mut TcpStream {
         self
     }
 }
 
 impl Rehome for TlsStream<BufReader<TcpStream>> {
+    const PLAIN: bool = false;
+
     fn socket(&mut self) -> &mut TcpStream {
         self.get_mut().0.get_mut()
     }
