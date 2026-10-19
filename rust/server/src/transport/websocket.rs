@@ -1,10 +1,13 @@
-//! Runs the WebSocket bus, which answers the upgrade handshake and then PINGs over a lane until it ends.
+//! Runs a WebSocket over a lane until it ends: the latency bus answering PINGs, or an upload's progress feed.
 
 use super::body::Body;
-use crate::{engine::reflect, lane::Lane};
+use crate::{
+    engine::{ProgressFeed, reflect},
+    lane::Lane,
+};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use graphite_meter_proto::lane::LaneEnding;
+use graphite_meter_proto::{lane::LaneEnding, refusal::UploadRefusal, upload::Record};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -92,42 +95,109 @@ fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -
     response
 }
 
-/// Runs the bus over an upgraded `stream`, after the bytes the handshake `read` past its head.
-pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, lane: Lane) {
+pub enum Socket {
+    Bus(Lane),
+    Feed(Lane, ProgressFeed),
+    /// A feed refused before it attached: its `error` record is the only message.
+    Refused(UploadRefusal),
+}
+
+impl Socket {
+    pub fn lane(&self) -> Option<&Lane> {
+        match self {
+            Self::Bus(lane) | Self::Feed(lane, _) => Some(lane),
+            Self::Refused(_) => None,
+        }
+    }
+}
+
+/// Runs `socket` over an upgraded `stream`, after the bytes the handshake `read` past its head.
+pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, socket: Socket) {
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(0)
         .max_write_buffer_size(8192)
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
-    let mut socket =
+    let mut stream =
         WebSocketStream::from_partially_read(stream, read.into(), Role::Server, Some(config)).await;
-    let (code, reason) = tokio::select! {
-        biased;
-        ending = lane.ended() => close(ending),
-        result = exchange(&mut socket, &lane) => match result {
-            Ok(()) => close(lane.finish()),
-            Err(Error::Capacity(_)) => (CloseCode::Size, "message too big"),
-            Err(Error::Utf8(_)) => (CloseCode::Invalid, "invalid text"),
-            Err(Error::Protocol(_)) => (CloseCode::Protocol, "protocol error"),
-            Err(_) => return,
-        },
+    let closing = match socket {
+        Socket::Bus(lane) => bounded(&lane, exchange(&mut stream, &lane)).await,
+        Socket::Feed(lane, feed) => bounded(&lane, follow(&mut stream, &lane, feed)).await,
+        Socket::Refused(refusal) => {
+            let record = Record::from(refusal).line().into();
+            let sent = tokio::time::timeout(CLOSE_BOUND, send(&mut stream, record)).await;
+            matches!(sent, Ok(Ok(()))).then_some((CloseCode::Normal, ""))
+        }
+    };
+    let Some((code, reason)) = closing else {
+        return;
     };
     let frame = CloseFrame {
         code,
         reason: reason.into(),
     };
     let closing = async {
-        socket.close(Some(frame)).await?;
+        stream.close(Some(frame)).await?;
         // Reading until the peer's close keeps its unread messages from resetting the connection.
-        while socket.next().await.transpose()?.is_some() {}
+        while stream.next().await.transpose()?.is_some() {}
         Ok::<_, Error>(())
     };
     let _ = tokio::time::timeout(CLOSE_BOUND, closing).await;
 }
 
+async fn bounded(
+    lane: &Lane,
+    work: impl Future<Output = Result<(), Error>>,
+) -> Option<(CloseCode, &'static str)> {
+    tokio::select! {
+        biased;
+        ending = lane.ended() => Some(close(ending)),
+        result = work => match result {
+            Ok(()) => Some(close(lane.finish())),
+            Err(Error::Capacity(_)) => Some((CloseCode::Size, "message too big")),
+            Err(Error::Utf8(_)) => Some((CloseCode::Invalid, "invalid text")),
+            Err(Error::Protocol(_)) => Some((CloseCode::Protocol, "protocol error")),
+            Err(_) => None,
+        },
+    }
+}
+
 fn close(ending: LaneEnding) -> (CloseCode, &'static str) {
     (CloseCode::from(ending.websocket_code()), ending.reason())
+}
+
+async fn follow<S: AsyncRead + AsyncWrite + Unpin>(
+    socket: &mut WebSocketStream<S>,
+    lane: &Lane,
+    mut feed: ProgressFeed,
+) -> Result<(), Error> {
+    loop {
+        tokio::select! {
+            line = feed.next() => match line {
+                Some(line) => {
+                    // The peer only listens, so what the feed sends keeps the lane from idling.
+                    lane.moved();
+                    send(socket, line).await?;
+                }
+                None => return Ok(()),
+            },
+            message = socket.next() => match message.transpose()? {
+                None | Some(Message::Close(_)) => return socket.flush().await,
+                Some(_) => socket.flush().await?,
+            },
+        }
+    }
+}
+
+async fn send<S: AsyncRead + AsyncWrite + Unpin>(
+    socket: &mut WebSocketStream<S>,
+    line: Bytes,
+) -> Result<(), Error> {
+    let record = line
+        .strip_suffix(b"\n")
+        .map_or(line.clone(), |record| line.slice_ref(record));
+    socket.send(Message::Text(record.try_into()?)).await
 }
 
 async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(

@@ -264,7 +264,9 @@ impl Policy {
         }
         let read = matches!(*request.method(), Method::GET | Method::HEAD);
         let same_origin = site == Some("same-origin");
-        if route.is_some() && read && !ours && !same_origin || route == Some(Route::Ping) && !ours {
+        if route.is_some() && read && !ours && !same_origin
+            || route.is_some_and(|route| route.kind() == Kind::WebSocket) && !ours
+        {
             return false;
         }
         if read || request.method() == Method::OPTIONS {

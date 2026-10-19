@@ -10,7 +10,7 @@ type Terminal = Extract<ProgressRecord, { type: "complete" | "error" }>;
 
 const oversized = () => new Error("upload progress record exceeds 64 Ki characters");
 
-function parse(line: string): ProgressRecord | null {
+export function parse(line: string): ProgressRecord | null {
   if (line.length > MAX_RECORD) throw oversized();
   if (!line.trim()) return null;
   try {
@@ -24,7 +24,6 @@ function parse(line: string): ProgressRecord | null {
 export async function readRecords(
   body: ReadableStream<Uint8Array>,
   emit: (record: FeedRecord) => void,
-  heard?: () => void,
 ): Promise<Terminal | null> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -32,7 +31,6 @@ export async function readRecords(
   try {
     for (;;) {
       const { value, done } = await reader.read();
-      heard?.();
       // What is left holds no newline, so a trickled record is scanned once.
       const scanned = text.length;
       text += decoder.decode(value, { stream: !done });

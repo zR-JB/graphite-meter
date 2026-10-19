@@ -368,15 +368,13 @@ impl Uploads {
 
     /// A share of the capacity; at the limit an empty aggregate makes room.
     fn capacity(&self, entries: &mut Entries, keys: &ClientKeys) -> Result<Hold, UploadRefusal> {
-        let refusal = |refusal| match refusal {
-            Refusal::Client => UploadRefusal::ClientFull,
-            Refusal::Total => UploadRefusal::GlobalFull,
-        };
         match self.0.capacity.acquire(keys, 1) {
-            Err(Refusal::Total) if entries.displace(Instant::now()) => {
-                self.0.capacity.acquire(keys, 1).map_err(refusal)
-            }
-            result => result.map_err(refusal),
+            Err(Refusal::Total) if entries.displace(Instant::now()) => self
+                .0
+                .capacity
+                .acquire(keys, 1)
+                .map_err(UploadRefusal::from),
+            result => result.map_err(UploadRefusal::from),
         }
     }
 
@@ -406,3 +404,12 @@ impl Uploads {
 #[cfg(test)]
 #[path = "uploads_tests.rs"]
 mod tests;
+
+impl From<Refusal> for UploadRefusal {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Client => Self::ClientFull,
+            Refusal::Total => Self::GlobalFull,
+        }
+    }
+}

@@ -16,11 +16,11 @@ use crate::{
     engine::{Block, Meter, Uploads},
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
-    limits::{Budget, Hold, Pressure, Quotas, Transport},
+    limits::{Budget, Hold, Pressure, Quotas, Refusal, Transport},
     peer::{ClientKeys, Peer},
     transport::{
         body::Body,
-        websocket,
+        websocket::{self, Socket},
         webtransport::{Form, Plan, Upload},
     },
 };
@@ -28,6 +28,7 @@ use bytes::Buf;
 use graphite_meter_legal::Notices;
 use graphite_meter_proto::{
     lane::LaneEnding,
+    refusal::UploadRefusal,
     route::{Kind, Route},
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Authority};
@@ -78,8 +79,8 @@ type Admitted = Result<Outcome, Response<Body>>;
 
 pub enum Outcome {
     Response(Response<Body>),
-    /// Writes the `101`, then carries the WebSocket bus that the lane bounds.
-    WebSocket(Response<Body>, Lane),
+    /// Writes the `101`, then carries the WebSocket that the lane bounds.
+    WebSocket(Response<Body>, Socket),
     /// Accepts the WebTransport session with the head's fields, then serves the plan over the lane.
     WebTransport(Response<Body>, Lane, Plan),
     /// Ends the exchange without an answer: an HTTP/1 connection closes, an HTTP/2 or HTTP/3 stream resets.
@@ -206,7 +207,7 @@ impl App {
                     .await;
                 let mut outcome = outcome.unwrap_or_else(Outcome::Response);
                 if let Outcome::Response(response)
-                | Outcome::WebSocket(response, _)
+                | Outcome::WebSocket(response, ..)
                 | Outcome::WebTransport(response, ..) = &mut outcome
                 {
                     self.finalize(response, access, bootstrap, version);
@@ -244,7 +245,9 @@ impl App {
         }
         let response = match route {
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
-            Route::Ping => return self.websocket(&request, peer, connection, exchange),
+            Route::Ping | Route::WsProgress => {
+                return self.websocket(&request, route, peer, connection, exchange);
+            }
             Route::WtPing => {
                 return self.webtransport(&request, WtRoute::Ping, peer, connection, exchange);
             }
@@ -276,15 +279,26 @@ impl App {
         session: bool,
     ) -> Result<Lane, Response<Body>> {
         let keys = peer.keys().ok_or_else(response::ambiguous)?;
+        self.admit_as(keys, peer, connection, exchange, session)
+            .map_err(response::busy)
+    }
+
+    fn admit_as(
+        &self,
+        keys: ClientKeys,
+        peer: &Peer,
+        connection: &Connection,
+        exchange: Exchange,
+        session: bool,
+    ) -> Result<Lane, Refusal> {
         let lifetimes = &self.config.lifetimes;
         let (hold, lifetime) = match session {
             true => (self.quotas.session(&keys), lifetimes.session),
             false => (self.quotas.operation(&keys), lifetimes.operation),
         };
-        let hold = hold.map_err(response::busy)?;
         Ok(exchange.admit(
             keys,
-            hold,
+            hold?,
             lifetime,
             &connection.work,
             &self.shutdown,
@@ -327,19 +341,38 @@ impl App {
         ))
     }
 
-    /// The WebSocket bus, admitted before its handshake is checked.
+    /// The latency bus or an upload's progress feed, admitted before its handshake is checked.
     fn websocket<B>(
         &self,
         request: &Request<B>,
+        route: Route,
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
     ) -> Admitted {
-        let lane = self.admit(peer, connection, exchange, false)?;
-        Ok(match websocket::handshake(request) {
-            Ok(accepted) => Outcome::WebSocket(accepted, lane),
-            Err(refused) => Outcome::Response(refused),
-        })
+        let keys = peer.keys().ok_or_else(response::ambiguous)?;
+        let lane = match self.admit_as(keys, peer, connection, exchange, false) {
+            Ok(lane) => Ok(lane),
+            // A feed at capacity still upgrades, so the browser reads why from its record as it would from a status.
+            Err(refusal) if route == Route::WsProgress => Err(UploadRefusal::from(refusal)),
+            Err(refusal) => return Err(response::busy(refusal)),
+        };
+        let accepted = match websocket::handshake(request) {
+            Ok(accepted) => accepted,
+            Err(refused) => return Ok(Outcome::Response(refused)),
+        };
+        let socket = match (route, lane) {
+            (Route::Ping, Ok(lane)) => Socket::Bus(lane),
+            (_, Ok(lane)) => {
+                let id = query::get(request.uri().query(), "id").unwrap_or_default();
+                match self.uploads.subscribe(&id, peer.keys().as_ref()) {
+                    Ok(feed) => Socket::Feed(lane, feed),
+                    Err(refusal) => Socket::Refused(refusal),
+                }
+            }
+            (_, Err(refusal)) => Socket::Refused(refusal),
+        };
+        Ok(Outcome::WebSocket(accepted, socket))
     }
 
     /// `bytes=` payload bytes; HEAD and an empty download drop their lane at once.
@@ -502,7 +535,11 @@ impl Endpoint {
             | Route::UploadCheckpoint
             | Route::UploadProgress
             | Route::WtSession => true,
-            Route::Preflight | Route::Servers | Route::WsSession | Route::Ping => self.ui(),
+            Route::Preflight
+            | Route::Servers
+            | Route::WsSession
+            | Route::Ping
+            | Route::WsProgress => self.ui(),
             Route::Download | Route::Upload => !matches!(self, Self::H3Companion),
             Route::WtDownload | Route::WtUpload | Route::WtPing => matches!(self, Self::Quic),
         }

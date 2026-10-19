@@ -11,6 +11,7 @@ export const ROUTES = {
   wtSession: "/wt/session",
   wsSession: "/ws/session",
   ping: "/ws/ping",
+  wsProgress: "/ws/progress",
   wtDownload: "/wt/download",
   wtUpload: "/wt/upload",
   wtPing: "/wt/ping",

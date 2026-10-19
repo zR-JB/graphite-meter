@@ -32,6 +32,7 @@ table! {
         WtSession => ("wtSession", "/wt/session", Kind::Http, POST),
         WsSession => ("wsSession", "/ws/session", Kind::Http, POST),
         Ping => ("ping", "/ws/ping", Kind::WebSocket, GET),
+        WsProgress => ("wsProgress", "/ws/progress", Kind::WebSocket, GET),
         WtDownload => ("wtDownload", "/wt/download", Kind::WebTransport, CONNECT),
         WtUpload => ("wtUpload", "/wt/upload", Kind::WebTransport, CONNECT),
         WtPing => ("wtPing", "/wt/ping", Kind::WebTransport, CONNECT),

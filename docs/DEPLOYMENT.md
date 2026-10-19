@@ -288,7 +288,8 @@ gateway as the trusted proxy. Do not list Traefik's clients in `forwardedHeaders
   entry must be the same address, as Traefik, Caddy and nginx's `$proxy_add_x_forwarded_for` write it. A different
   last entry shows the header was forged, and Graphite Meter refuses the request rather than attribute it to an
   address the client chose. The server ignores `Forwarded`.
-- Allow WebSocket Upgrade to `/ws/ping`, and do not buffer, cache, compress or transform `/upload/progress`.
+- Allow WebSocket Upgrade to `/ws/ping` and `/ws/progress`, and do not buffer, cache, compress or transform
+  `/upload/progress`.
 - Expire idle upstream connections within 15 s, because Graphite Meter closes them then.
 - Keep the whole route family on one backend and add no `forward_auth`, because Graphite Meter owns authentication.
 - Redact the `/auth/oidc/callback` query string from logs, and keep bandwidth policy off measurement routes.
