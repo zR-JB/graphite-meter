@@ -62,7 +62,7 @@ export type LaneCommand =
       /** The server's idle round trip, which sizes POSTs around their turnaround, or null when unknown. */
       rttMs: number | null;
     }
-  | { type: "measure"; epoch: number }
+  | { type: "measure"; epoch: number; at: number }
   | { type: "flush"; at: number };
 
 /** `posted` is one completed upload POST timed on the worker clock, as presentation evidence, never a measurement. */
@@ -90,7 +90,7 @@ export type SessionCommand =
       /** The DELETE that finalizes the upload id. */
       finalize: { url: string; request: RequestRecipe };
     }
-  | { type: "measure"; epoch: number }
+  | { type: "measure"; epoch: number; at: number }
   | { type: "flush"; at: number }
   | { type: "stop" };
 

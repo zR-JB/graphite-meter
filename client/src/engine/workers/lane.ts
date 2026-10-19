@@ -22,7 +22,7 @@ const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, e
 let body: Blob | undefined;
 
 self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
-  if (data.type === "measure") return reports.measure(data.epoch);
+  if (data.type === "measure") return reports.measure(data.epoch, data.at - performance.timeOrigin);
   if (data.type === "flush") return post(reports.flushed(data.at));
   // A rejection in a worker never reaches the owner's error handler, so it ends the lane as a break.
   void (data.type === "download" ? download(data) : upload(data)).then(post, (error) =>
