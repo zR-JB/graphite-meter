@@ -259,8 +259,10 @@ export function createServers(env: ServersEnv): Servers {
   );
   const selectedViews = () => selected().flatMap((id) => views().get(id) ?? []);
   const planServer = (view: ServerView): PlanServer | null =>
-    view.throughput.path && {
+    view.throughput.path &&
+    view.discovery && {
       server: view.server,
+      discovery: view.discovery,
       throughput: view.throughput.path,
     };
 

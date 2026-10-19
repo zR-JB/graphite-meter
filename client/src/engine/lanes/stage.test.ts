@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import type { Activity } from "../run/schedule";
 import {
   ServerBusyError,
+  type Discovery,
   type FetchTarget,
+  type LatencyPath,
+  type LatencyTarget,
   type PreparedServer,
   type ServerAuth,
   type SessionTarget,
@@ -31,12 +34,13 @@ const SESSION: SessionTarget = {
 };
 const DOWNLOAD: Activity = { stage: "download", transfer: ["down"], loadedLatency: false };
 
-/** One server's stage over `target`, with `auth` answering its credentials and `bus` as its latency bus. */
+/** One server's stage over `target`, with `auth` answering its credentials, `bus` as its latency bus and `server` overriding the rest. */
 function stage(
   activity: Activity,
   auth: Partial<ServerAuth> = {},
   target: FetchTarget | SessionTarget = FETCH,
   bus: StageSetup["bus"] = { current: null },
+  server: Partial<PreparedServer> = {},
 ) {
   const events: [keyof StageEvents, ...unknown[]][] = [];
   const spawned = FakeWorker.spawned.length;
@@ -58,7 +62,7 @@ function stage(
     server: {
       server: { id: "peer", url: ORIGIN, name: "Peer" },
       auth: credentials,
-      throughput: { target, fetch: FETCH },
+      throughput: { target, fetch: target.transport === "fetch-stream" ? target : FETCH },
       latency: {
         target: {
           id: ORIGIN,
@@ -68,6 +72,7 @@ function stage(
           tls: true,
         },
       },
+      ...server,
     } as unknown as PreparedServer,
     activity,
     streams: {
@@ -402,4 +407,76 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
   expect(bus.current).toBeNull();
   await elapse(0);
   expect(discarded.error).toBeInstanceOf(DOMException);
+});
+
+test("a fetch upload's feed reaches only its own origin: over a WebSocket offered there for proven HTTP/1.1, else over HTTP", async () => {
+  const BUS = "https://bus.example";
+  const socket = (origin: string): LatencyTarget => ({
+    id: origin,
+    origin,
+    transport: "websocket",
+    protocol: "http1",
+    tls: true,
+  });
+  const offered = (...origins: string[]) =>
+    new Map(origins.map((origin) => [origin, { blocked: null, targets: [socket(origin)] }]));
+  const RealWebSocket = globalThis.WebSocket;
+  try {
+    for (const [why, protocol, sockets, feed] of [
+      [
+        "HTTP/1.1 beside its WebSocket",
+        "http1",
+        [BUS, ORIGIN],
+        "wss://peer.example/ws/progress?id=u1",
+      ],
+      [
+        "unproven HTTP, which may ride QUIC",
+        "negotiated",
+        [ORIGIN],
+        `${ORIGIN}/upload/progress?id=u1`,
+      ],
+      [
+        "HTTP/1.1 whose latency WebSocket is elsewhere",
+        "http1",
+        [BUS],
+        `${ORIGIN}/upload/progress?id=u1`,
+      ],
+      ["HTTP/2", "http2", [ORIGIN], `${ORIGIN}/upload/progress?id=u1`],
+      ["HTTP/3", "http3", [ORIGIN], `${ORIGIN}/upload/progress?id=u1`],
+    ] as const) {
+      const feeds: string[] = [];
+      Object.assign(globalThis, {
+        WebSocket: class {
+          constructor(url: string) {
+            feeds.push(url);
+          }
+          close() {}
+        },
+      });
+      const upload = stage(
+        { stage: "upload", transfer: ["up"], loadedLatency: false },
+        {
+          fetch: async (url, init) => {
+            if (url === `${ORIGIN}/upload/session`) return Response.json({ uploadId: "u1" });
+            if (url.includes("/upload/progress")) feeds.push(url);
+            return new Promise((_, reject) =>
+              init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
+            );
+          },
+        },
+        { ...FETCH, protocol },
+        { current: null },
+        {
+          discovery: { latency: offered(...sockets) } as Discovery,
+          latency: { target: socket(BUS) } as LatencyPath,
+        },
+      );
+      void upload.resources.prepare(new AbortController().signal).catch(() => {});
+      await elapse(0);
+      expect(feeds, why).toEqual([feed]);
+      upload.resources.discard();
+    }
+  } finally {
+    Object.assign(globalThis, { WebSocket: RealWebSocket });
+  }
 });

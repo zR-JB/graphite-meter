@@ -68,7 +68,8 @@ network RTT. See [measurement definitions](../docs/MEASUREMENTS.md) for populati
 `GET /upload/progress` without its newline, and a heartbeat as an empty message. It has that route's owner check,
 reader replacement and records, and the socket credentials of `/ws/ping`; the peer sends nothing. A refused id, or
 a client at capacity, gets its `error` record as the only message. The socket closes normally after the terminal record. It holds none of the
-browser's HTTP/1.1 connections to the origin, which carry upload data instead.
+browser's HTTP/1.1 connections to the origin, which carry upload data instead. The browser opens it only on the
+upload's own origin, and only over confirmed HTTP/1.1, so the upload's client reads it.
 
 ## WebTransport routes
 

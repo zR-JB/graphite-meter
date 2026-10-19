@@ -1,7 +1,7 @@
 // The Details sheet's body; this browser's address shows only while its key is pressed.
 import "./details.css";
 import type { App } from "../../app/app";
-import { describeStreams, needsPings } from "../../engine/net/streams";
+import { describeStreams, feedSocket, needsPings } from "../../engine/net/streams";
 import { activities } from "../../engine/run/schedule";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
@@ -118,19 +118,22 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
         : READINESS[view()?.[role].state ?? "unchecked"];
   // Before a path is proven, the words assume HTTP/1.1.
   const streams = computed(() => {
-    const { throughput, latency } = facts();
-    const server = throughput && {
-      server: { id: "", name: "" },
-      throughput,
-      latency: latency && { target: latency.target },
-    };
+    const { discovery, throughput } = facts();
+    const server =
+      throughput && discovery ? { server: { id: "", name: "" }, discovery, throughput } : null;
     return describeStreams(runConfig().transferStreams, activities(runConfig()), server);
   });
   const uploadFeed = () => {
     const shown = target("throughput");
     if (!shown) return unknown();
-    const carrier = TRANSPORT[shown.transport === "fetch-stream" ? "fetch-stream" : "webtransport"];
-    return `${carrier} over ${describePath(discovery(), "throughput", shown).carrier}`;
+    const known = discovery();
+    const feed =
+      shown.transport !== "fetch-stream"
+        ? "webtransport"
+        : known && feedSocket(known, shown)
+          ? "websocket"
+          : "fetch-stream";
+    return `${TRANSPORT[feed]} over ${describePath(known, "throughput", shown).carrier}`;
   };
   const address = computed(() => {
     const probe = facts().throughput?.probe;

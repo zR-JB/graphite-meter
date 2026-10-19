@@ -6,8 +6,8 @@ import { checkpoint as counters } from "../../protocol/progress";
 import { ROUTES } from "../../protocol/routes";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
 import { Tickets, withToken } from "./dial";
-import { Backoff, lost, refusal, REVOKED } from "./endings";
-import { FINAL_GRACE_MS, parse } from "./records";
+import { Backoff, lost, refusal, refused, REVOKED } from "./endings";
+import { FINAL_GRACE_MS, parse, readRecords } from "./records";
 import { abortable, delay } from "../run/clock";
 
 /** One checkpoint request's bound, and the final checkpoint's whole window. */
@@ -16,21 +16,35 @@ const FINAL_RETRY_MS = 100;
 const READY_POLL_MS = 50;
 /** A feed whose receiver time stood still this long is backed by a checkpoint. */
 const QUIET_MS = 250;
-/** The feed sends a message at least every second: a socket silent for this many quiet checks is dead and reconnects. */
+/** The feed sends a record at least every second: one silent for this many quiet checks is dead and reconnects. */
 const SILENT_CHECKS = 6;
 
 type End = { ending: Ending; broken: boolean };
+export type FeedRoute = "session" | "http" | "websocket";
 const SIGNED_OUT: Ending = {
   reason: "sign-in-required",
   retry: false,
-  detail: "progress socket revoked",
+  detail: "progress feed revoked",
 };
+
+/** Calls `silent` once the feed went unheard for every quiet check; the page clock keeps pace in a hidden tab. */
+function watch(signal: AbortSignal, silent: () => void): () => void {
+  let checks = 0;
+  const check = (): void =>
+    void delay(QUIET_MS, signal).then(() => {
+      if (signal.aborted) return;
+      if (++checks >= SILENT_CHECKS) silent();
+      else check();
+    });
+  check();
+  return () => (checks = 0);
+}
 
 export interface ReceiverHost {
   now(): number;
   /** An observation that passed the guard; `grew` when the receiver's bytes did. */
   observed(checkpoint: Checkpoint, grew: boolean): void;
-  /** Settles the feed socket's ending; true when it should reconnect, after `delayMs`. */
+  /** Settles the feed's ending; true when it should reconnect, after `delayMs`. */
   ended(ending: Ending, broken: boolean, delayMs: number, signal: AbortSignal): Promise<boolean>;
   signIn(): void;
 }
@@ -38,6 +52,7 @@ export interface ReceiverHost {
 export class Receiver {
   readonly #host: ReceiverHost;
   readonly #auth: ServerAuth;
+  readonly #origin: string;
   readonly #feed: string;
   readonly #checkpoint: string;
   /** Null when a session carries the feed. */
@@ -57,15 +72,16 @@ export class Receiver {
     auth: ServerAuth,
     origin: string,
     readonly id: string,
-    socket: string | null,
+    route: FeedRoute,
   ) {
     this.#host = host;
     this.#auth = auth;
+    this.#origin = origin;
     const query = `?id=${encodeURIComponent(id)}`;
     this.#feed = `${origin}${ROUTES.uploadProgress}${query}`;
     this.#checkpoint = `${origin}${ROUTES.uploadCheckpoint}${query}`;
-    this.#backoff = socket === null ? null : new Backoff();
-    if (socket !== null) void this.#follow(socket);
+    this.#backoff = route === "session" ? null : new Backoff();
+    if (route !== "session") void this.#follow(route === "websocket");
   }
 
   /** The feed's DELETE, for a session that carries it. */
@@ -113,7 +129,7 @@ export class Receiver {
     }
   }
 
-  /** While measuring, a quiet feed socket is backed by same-receiver checkpoints; a failed one proves nothing. */
+  /** While measuring without a session, a quiet feed is backed by same-receiver checkpoints; a failed one proves nothing. */
   measure(): void {
     if (!this.#backoff) return;
     const check = () => {
@@ -134,7 +150,7 @@ export class Receiver {
     return abortable(this.#inFlight, signal);
   }
 
-  /** Finalizes a socket feed's id and waits a grace for its terminal record; a session's unfinalized id is backed up at once. */
+  /** Without a session, finalizes the id and waits a grace for its terminal record; a session's unfinalized id is backed up at once. */
   async finish(): Promise<void> {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
@@ -184,10 +200,10 @@ export class Receiver {
     return true;
   }
 
-  async #follow(origin: string): Promise<void> {
+  async #follow(socket: boolean): Promise<void> {
     const { signal } = this.#closed;
     for (;;) {
-      const end = await this.#listen(origin, signal);
+      const end = await (socket ? this.#listen(signal) : this.#read(signal));
       if (!end) return;
       if (end.ending.reason === "sign-in-required") return this.#host.signIn();
       const { ending, broken } = end;
@@ -195,15 +211,48 @@ export class Receiver {
     }
   }
 
-  async #listen(origin: string, signal: AbortSignal): Promise<End | null> {
+  async #read(signal: AbortSignal): Promise<End | null> {
+    const silent = new AbortController();
+    const connection = AbortSignal.any([signal, silent.signal]);
+    try {
+      const response = await this.#auth.fetch(this.#feed, {
+        cache: "no-store",
+        headers: { accept: "application/x-ndjson" },
+        signal: connection,
+      });
+      if (!response.ok || !response.body) {
+        release(response);
+        const ending = refused(response, `progress returned HTTP ${response.status}`);
+        return { ending, broken: false };
+      }
+      // Only an open feed promises its lines; opening one over a loaded uplink can take seconds.
+      const heard = watch(connection, () => silent.abort());
+      const last = await readRecords(response.body, (record) => this.record(record), heard);
+      if (last?.type === "complete") return null;
+      const ending = last
+        ? refusal(null, last.code, last.message || "upload progress error")
+        : lost("progress stream closed");
+      return { ending, broken: false };
+    } catch (error) {
+      if (signal.aborted) return null;
+      if (error instanceof SignInRequired) return { ending: SIGNED_OUT, broken: false };
+      if (silent.signal.aborted)
+        return { ending: lost("progress stream went silent"), broken: false };
+      return { ending: lost(String(error)), broken: true };
+    } finally {
+      silent.abort();
+    }
+  }
+
+  async #listen(signal: AbortSignal): Promise<End | null> {
     let socket: WebSocket;
     try {
-      const ticket = this.#auth.ticket(origin, ROUTES.wsProgress);
+      const ticket = this.#auth.ticket(this.#origin, ROUTES.wsProgress);
       const minted = ticket ? await this.#tickets.take(ticket, signal) : null;
       if (signal.aborted) return null;
       if (minted?.type === "ended") return { ending: minted.ending, broken: false };
       if (minted?.type === "broken") return { ending: lost(minted.detail), broken: true };
-      const feed = `${origin.replace(/^http/, "ws")}${ROUTES.wsProgress}?id=${encodeURIComponent(this.id)}`;
+      const feed = `${this.#origin.replace(/^http/, "ws")}${ROUTES.wsProgress}?id=${encodeURIComponent(this.id)}`;
       socket = new WebSocket(withToken(feed, minted?.token ?? ""));
       // However a WebSocket dial ends, it may have reached the server.
       if (minted) this.#tickets.spent(minted.token);
@@ -215,10 +264,10 @@ export class Receiver {
       };
     }
     return new Promise((resolve) => {
-      let open = false;
-      let checks = 0;
+      const closed = new AbortController();
+      let heard = () => {};
       const done = (end: End | null) => {
-        clearInterval(watch);
+        closed.abort();
         signal.removeEventListener("abort", abort);
         socket.onopen = socket.onmessage = socket.onclose = null;
         socket.close();
@@ -227,13 +276,12 @@ export class Receiver {
       const abort = () => done(null);
       signal.addEventListener("abort", abort);
       // Only an open feed promises its messages; opening one over a loaded uplink can take seconds.
-      const watch = setInterval(() => {
-        if (open && ++checks >= SILENT_CHECKS)
-          done({ ending: lost("progress socket went silent"), broken: false });
-      }, QUIET_MS);
-      socket.onopen = () => (open = true);
+      socket.onopen = () =>
+        (heard = watch(closed.signal, () =>
+          done({ ending: lost("progress socket went silent"), broken: false }),
+        ));
       socket.onmessage = ({ data }: MessageEvent<unknown>) => {
-        checks = 0;
+        heard();
         let record: ReturnType<typeof parse>;
         try {
           record = typeof data === "string" ? parse(data) : null;

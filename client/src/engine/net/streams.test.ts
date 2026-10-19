@@ -8,10 +8,12 @@ const ORIGIN = "https://meter.example";
 function server(
   name: string,
   protocol: HttpProtocol,
-  { transport = "fetch-stream", origin = ORIGIN } = {},
+  { transport = "fetch-stream", origin = ORIGIN, socket = true } = {},
 ): PlanServer {
+  const targets = socket ? [{ transport: "websocket" as const }] : [];
   return {
     server: { id: name, name },
+    discovery: { latency: new Map([[origin, { blocked: null, targets }]]) },
     throughput: {
       target: { transport: transport as "fetch-stream" },
       fetch: { origin, protocol },
@@ -51,10 +53,17 @@ test("one server's lanes: HTTP/1.1 keeps a control connection while it probes or
     ],
     [
       "an upload keeps one for its checkpoints",
-      [server("A", "negotiated")],
+      [server("A", "http1")],
       stage(["up"], false),
       auto(6),
       { down: [0, 0], up: [5, 5] },
+    ],
+    [
+      "an upload without a WebSocket on its origin also keeps one for its HTTP feed",
+      [server("A", "http1", { socket: false })],
+      stage(["up"], false),
+      auto(6),
+      { down: [0, 0], up: [4, 4] },
     ],
     [
       "the ceiling bounds Automatic",
@@ -106,11 +115,11 @@ test("one server's lanes: HTTP/1.1 keeps a control connection while it probes or
       { down: [12, 6], up: [0, 0] },
     ],
     [
-      "forced negotiated HTTP gates on what its pool runs",
+      "forced negotiated HTTP gates on what its pool runs beside its HTTP feed",
       [server("A", "negotiated")],
       stage(["down", "up"]),
       forced(8),
-      { down: [8, 3], up: [8, 2] },
+      { down: [8, 2], up: [8, 2] },
     ],
   ] as const)
     expect<unknown>(lanes([...servers], activity, policy)[0], why).toEqual(expected);

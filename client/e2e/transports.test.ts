@@ -35,6 +35,24 @@ for (const [name, at, throughputTarget, origin, transport, protocol] of paths)
         },
       });
       await ready(page);
+      await page.evaluate(() => {
+        const feeds = new Set<string>();
+        const fetch = window.fetch.bind(window);
+        window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input), location.href);
+          if (url.pathname === "/upload/progress" && !init?.method)
+            feeds.add(url.origin + url.pathname);
+          return fetch(input, init);
+        }) as typeof fetch;
+        window.WebSocket = class extends WebSocket {
+          constructor(at: string | URL, protocols?: string | string[]) {
+            super(at, protocols);
+            const url = new URL(at);
+            if (url.pathname === "/ws/progress") feeds.add(url.origin + url.pathname);
+          }
+        };
+        Object.assign(window, { feeds });
+      });
       const saved = await run(page);
       expect(saved.result.outcome).toBe("complete");
       expect(saved.result.multiServer.failures).toEqual([]);
@@ -47,6 +65,14 @@ for (const [name, at, throughputTarget, origin, transport, protocol] of paths)
       });
       expect(server.download?.reportedBytesPerSec).toBeGreaterThan(0);
       expect(server.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+      // An upload's feed stays on its own origin, over that origin's WebSocket only for HTTP/1.1.
+      const feed =
+        protocol === "http/1.1"
+          ? `${origin.replace(/^http/, "ws")}/ws/progress`
+          : `${origin}/upload/progress`;
+      expect(await page.evaluate(() => [...(window as any).feeds])).toEqual(
+        transport === "fetch-stream" ? [feed] : [],
+      );
       if (datagrams) {
         expect(server.latencyTarget).toEqual({ origin: home.h3, transport: "webtransport" });
         expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
