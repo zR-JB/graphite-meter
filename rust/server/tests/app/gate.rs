@@ -14,7 +14,7 @@ fn each_endpoint_mounts_the_routes_of_its_listener() {
             .join(" ")
     };
     let ui = "/preflight /probe /download /upload /upload/session /upload/progress /wt/session /ws/session /ws/ping \
-              /servers /upload/checkpoint";
+              /ws/progress /servers /upload/checkpoint";
     let h2 =
         "/probe /download /upload /upload/session /upload/progress /wt/session /upload/checkpoint";
     let companion = "/probe /upload/session /upload/progress /wt/session /upload/checkpoint";

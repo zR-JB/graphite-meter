@@ -13,6 +13,7 @@ import {
   type Ending,
   type FailureReason,
   type OpenStage,
+  type PreparedServer,
   type ProbeChannel,
   type ProbeChannelEvents,
   type Role,
@@ -36,6 +37,20 @@ const IN_FLIGHT = { fixed: 16, replyDriven: 4, loaded: 2 };
 const SIGN_IN_CHECK_MS = 3_000;
 
 export const openStage: OpenStage = (setup) => new Stage(setup);
+
+/** A fetch upload's feed rides a WebSocket, which holds none of the browser's HTTP/1.1 connections. */
+function feedOrigin({ latency, discovery, throughput }: PreparedServer): string {
+  if (latency?.target.transport === "websocket") return latency.target.origin;
+  const offered = [...discovery.latency.values()].flatMap(({ blocked, targets }) =>
+    blocked ? [] : targets.filter((target) => target.transport === "websocket"),
+  );
+  const target =
+    offered.find(({ origin }) => origin === throughput.fetch.origin) ??
+    offered.find(({ origin }) => origin === discovery.origin) ??
+    offered[0];
+  if (!target) throw new Error("the server offers no WebSocket for upload progress");
+  return target.origin;
+}
 
 class Stage implements StageResources {
   readonly #setup: StageSetup;
@@ -211,7 +226,8 @@ class Stage implements StageResources {
     const id = await this.#mintUpload(signal);
     if (this.#throughputEnded) throw new Error("throughput already ended");
     const carried = throughput.target.transport !== "fetch-stream";
-    const receiver = new Receiver(this.#receiverHost, auth, throughput.fetch.origin, id, carried);
+    const socket = carried ? null : feedOrigin(this.#setup.server);
+    const receiver = new Receiver(this.#receiverHost, auth, throughput.fetch.origin, id, socket);
     this.#receiver = receiver;
     if (this.#measuring) receiver.measure();
     if (carried) this.#up = this.#carrier("up", receiver);

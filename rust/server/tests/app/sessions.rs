@@ -5,7 +5,10 @@ use super::{
     *,
 };
 use graphite_meter_proto::upload::Session;
-use graphite_meter_server::auth::{COUNTERS, NewLogin, Principal};
+use graphite_meter_server::{
+    auth::{COUNTERS, NewLogin, Principal},
+    transport::websocket::Socket,
+};
 use http::StatusCode;
 use http_body_util::Full;
 use std::time::Duration;
@@ -226,4 +229,24 @@ async fn an_upload_belongs_to_the_login_or_grant_that_started_it() {
         json(tls(&app, empty(signed("POST", &checkpoint, &owner))).await).await["bytes"],
         3
     );
+}
+
+#[tokio::test]
+async fn a_progress_socket_takes_a_ticket_for_its_own_route_and_attaches_its_owners_feed() {
+    let app = auth_app(&[]);
+    let owner = login(&app, Principal::operator());
+    let id = upload_id(&app, &owner).await;
+    let open = |token: String| websocket(&format!("/ws/progress?id={id}&token={token}"), PUBLIC);
+    let pinged = ticket(&app, &owner, "/ws/session", "https://meter.example/ws/ping").await;
+    let refused = tls(&app, open(pinged)).await;
+    assert_eq!(header(&refused, "graphite-meter-auth"), Some("required"));
+    let token = ticket(
+        &app,
+        &owner,
+        "/ws/session",
+        "https://meter.example/ws/progress",
+    )
+    .await;
+    let opened = outcome(&app, Endpoint::H1Tls, "192.0.2.1", open(token)).await;
+    assert!(matches!(opened, Outcome::WebSocket(_, Socket::Feed(..))));
 }

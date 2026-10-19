@@ -8,7 +8,7 @@ const ORIGIN = "https://meter.example";
 function server(
   name: string,
   protocol: HttpProtocol,
-  { transport = "fetch-stream", origin = ORIGIN, latency = ORIGIN as string | null } = {},
+  { transport = "fetch-stream", origin = ORIGIN } = {},
 ): PlanServer {
   return {
     server: { id: name, name },
@@ -16,7 +16,6 @@ function server(
       target: { transport: transport as "fetch-stream" },
       fetch: { origin, protocol },
     },
-    latency: latency === null ? null : { target: { transport: "websocket", origin: latency } },
   };
 }
 const stage = (transfer: Activity["transfer"], loadedLatency = true): Activity => ({
@@ -34,35 +33,28 @@ const lanes = (servers: PlanServer[], activity: Activity, policy: TestConfig["tr
     return { down: [plan.down.planned, plan.down.gating], up: [plan.up.planned, plan.up.gating] };
   });
 
-test("one server's lanes: HTTP/1.1 shares its pool with the bus, the feed and checkpoints", () => {
+test("one server's lanes: HTTP/1.1 keeps a control connection while it probes or uploads, as WebSockets hold none", () => {
   for (const [why, servers, activity, policy, expected] of [
     [
-      "bidirectional HTTP/1.1 beside a WebSocket bus",
+      "bidirectional HTTP/1.1 with loaded latency",
       [server("A", "http1")],
       stage(["down", "up"]),
       auto(6),
-      { down: [2, 2], up: [1, 1] },
+      { down: [3, 3], up: [2, 2] },
     ],
     [
-      "unproven negotiated HTTP downloads as HTTP/1.1",
+      "unproven negotiated HTTP downloads as HTTP/1.1, with all six when nothing probes",
       [server("A", "negotiated")],
-      stage(["down"]),
-      auto(6),
-      { down: [5, 5], up: [0, 0] },
-    ],
-    [
-      "an HTTP upload keeps its feed and checkpoints",
-      [server("A", "negotiated")],
-      stage(["up"]),
-      auto(6),
-      { down: [0, 0], up: [3, 3] },
-    ],
-    [
-      "a bus on another origin leaves the pool whole",
-      [server("A", "http1", { latency: "https://bus.example" })],
-      stage(["down"]),
+      stage(["down"], false),
       auto(6),
       { down: [6, 6], up: [0, 0] },
+    ],
+    [
+      "an upload keeps one for its checkpoints",
+      [server("A", "negotiated")],
+      stage(["up"], false),
+      auto(6),
+      { down: [0, 0], up: [5, 5] },
     ],
     [
       "the ceiling bounds Automatic",
@@ -118,7 +110,7 @@ test("one server's lanes: HTTP/1.1 shares its pool with the bus, the feed and ch
       [server("A", "negotiated")],
       stage(["down", "up"]),
       forced(8),
-      { down: [8, 2], up: [8, 1] },
+      { down: [8, 3], up: [8, 2] },
     ],
   ] as const)
     expect<unknown>(lanes([...servers], activity, policy)[0], why).toEqual(expected);
@@ -127,23 +119,20 @@ test("one server's lanes: HTTP/1.1 shares its pool with the bus, the feed and ch
 test("servers sharing an HTTP/1.1 origin share its pool, or the stage is refused", () => {
   const pair = [server("A", "http1"), server("B", "http1")];
   expect(lanes(pair, stage(["down"]), auto(4))).toEqual([
-    { down: [2, 2], up: [0, 0] },
+    { down: [3, 3], up: [0, 0] },
     { down: [2, 2], up: [0, 0] },
   ]);
   // Forced lanes open exactly. Readiness waits only for those the shared pool runs.
-  const trio = ["A", "B", "C"].map((name) => server(name, "http1", { latency: null }));
-  expect(lanes(trio, stage(["down"]), forced(3)).map(({ down }) => down)).toEqual([
+  const trio = ["A", "B", "C"].map((name) => server(name, "http1"));
+  expect(lanes(trio, stage(["down"], false), forced(3)).map(({ down }) => down)).toEqual([
     [3, 2],
     [3, 2],
     [3, 2],
   ]);
-  // One connection serves both uploads' checkpoints. Each HTTP feed keeps its own.
-  const uploads = [
-    server("A", "http1", { latency: null }),
-    server("B", "http3", { transport: "webtransport", latency: null }),
-  ];
+  // One connection serves both uploads' checkpoints.
+  const uploads = [server("A", "http1"), server("B", "http3", { transport: "webtransport" })];
   expect(lanes(uploads, stage(["up"]), auto(6)).map(({ up }) => up)).toEqual([
-    [4, 4],
+    [5, 5],
     [1, 1],
   ]);
   const crowd = ["A", "B", "C", "D"].map((name) => server(name, "http1"));

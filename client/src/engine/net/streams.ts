@@ -1,13 +1,6 @@
 // One stage's lanes per server and direction, from a model of each HTTP/1.1 origin's browser connection pool.
 import { activities, type Activity } from "../run/schedule";
-import type {
-  Direction,
-  FetchTarget,
-  HttpProtocol,
-  LatencyTarget,
-  TestConfig,
-  ThroughputTarget,
-} from "../types";
+import type { Direction, FetchTarget, HttpProtocol, TestConfig, ThroughputTarget } from "../types";
 
 /** Concurrent HTTP/1.1 requests a browser runs per origin; more wait for a free connection. */
 export const BROWSER_POOL = 6;
@@ -28,7 +21,6 @@ export interface PlanServer {
     target: Pick<ThroughputTarget, "transport">;
     fetch: Pick<FetchTarget, "origin" | "protocol">;
   };
-  latency: { target: Pick<LatencyTarget, "transport" | "origin"> } | null;
 }
 
 /** One direction's lanes: how many open, and how many must deliver before the stage is ready. */
@@ -39,8 +31,8 @@ export interface Lanes {
 type StreamPlan = Map<string, Record<Direction, Lanes>>;
 
 interface OriginBudget {
-  /** What holds one of the origin's connections for the whole stage. */
-  reserved: ("pings" | "feed" | "checkpoint")[];
+  /** One connection stays free for checkpoints, socket tickets and sign-in checks; WebSockets hold none. */
+  control: boolean;
   /** The lanes sharing what the reservations leave, in dealing order. */
   lanes: { name: string; lanes: Lanes }[];
 }
@@ -79,10 +71,10 @@ export function planStreams(
   const pools = new Map<string, OriginBudget>();
   const pool = (origin: string) => {
     let budget = pools.get(origin);
-    if (!budget) pools.set(origin, (budget = { reserved: [], lanes: [] }));
+    if (!budget) pools.set(origin, (budget = { control: false, lanes: [] }));
     return budget;
   };
-  for (const { server, throughput, latency } of servers) {
+  for (const { server, throughput } of servers) {
     const lanes: Record<Direction, Lanes> = {
       down: { planned: 0, gating: 0 },
       up: { planned: 0, gating: 0 },
@@ -100,17 +92,12 @@ export function planStreams(
       lanes[direction] = { planned, gating: planned };
       http1?.lanes.push({ name: server.name, lanes: lanes[direction] });
     }
-    if (needsPings(activity) && latency?.target.transport === "websocket")
-      pool(latency.target.origin).reserved.push("pings");
-    if (!activity.transfer.includes("up")) continue;
-    // Receiver checkpoints reach the HTTP view of every upload; one connection serves all of an origin's.
-    const control = pool(throughput.fetch.origin);
-    if (!session) control.reserved.push("feed");
-    if (!control.reserved.includes("checkpoint")) control.reserved.push("checkpoint");
+    if (needsPings(activity) || activity.transfer.includes("up"))
+      pool(throughput.fetch.origin).control = true;
   }
-  for (const { reserved, lanes } of pools.values()) {
+  for (const { control, lanes } of pools.values()) {
     if (!lanes.length) continue;
-    const available = BROWSER_POOL - reserved.length;
+    const available = control ? BROWSER_POOL - 1 : BROWSER_POOL;
     if (available < lanes.length)
       throw new Error(
         `${[...new Set(lanes.map(({ name }) => name))].join(", ")} share one HTTP/1 origin without enough connections for this stage`,
@@ -139,14 +126,13 @@ export function planError(config: TestConfig, servers: readonly PlanServer[]): s
   }
 }
 
-// Before any path is verified, a description assumes HTTP/1.1 with the WebSocket latency bus on the same origin.
+// Before any path is verified, a description assumes HTTP/1.1.
 const ASSUMED: PlanServer = {
   server: { id: "", name: "" },
   throughput: {
     target: { transport: "fetch-stream" },
     fetch: { origin: "", protocol: "negotiated" },
   },
-  latency: { target: { transport: "websocket", origin: "" } },
 };
 
 /** The lane policy in words for Settings, from the plan the run would make for `server` alone. */

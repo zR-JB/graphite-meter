@@ -131,7 +131,14 @@ fn routes_dispatch_their_methods_and_leave_head_and_options_to_the_router() {
     let methods: [(&[&str], &[&str]); 4] = [
         (
             &["GET"],
-            &["/preflight", "/probe", "/download", "/servers", "/ws/ping"],
+            &[
+                "/preflight",
+                "/probe",
+                "/download",
+                "/servers",
+                "/ws/ping",
+                "/ws/progress",
+            ],
         ),
         (
             &["POST"],
