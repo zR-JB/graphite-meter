@@ -11,6 +11,7 @@ rejected, and counter records always carry explicit `bytes` and `nanos`. See als
    for the aggregate's data lanes and progress feed.
 2. `GET /upload/progress?id=...` attaches to the receiver's NDJSON feed. Its
    `ready` record confirms that the aggregate and reader claim are established.
+   The browser reads the same feed over the [progress socket](wire.md#progress-socket).
 3. `POST /upload?id=...` sends raw upload bytes. The server validates the ID and
    owner before reading the body. Missing, forged, expired, or foreign IDs are
    refused without counting data. A completed POST replies with that POST's

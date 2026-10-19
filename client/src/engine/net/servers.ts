@@ -262,7 +262,6 @@ export function createServers(env: ServersEnv): Servers {
     view.throughput.path && {
       server: view.server,
       throughput: view.throughput.path,
-      latency: latencyNeeded() ? view.latency.path : null,
     };
 
   const connectionEnv: ConnectionEnv = {

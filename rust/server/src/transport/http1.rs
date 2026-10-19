@@ -3,13 +3,13 @@
 use super::{
     Burst, Rehome,
     body::{Aborted, Body, ReplyBound},
-    tls, websocket,
+    tls,
+    websocket::{self, Socket},
 };
 use crate::{
     app::{App, Connection, Endpoint, Outcome},
     engine::download::BlockFile,
     exchange::{EXCHANGE_BOUND, Exchange, Watch},
-    lane::Lane,
     lock,
 };
 use bytes::Bytes;
@@ -54,7 +54,7 @@ pub struct Http1 {
     pub buses: Handle,
 }
 
-type Bus = Arc<Mutex<Option<(OnUpgrade, Lane)>>>;
+type Bus = Arc<Mutex<Option<(OnUpgrade, Socket)>>>;
 
 impl Http1 {
     /// An accepted connection's work, after its TLS handshake on a TLS listener, on whichever runtime polls it.
@@ -123,22 +123,25 @@ impl Http1 {
             }
         }
         let upgraded = lock(&bus).take();
-        if let Some((upgrade, lane)) = upgraded {
-            // This task, holding the connection's admission, waits off the bus's path.
-            let _ = self.buses.spawn(run_bus::<S>(upgrade, lane)).await;
+        if let Some((upgrade, socket)) = upgraded {
+            // This task, holding the connection's admission, waits off the socket's path.
+            let _ = self.buses.spawn(run_bus::<S>(upgrade, socket)).await;
         }
     }
 }
 
-/// Runs a WebSocket bus on the calling runtime, its socket moved there, until `lane` ends or the peer leaves.
-async fn run_bus<S>(upgrade: OnUpgrade, lane: Lane)
+/// Runs a WebSocket on the calling runtime, its socket moved there, until its lane ends or the peer leaves.
+async fn run_bus<S>(upgrade: OnUpgrade, socket: Socket)
 where
     S: AsyncRead + AsyncWrite + Rehome + Unpin + Send + 'static,
 {
-    let upgraded = tokio::select! {
-        biased;
-        _ = lane.ended() => return,
-        upgraded = upgrade => upgraded,
+    let upgraded = match socket.lane() {
+        Some(lane) => tokio::select! {
+            biased;
+            _ = lane.ended() => return,
+            upgraded = upgrade => upgraded,
+        },
+        None => upgrade.await,
     };
     let Ok(Ok(Parts { io, read_buf, .. })) = upgraded.map(Upgraded::downcast::<TokioIo<Io<S>>>)
     else {
@@ -147,7 +150,7 @@ where
     let mut stream = io.into_inner().inner;
     // A socket that cannot move still works through its first runtime's driver.
     let _ = stream.rehome();
-    websocket::serve(stream, read_buf, lane).await;
+    websocket::serve(stream, read_buf, socket).await;
 }
 
 /// Answers one request; an error closes the connection unanswered.
@@ -163,8 +166,8 @@ async fn respond(
     let exchange = shared.exchange();
     match app.handle(request, &connection, exchange).await {
         Outcome::Response(response) => Ok(shared.reply(response, head)),
-        Outcome::WebSocket(response, lane) => {
-            *lock(&bus) = Some((upgrade, lane));
+        Outcome::WebSocket(response, socket) => {
+            *lock(&bus) = Some((upgrade, socket));
             shared.post(State::Open);
             Ok(response.map(|body| H1Reply { body, shared }))
         }

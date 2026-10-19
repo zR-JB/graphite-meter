@@ -1,26 +1,52 @@
-import { expect, jest, test } from "bun:test";
+import { afterEach, expect, jest, test } from "bun:test";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
 import { elapse } from "./fakes.testutil";
 import { Receiver } from "./receiver";
 
-const encoder = new TextEncoder();
+type Script = (socket: FakeSocket) => void | Promise<void>;
+class FakeSocket {
+  static scripts: Script[] = [];
+  static dialed: FakeSocket[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onclose: ((event: { code: number; reason: string }) => void) | null = null;
+  closed = false;
 
-const ndjson = (...chunks: string[]) =>
-  new Response(
-    new ReadableStream({
-      start(controller) {
-        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
-        controller.close();
-      },
-    }),
-  );
+  constructor(readonly url: string) {
+    FakeSocket.dialed.push(this);
+    const script = FakeSocket.scripts.shift();
+    queueMicrotask(() => void script?.(this));
+  }
 
-/** A receiver following an HTTP feed that answers from `script` and checkpoints from `counters`; `carried` leaves it to a session. */
+  open(): void {
+    this.onopen?.();
+  }
+
+  send(...lines: string[]): void {
+    for (const data of lines) this.onmessage?.({ data });
+  }
+
+  end(code = 1006, reason = ""): void {
+    this.onclose?.({ code, reason });
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
+const RealWebSocket = globalThis.WebSocket;
+afterEach(() => Object.assign(globalThis, { WebSocket: RealWebSocket }));
+
 function follow(
-  script: ((init: RequestInit) => Response)[],
+  scripts: Script[],
   counters: { bytes: number; nanos: number }[] = [],
   carried = false,
+  ticket: ServerAuth["ticket"] = () => null,
 ) {
+  FakeSocket.scripts = scripts;
+  FakeSocket.dialed = [];
+  Object.assign(globalThis, { WebSocket: FakeSocket });
   const observed: [number, number, boolean][] = [];
   const endings: [Ending, boolean, number][] = [];
   const deletes: RequestInit[] = [];
@@ -29,11 +55,11 @@ function follow(
     kind: "public",
     left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
-    fetch: async (url, init = {}) => {
+    fetch: async (_, init = {}) => {
       if (init.method === "DELETE") return deletes.push(init), new Response(null, { status: 204 });
-      return url.includes("/checkpoint") ? Response.json(counters.shift()) : script.shift()!(init);
+      return Response.json(counters.shift());
     },
-    ticket: () => null,
+    ticket,
     ended: async () => false,
   };
   const receiver = new Receiver(
@@ -49,7 +75,7 @@ function follow(
     auth,
     "https://peer.example",
     "u1",
-    carried,
+    carried ? null : "https://peer.example",
   );
   return { receiver, observed, endings, deletes, signedIn: () => signedIn };
 }
@@ -59,20 +85,31 @@ const settled = async (done: () => boolean) => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-test("only advancing receiver observations pass, across split records, a replacement feed and checkpoints", async () => {
+test("only advancing receiver observations pass, across a replacement feed socket and checkpoints", async () => {
   const feed = follow(
     [
-      () =>
-        ndjson(
-          '{"type":"ready"}\n{"type":"progress","bytes":100,"na',
-          'nos":1000}\n{"type":"progress","bytes":90,"nanos":3000}\n\n{"type":"progress",',
-          '"bytes":300,"nanos":2000}\n{"type":"progress","bytes":"7","nanos":9}\n{"truncated',
-        ),
-      () =>
-        ndjson(
-          '{"type":"ready"}\n{"type":"progress","bytes":300,"nanos":1500}\n',
-          '{"type":"progress","bytes":400,"nanos":4000}\n{"type":"complete","bytes":400,"nanos":4100}\n',
-        ),
+      (socket) => {
+        socket.open();
+        socket.send(
+          '{"type":"ready"}',
+          '{"type":"progress","bytes":100,"nanos":1000}',
+          '{"type":"progress","bytes":90,"nanos":3000}',
+          "",
+          '{"type":"progress","bytes":300,"nanos":2000}',
+          '{"type":"progress","bytes":"7","nanos":9}',
+          '{"truncated',
+        );
+        socket.end();
+      },
+      (socket) => {
+        socket.open();
+        socket.send(
+          '{"type":"ready"}',
+          '{"type":"progress","bytes":300,"nanos":1500}',
+          '{"type":"progress","bytes":400,"nanos":4000}',
+          '{"type":"complete","bytes":400,"nanos":4100}',
+        );
+      },
     ],
     [
       { bytes: 350, nanos: 3_000 },
@@ -89,7 +126,7 @@ test("only advancing receiver observations pass, across split records, a replace
     [400, 4_100, false],
   ]);
   expect(feed.endings).toEqual([
-    [{ reason: "connection-lost", retry: true, detail: "progress stream closed" }, false, 300],
+    [{ reason: "connection-lost", retry: true, detail: "progress socket closed" }, true, 300],
   ]);
   // A feed record that overtook the answer was taken after the request reached the receiver, so it answers instead.
   expect(await feed.receiver.checkpoint(AbortSignal.timeout(100))).toEqual({
@@ -107,25 +144,21 @@ test("only advancing receiver observations pass, across split records, a replace
   feed.receiver.close();
 });
 
-test("feed refusals back off as busy until the feed opens, an unknown id rotates, and the marker asks for sign-in", async () => {
-  const refusal = (status: number, code: string, retryAfter?: string) => () =>
-    new Response("refused", {
-      status,
-      headers: {
-        "X-Graphite-Upload-Refusal": code,
-        ...(retryAfter && { "Retry-After": retryAfter }),
-      },
-    });
+test("feed refusals back off as busy until the feed opens, an unknown id rotates, and a revoked socket asks for sign-in", async () => {
+  const refused = (code: string, message: string) => (socket: FakeSocket) => {
+    socket.open();
+    socket.send(`{"type":"error","code":"${code}","message":"${message}"}`);
+  };
   const feed = follow([
-    () => {
-      throw new TypeError("Failed to fetch");
+    (socket) => socket.end(),
+    refused("globalFull", "server full"),
+    refused("clientFull", "client full"),
+    (socket) => {
+      socket.open();
+      socket.send('{"type":"ready"}');
+      refused("globalFull", "server full")(socket);
     },
-    refusal(503, "globalFull", "1"),
-    refusal(429, "clientFull"),
-    () =>
-      ndjson('{"type":"ready"}\n{"type":"error","code":"globalFull","message":"server full"}\n'),
-    () =>
-      ndjson('{"type":"ready"}\n{"type":"error","code":"invalid","message":"unknown upload id"}\n'),
+    refused("invalid", "unknown upload id"),
   ]);
   await settled(() => feed.endings.length === 5);
   expect(
@@ -137,55 +170,68 @@ test("feed refusals back off as busy until the feed opens, an unknown id rotates
       delayMs,
     ]),
   ).toEqual([
-    ["connection-lost", undefined, "TypeError: Failed to fetch", true, 300],
-    ["server-busy", undefined, "progress returned HTTP 503", false, 1_000],
-    ["server-busy", undefined, "progress returned HTTP 429", false, 600],
+    ["connection-lost", undefined, "progress socket closed", true, 300],
+    ["server-busy", undefined, "server full", false, 300],
+    ["server-busy", undefined, "client full", false, 600],
     // The feed opened, which ended the busy streak. The run decides the one replacement.
     ["server-busy", undefined, "server full", false, 300],
     ["protocol-error", true, "unknown upload id", false, 300],
   ]);
   expect(feed.receiver.busy).toBe(false);
-  const ended = follow([
+  expect(FakeSocket.dialed.map(({ url }) => url)).toEqual(
+    Array(5).fill("wss://peer.example/ws/progress?id=u1"),
+  );
+  for (const ticket of [
     () => {
       throw new SignInRequired({ id: "peer", url: "https://peer.example", name: "Peer" });
     },
+    () => null,
+  ]) {
+    const ended = follow(
+      [(socket) => socket.end(1008, "authentication required")],
+      [],
+      false,
+      ticket,
+    );
+    await settled(ended.signedIn);
+    expect(ended.endings).toEqual([]);
+  }
+  const broken = follow([], [], false, () => {
+    throw new Error("not this server's origin");
+  });
+  await settled(() => broken.endings.length > 0);
+  expect(broken.endings).toEqual([
+    [
+      { reason: "protocol-error", retry: false, detail: "Error: not this server's origin" },
+      false,
+      300,
+    ],
   ]);
-  await settled(ended.signedIn);
-  expect(ended.endings).toEqual([]);
 });
 
-test("an HTTP feed silent for 1.5 s reconnects, while heartbeats keep a quiet one open", async () => {
+test("a feed socket silent for 1.5 s reconnects, while heartbeats keep a quiet one open", async () => {
   jest.useFakeTimers();
   try {
-    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
-    // The answer's body errors when its request is aborted, as a browser's does.
-    const open = ({ signal }: RequestInit) =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            streams.push(controller);
-            signal!.addEventListener("abort", () => controller.error(signal!.reason));
-          },
-        }),
-      );
-    const feed = follow([open, open]);
+    const feed = follow([(socket) => socket.open(), () => {}]);
     await elapse(0);
-    streams[0]!.enqueue(encoder.encode('{"type":"ready"}\n'));
+    const [first] = FakeSocket.dialed;
+    first!.send('{"type":"ready"}');
     for (let second = 0; second < 4; second++) {
       await elapse(1_000);
-      streams[0]!.enqueue(encoder.encode("\n"));
+      first!.send("");
     }
     await elapse(1_200);
     expect(feed.endings).toEqual([]);
     await elapse(300);
     expect(feed.endings).toEqual([
       [
-        { reason: "connection-lost", retry: true, detail: "progress stream went silent" },
+        { reason: "connection-lost", retry: true, detail: "progress socket went silent" },
         false,
         300,
       ],
     ]);
-    expect(streams).toHaveLength(2);
+    expect(first!.closed).toBe(true);
+    expect(FakeSocket.dialed).toHaveLength(2);
     feed.receiver.close();
   } finally {
     jest.useRealTimers();

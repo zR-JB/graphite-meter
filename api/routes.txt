@@ -27,6 +27,7 @@ uploadProgress | /upload/progress | http
 wtSession | /wt/session | http
 wsSession | /ws/session | http
 ping | /ws/ping | ws
+wsProgress | /ws/progress | ws
 wtDownload | /wt/download | wt
 wtUpload | /wt/upload | wt
 wtPing | /wt/ping | wt

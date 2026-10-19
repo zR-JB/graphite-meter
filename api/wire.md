@@ -1,6 +1,7 @@
 # Graphite Meter message-bus wire protocol
 
-This spec governs the message-based channels: the WebSocket latency bus (`/ws/ping`) and the WebTransport
+This spec governs the message-based channels: the WebSocket latency bus (`/ws/ping`), the WebSocket progress feed
+(`/ws/progress`, see [below](#progress-socket)) and the WebTransport
 datagram bus (`/wt/ping`), plus the WebTransport session routes, defined by their CONNECT URL (see [WebTransport
 routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also open a
 receiver-progress stream. The plain request/response HTTP endpoints (`/servers`, `/preflight`, `/probe`,
@@ -60,6 +61,14 @@ probe outcomes, timeout deadlines, or in-flight ownership.
 
 This application measurement is not TWAMP interoperable and does not isolate
 network RTT. See [measurement definitions](../docs/MEASUREMENTS.md) for populations.
+
+## Progress socket
+
+`/ws/progress?id=` carries an upload's progress feed as WebSocket text messages: each record of
+`GET /upload/progress` without its newline, and a heartbeat as an empty message. It has that route's owner check,
+reader replacement and records, and the socket credentials of `/ws/ping`; the peer sends nothing. A refused id, or
+a client at capacity, gets its `error` record as the only message. The socket closes normally after the terminal record. It holds none of the
+browser's HTTP/1.1 connections to the origin, which carry upload data instead.
 
 ## WebTransport routes
 

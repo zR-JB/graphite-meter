@@ -5,8 +5,8 @@ import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } fro
 import { downloadRefused, lost, refused } from "../lanes/endings";
 
 const MIB = 1024 * 1024;
-/** A POST sends for at least this long, so per-request overhead stays small. */
-const TARGET_POST_MS = 500;
+/** A POST sends for at least this long: each answer idles its lane for a turnaround the other lanes cannot fully cover. */
+const TARGET_POST_MS = 2_000;
 /** Round trips a POST sends for, as each answer idles its lane for about one: the lane stays 90 % busy. */
 const TURNAROUNDS = 9;
 /** The first and smallest POST, below which per-request overhead dominates. */
