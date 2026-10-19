@@ -184,6 +184,7 @@ export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
       };
     },
     checkpoint: async () => receiver(),
+    countAt: async () => null,
     flush: async () => null,
     replaceUpload: async () => {},
     finish: async () => stop(),

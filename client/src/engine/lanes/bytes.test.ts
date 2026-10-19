@@ -27,15 +27,25 @@ test("a flush reads the epoch's total as counted by its cutoff, from readings ke
   // The reading at 50 ms counted the bytes at 0 ms through 50 ms. The ones until 50.75 ms come with the next.
   expect(reports.totalAt(50.75)).toEqual({ total: 201, at: 50.75 });
   expect(reports.totalAt(1_000)).toEqual({ total: 400, at: 1_000 });
-  // A lane that reopens in its epoch counts on. A new epoch starts from nothing.
+  // A lane that reopens in its epoch counts on.
   reports.measure(1);
   reports.count(100, 100);
   expect(reports.totalAt(100).total).toBe(500);
-  reports.measure(2);
-  expect(reports.totalAt(100).total).toBe(0);
   // Past the readings kept, the earliest kept one answers with its own time.
-  for (let at = 0; at < 600; at++) reports.count(1, at);
-  expect(reports.totalAt(10)).toEqual({ total: 89, at: 88 });
+  for (let at = 101; at < 700; at++) reports.count(1, at);
+  expect(reports.totalAt(10)).toEqual({ total: 588, at: 188 });
+});
+
+test("a new epoch counts the bytes read since its time, though the lane hears of it later", () => {
+  const reported: [number, number][] = [];
+  const reports = new ByteReports((bytes, epoch) => reported.push([bytes, epoch]));
+  reports.flush(0);
+  for (let at = 0; at < 100; at++) reports.count(1, at);
+  reports.measure(1, 59.5);
+  expect(reports.totalAt(80).total).toBe(21);
+  expect(reports.totalAt(100).total).toBe(40);
+  reports.flush(100);
+  expect(reported.filter(([, epoch]) => epoch === 1)).toEqual([[40, 1]]);
 });
 
 test("a cutoff counts the bytes read by then, each at its own clock reading, whenever it is asked", () => {

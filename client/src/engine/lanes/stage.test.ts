@@ -181,9 +181,9 @@ test("one download outage stalls once, checks the sign-in once, and resumes only
   for (const lane of lanes) bytes(lane, 0);
   await elapse(5);
   expect(prepared.error).toBeUndefined();
-  outage.resources.measure();
+  outage.resources.measure(1_000);
   expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(
-    Array(3).fill({ type: "measure", epoch: 1 }),
+    Array(3).fill({ type: "measure", epoch: 1, at: performance.timeOrigin + 1_000 }),
   );
   // A report counted before the window belongs to no measurement.
   bytes(lanes[0]!, 0);
@@ -225,7 +225,7 @@ test("a broken lane reopens after its pause while a slow sign-in check runs, whi
     await elapse(150);
     const lanes = blip.lanes();
     for (const lane of lanes) bytes(lane, 0);
-    blip.resources.measure();
+    blip.resources.measure(performance.now());
     lanes[0]!.report({ type: "broken", detail: "TypeError: network error" });
     await elapse(300);
     expect(lanes[0]!.commands.at(-1)).toMatchObject({ type: "download", epoch: 1 });
@@ -244,7 +244,7 @@ test("a flush resolves once every lane answered what it counted by the cutoff, a
     await elapse(150);
     const lanes = flushing.lanes();
     for (const lane of lanes) bytes(lane, 0);
-    flushing.resources.measure();
+    flushing.resources.measure(performance.now());
     const cutoff = performance.now();
     const answer = flushing.resources.flush(cutoff);
     const flushed = outcome(answer);
@@ -275,7 +275,7 @@ test("lanes answering a flush at different times each count what they had by the
   void flushing.resources.prepare(new AbortController().signal);
   await elapse(150);
   const lanes = flushing.lanes();
-  flushing.resources.measure();
+  flushing.resources.measure(performance.now());
   for (const lane of lanes) bytes(lane, 1);
   const cutoff = performance.now();
   const answer = outcome(flushing.resources.flush(cutoff));
@@ -293,6 +293,41 @@ test("lanes answering a flush at different times each count what they had by the
     type === "download" ? [bytes as number] : [],
   );
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(4_400);
+});
+
+test("a count sums every lane's total at a time without cutting the lanes, or is null without every answer", async () => {
+  const counting = stage(DOWNLOAD);
+  void counting.resources.prepare(new AbortController().signal);
+  await elapse(150);
+  const lanes = counting.lanes();
+  counting.resources.measure(performance.now());
+  for (const answering of [3, 2]) {
+    let counted: number | null | undefined;
+    const at = performance.now();
+    void counting.resources.countAt(at).then((total) => (counted = total));
+    expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(
+      Array(3).fill({ type: "flush", at: performance.timeOrigin + at }),
+    );
+    for (const [index, lane] of lanes.slice(0, answering).entries())
+      lane.report({ type: "flushed", total: 1_000 * index, at });
+    await elapse(300);
+    expect(counted).toBe(answering === 3 ? 3_000 : null);
+  }
+  // Counting cuts no lane: every one counts on.
+  for (const lane of lanes) bytes(lane, 1);
+  expect(counting.events.filter(([type]) => type === "download")).toHaveLength(3);
+  // The answer that came too late settles its own count, not the flush asked after it.
+  const cutoff = performance.now();
+  const flushed = outcome(counting.resources.flush(cutoff));
+  lanes[2]!.report({ type: "flushed", total: 9_000, at: performance.timeOrigin + cutoff });
+  for (const lane of lanes)
+    lane.report({ type: "flushed", total: 1_000, at: performance.timeOrigin + cutoff });
+  await elapse(0);
+  expect(flushed.at).toBe(0);
+  const counted = counting.events.flatMap(([type, bytes]) =>
+    type === "download" ? [bytes as number] : [],
+  );
+  expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(3_000);
 });
 
 test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", async () => {
@@ -338,7 +373,7 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
   probe!.report({ type: "ready" });
   await elapse(0);
   expect(prepared).toEqual({ at: 0 });
-  idle.resources.measure();
+  idle.resources.measure(performance.now());
   const finished = outcome(idle.resources.finish());
   probe!.report({ type: "drained" });
   await elapse(0);
@@ -355,7 +390,7 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
   const discarded = outcome(loaded.resources.prepare(new AbortController().signal));
   expect(loaded.probes()).toEqual([]);
   expect(probe!.commands.at(-1)).toEqual({ type: "pace", intervalMs: 80, maxInFlight: 2 });
-  loaded.resources.measure();
+  loaded.resources.measure(performance.now());
   probe!.report({ type: "stalled", detail: "websocket closed" });
   expect(loaded.events.filter(([type]) => type === "latencyStalled")).toEqual([
     ["latencyStalled", "websocket closed"],
