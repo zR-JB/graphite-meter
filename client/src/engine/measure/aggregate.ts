@@ -276,10 +276,11 @@ export class Aggregate {
       return null;
     }
     const last = open.last;
-    // A final boundary where any direction stood still ends the result at the previous one.
+    const sameTick = boundary.atMs === last.atMs;
+    // A final boundary where any direction stood still ends the result at the previous one; downloads in its tick take no time to.
     const stood = (id: string, dir: Direction) =>
       dir === "down"
-        ? boundary.down[id] === last.down[id]
+        ? !sameTick && boundary.down[id] === last.down[id]
         : boundary.up[id]!.id === last.up[id]!.id && boundary.up[id]!.bytes === last.up[id]!.bytes;
     if (final && record.participants.some((id) => dirs.some((dir) => stood(id, dir)))) return null;
     const continuous = record.participants.every((id) =>
@@ -290,40 +291,43 @@ export class Aggregate {
       }),
     );
     // The same tick again, or an unchanged receiver clock, is stale: the receiver clock is authoritative.
-    const unchanged =
-      boundary.atMs <= last.atMs ||
-      (dirs.includes("up") &&
-        record.participants.some((id) => boundary.up[id]!.nanos === last.up[id]!.nanos));
-    if (continuous && unchanged) return null;
-    const sample = window(last, boundary, record);
+    const stale =
+      dirs.includes("up") &&
+      record.participants.some((id) => boundary.up[id]!.nanos === last.up[id]!.nanos);
+    // A final boundary in the last one's tick takes no step: it holds what the lanes had counted by then.
+    const replaces = final && continuous && sameTick && !stale && last !== open.first;
+    if (continuous && (boundary.atMs <= last.atMs || stale) && !replaces) return null;
+    const sample = replaces ? null : window(last, boundary, record);
     const full = window(open.first, boundary, record);
-    if (!sample || !full) {
+    if (!(sample || replaces) || !full) {
       // A replaced receiver or a regressed counter cannot be spanned.
       record.complete = false;
       record.endMs = boundary.atMs;
       this.begin(record.stage, record.participants, boundary.atMs, "evidence-resumed");
       return this.observe(boundary);
     }
-    const ms = boundary.atMs - last.atMs;
-    for (const dir of dirs) {
-      const rate = rateOf(sample, dir)!;
-      open.total[dir].observe((rate * ms) / 1000, ms);
-      // A step no server moved is quiet on its evidence's clock: the client's, or the shortest receiver's.
-      if (!rate) open.quiet[dir] += Math.min(...sample[dir]!.map((c) => c.durationMs));
-      for (const component of sample[dir]!)
-        open.servers.get(component.serverId)![dir].observe(component.bytes, component.durationMs);
-    }
-    open.combined.observe(
-      (((sample.downBytesPerSec ?? 0) + (sample.upBytesPerSec ?? 0)) * ms) / 1000,
-      ms,
-    );
-    open.last = boundary;
-    const span = window(open.peakFrom!, boundary, record);
-    if (span && shortestMs(span) >= PEAK_WINDOW_MS) {
-      open.peakFrom = boundary;
+    if (sample) {
+      const ms = boundary.atMs - last.atMs;
       for (const dir of dirs) {
-        raise(open.peaks, COMBINED, dir, rateOf(span, dir)!);
-        for (const c of span[dir]!) raise(open.peaks, c.serverId, dir, c.bytesPerSec);
+        const rate = rateOf(sample, dir)!;
+        open.total[dir].observe((rate * ms) / 1000, ms);
+        // A step no server moved is quiet on its evidence's clock: the client's, or the shortest receiver's.
+        if (!rate) open.quiet[dir] += Math.min(...sample[dir]!.map((c) => c.durationMs));
+        for (const component of sample[dir]!)
+          open.servers.get(component.serverId)![dir].observe(component.bytes, component.durationMs);
+      }
+      open.combined.observe(
+        (((sample.downBytesPerSec ?? 0) + (sample.upBytesPerSec ?? 0)) * ms) / 1000,
+        ms,
+      );
+      open.last = boundary;
+      const span = window(open.peakFrom!, boundary, record);
+      if (span && shortestMs(span) >= PEAK_WINDOW_MS) {
+        open.peakFrom = boundary;
+        for (const dir of dirs) {
+          raise(open.peaks, COMBINED, dir, rateOf(span, dir)!);
+          for (const c of span[dir]!) raise(open.peaks, c.serverId, dir, c.bytesPerSec);
+        }
       }
     }
     full.quietMs = { ...open.quiet };
@@ -336,6 +340,7 @@ export class Aggregate {
         up: open.quiet.up - open.stableQuiet.up,
       };
     record.headline = open.stable ? headline : full;
+    if (!sample) return null;
     const mark = this.#mark(open, boundary);
     for (const dir of dirs)
       for (const component of sample[dir]!)
@@ -354,6 +359,16 @@ export class Aggregate {
     open.combined = new RateSeries(SCORE_BUCKETS);
     open.wasStable = false;
     open.stable = null;
+  }
+
+  get stableStart(): Boundary | null {
+    return this.#open?.stable ?? null;
+  }
+
+  /** Gives the steady window's start the download counts the lanes had at its time, as the final boundary has. */
+  correct(start: Boundary, down: Record<string, number>): void {
+    const open = this.#open;
+    if (open?.stable === start) open.stable = { ...start, down: { ...start.down, ...down } };
   }
 
   /** Follows the early-finish score; while it holds, the headline window starts where it began to hold. */

@@ -53,9 +53,10 @@ interface Lane {
   backoff: Backoff;
   /** Download bytes of the current epoch passed on to the host. */
   counted: number;
-  /** Bytes reported while a flush awaits this lane's answer, which counts them itself. Null when none awaits. */
+  /** Bytes reported while the final flush awaits this lane's answer, which counts them itself. Null when none awaits. */
   held: number | null;
-  flushed: ((answer: Flushed) => void) | null;
+  /** Handlers of the count answers asked for, in the order the worker answers them. */
+  asked: ((answer: Flushed) => void)[];
   /** The lane answered the final flush, so what it counts later lies past the boundary. */
   cut: boolean;
 }
@@ -82,7 +83,7 @@ export class Carrier {
         backoff: new Backoff(),
         counted: 0,
         held: null,
-        flushed: null,
+        asked: [],
         cut: false,
       };
       lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) =>
@@ -111,47 +112,67 @@ export class Carrier {
     return this.#lanes.some((lane) => !lane.delivered && lane.backoff.busy);
   }
 
-  /** Starts a new epoch, so download bytes counted before it no longer count. */
-  measure(): void {
+  /** Starts a new epoch at page time `at`: download bytes counted before it no longer count. */
+  measure(at: number): void {
     this.#epoch++;
     for (const lane of this.#lanes) {
       lane.counted = 0;
-      lane.worker.postMessage({ type: "measure", epoch: this.#epoch });
+      lane.worker.postMessage({
+        type: "measure",
+        epoch: this.#epoch,
+        at: performance.timeOrigin + at,
+      });
     }
+  }
+
+  /** The epoch's download bytes every lane counted by `at`, or null when one does not answer in time. */
+  async countAt(at: number): Promise<number | null> {
+    if (this.#done.signal.aborted) return null;
+    let total = 0;
+    return (await this.#ask(at, (_, answer) => (total += answer.total))) ? total : null;
   }
 
   /** Collects every lane's download count at `cutoff` and resolves with the latest time they stand at, so a rate never overstates. */
   async flush(cutoff: number): Promise<number | null> {
-    const answered = new AbortController();
     let latest: number | null = null;
     const standsAt = (at: number) => (latest = Math.max(latest ?? Number.NEGATIVE_INFINITY, at));
+    for (const lane of this.#lanes) lane.held = 0;
+    await this.#ask(cutoff, (lane, { total, at }) => {
+      // Past FLUSH_MS the lane's count is settled without its answer.
+      if (lane.held === null) return;
+      lane.cut = true;
+      lane.held = null;
+      if (total > lane.counted) this.#count(lane, total - lane.counted);
+      standsAt(fromEpoch(at));
+    });
+    for (const lane of this.#lanes) {
+      if (lane.held === null) continue;
+      if (lane.held) this.#count(lane, lane.held);
+      lane.held = null;
+      standsAt(performance.now());
+    }
+    return latest;
+  }
+
+  /** Asks every lane for its count at page time `at`; true once all answered within FLUSH_MS. */
+  async #ask(at: number, answer: (lane: Lane, flushed: Flushed) => void): Promise<boolean> {
+    const answered = new AbortController();
     const answers = this.#lanes.map(
       (lane) =>
         new Promise<void>((resolve) => {
-          lane.held = 0;
-          lane.flushed = ({ total, at }) => {
-            lane.cut = true;
-            lane.held = null;
-            if (total > lane.counted) this.#count(lane, total - lane.counted);
-            standsAt(fromEpoch(at));
+          lane.asked.push((flushed) => {
+            answer(lane, flushed);
             resolve();
-          };
-          lane.worker.postMessage({ type: "flush", at: performance.timeOrigin + cutoff });
+          });
+          lane.worker.postMessage({ type: "flush", at: performance.timeOrigin + at });
         }),
     );
-    await Promise.race([
-      Promise.all(answers),
-      delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal])),
+    const all = await Promise.race([
+      Promise.all(answers).then(() => true),
+      delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal])).then(() => false),
     ]);
     answered.abort();
-    for (const lane of this.#lanes) {
-      if (lane.flushed) {
-        if (lane.held) this.#count(lane, lane.held);
-        standsAt(performance.now());
-      }
-      lane.held = lane.flushed = null;
-    }
-    return latest;
+    return all;
   }
 
   /** A session finalizes and acknowledges within its grace. Fetch lanes end at once. */
@@ -197,9 +218,7 @@ export class Carrier {
       case "stopped":
         return this.#acknowledged.abort();
       case "flushed":
-        lane.flushed?.(report);
-        lane.flushed = null;
-        return;
+        return lane.asked.shift()?.(report);
       case "ended":
         return void this.#ended(lane, report.ending);
       case "broken":

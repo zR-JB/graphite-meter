@@ -49,7 +49,9 @@ contributions share the client's connection and are not independent capacity tes
   browser asks every download lane what it had counted by one cutoff, waiting up to 250 ms for the answers. Each
   lane answers from readings of its running total, taken at most once a millisecond and at every report, so however late its answer
   arrives it counts to the same moment as every other lane, and the boundary closes at that cutoff; a lane that
-  answered counts nothing more.
+  answered counts nothing more. A final boundary in the same clock reading as the last tick replaces that tick's
+  download counts. The browser's lanes count from the moment the window opens, however late they hear of it, and an
+  early finish's steady window starts from what every lane had counted by its first boundary, asked the same way.
 - Headline and peak come from the combined boundary samples, never from per-server windows; per-server
   headlines do not add up to the all-servers value.
 - Zero differs from missing. Advancing receiver time with unchanged bytes is a measured zero. A missing, stale or

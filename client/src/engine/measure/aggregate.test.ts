@@ -176,3 +176,31 @@ test("a steady stretch after a burst reads the stability of its own rates", () =
       expect(headline.result.stabilityPct).toBeCloseTo(stabilityPct(rates.slice(from)), 5);
     }
 });
+
+test("a final boundary in the last tick's time closes the window with what the lanes had counted, never a stale receiver", () => {
+  const down = new Aggregate();
+  down.begin("download", ["a"], 0);
+  down.observe({ atMs: 0, down: { a: 0 }, up: {} });
+  down.observe({ atMs: 1_000, down: { a: 1_000 }, up: {} });
+  down.observe({ atMs: 1_000, down: { a: 1_040 }, up: {} }, true);
+  expect(down.intervals.map(({ complete, full }) => [complete, full?.downBytesPerSec])).toEqual([
+    [true, 1_040],
+  ]);
+
+  const empty = new Aggregate();
+  empty.begin("download", ["a"], 0);
+  empty.observe({ atMs: 0, down: { a: 0 }, up: {} });
+  empty.observe({ atMs: 0, down: { a: 40 }, up: {} }, true);
+  expect(empty.intervals.map(({ complete, full }) => [complete, full])).toEqual([[true, null]]);
+
+  const up = new Aggregate();
+  const at = (bytes: number, nanos: number) => ({
+    up: { a: { id: "r", bytes, nanos, receivedAtMs: 0 } },
+    down: {},
+  });
+  up.begin("upload", ["a"], 0);
+  up.observe({ atMs: 0, ...at(0, 1) });
+  up.observe({ atMs: 1_000, ...at(1_000, 1e9 + 1) });
+  up.observe({ atMs: 1_000, ...at(1_500, 1e9 + 1) }, true);
+  expect(up.intervals[0]!.full?.upBytesPerSec).toBe(1_000);
+});

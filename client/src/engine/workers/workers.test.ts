@@ -125,7 +125,7 @@ const RECIPE = {
 } as const;
 const REVOKED = { closeCode: 3, reason: "authentication required" };
 
-test("a download counts bytes into the epoch they were read in: a measure drops what was not yet reported", async () => {
+test("a download counts bytes into the epoch they were read in, from the time its measure names", async () => {
   const body = source();
   const lane = await boot<LaneCommand>("./lane.ts", {
     fetch: async () => new Response(body.stream),
@@ -139,15 +139,21 @@ test("a download counts bytes into the epoch they were read in: a measure drops 
   });
   await elapse(0);
   body.push("warmup");
-  await elapse(0);
-  lane.send({ type: "measure", epoch: 1 });
+  await elapse(5);
+  const at = performance.timeOrigin + performance.now();
+  await elapse(5);
+  // Read after the window opened, before the lane heard of it.
+  body.push("early");
+  await elapse(5);
+  lane.send({ type: "measure", epoch: 1, at });
   await elapse(50);
-  body.push("window");
+  body.push("measured");
   await elapse(0);
   body.controller().error(new TypeError("network error"));
   await elapse(0);
   expect(lane.posted).toEqual([
-    { type: "bytes", bytes: 6, epoch: 1 },
+    { type: "bytes", bytes: 11, epoch: 0 },
+    { type: "bytes", bytes: 13, epoch: 1 },
     { type: "broken", detail: "TypeError: network error" },
   ]);
 });
