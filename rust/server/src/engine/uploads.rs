@@ -96,6 +96,8 @@ pub(super) struct Aggregate {
     clock: Clock,
     bytes: AtomicU64,
     first: OnceLock<u64>,
+    /// Taken by each observation, so that bytes and nanos never fall from one reader's to the next.
+    observing: Mutex<()>,
     life: Mutex<Life>,
     /// Woken when a lane leaves, the upload finishes or expires, or a reader replaces another.
     pub(super) changed: Notify,
@@ -127,6 +129,7 @@ impl Aggregate {
     }
 
     pub(super) fn counters(&self) -> Counters {
+        let _observing = lock(&self.observing);
         let bytes = self.bytes.load(Ordering::Acquire);
         let nanos = self
             .first
@@ -350,6 +353,7 @@ impl Uploads {
             clock: self.0.clock,
             bytes: AtomicU64::new(0),
             first: OnceLock::new(),
+            observing: Mutex::new(()),
             life: Mutex::new(Life {
                 lanes: usize::from(reach == Reach::Join),
                 touched: Instant::now(),

@@ -66,7 +66,9 @@ numbers representing integers between 0 and 9,007,199,254,740,991, inclusive, so
 both clients can represent them exactly. Strings, null, missing values,
 fractions, negative values, and larger numbers are invalid.
 
-Clients retain byte/time observations together. If either counter regresses,
+Clients retain byte/time observations together. The server takes one observation
+of an upload ID at a time, so neither counter falls from one feed record or
+checkpoint to the next in the order they were taken. If either counter regresses,
 the entire observation is stale and is ignored; a client never combines retained
 bytes with a new timestamp. Equal counters can be repeated, and a final record
 can confirm the last observation without adding bytes. Monotonic state belongs

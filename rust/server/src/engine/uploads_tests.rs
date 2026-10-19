@@ -126,3 +126,32 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
     );
     assert_eq!(live(&uploads), 2);
 }
+
+#[test]
+fn observations_from_concurrent_readers_never_regress() {
+    let (uploads, owner, id) = fixture();
+    let mut sink = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
+    sink.record(1);
+    let observe = || {
+        let (uploads, owner, id) = (uploads.clone(), owner.clone(), id.clone());
+        std::thread::spawn(move || {
+            (0..100_000)
+                .map(|_| uploads.checkpoint(&id, Some(&owner)).unwrap())
+                .collect::<Vec<_>>()
+        })
+    };
+    let readers = [observe(), observe()];
+    while !readers.iter().all(std::thread::JoinHandle::is_finished) {
+        sink.record(1);
+    }
+    let mut observed: Vec<_> = readers
+        .into_iter()
+        .flat_map(|reader| reader.join().unwrap())
+        .map(|counters| (counters.nanos(), counters.bytes()))
+        .collect();
+    observed.sort_unstable();
+    assert!(
+        observed.is_sorted_by_key(|&(_, bytes)| bytes),
+        "a later observation has fewer bytes"
+    );
+}
