@@ -1,6 +1,14 @@
 // One stage's lanes per server and direction, from a model of each HTTP/1.1 origin's browser connection pool.
 import { activities, type Activity } from "../run/schedule";
-import type { Direction, FetchTarget, HttpProtocol, TestConfig, ThroughputTarget } from "../types";
+import type {
+  Direction,
+  FetchTarget,
+  HttpProtocol,
+  LatencyTarget,
+  OriginTargets,
+  TestConfig,
+  ThroughputTarget,
+} from "../types";
 
 /** Concurrent HTTP/1.1 requests a browser runs per origin; more wait for a free connection. */
 export const BROWSER_POOL = 6;
@@ -17,6 +25,7 @@ type StreamPolicy = TestConfig["transferStreams"];
 
 export interface PlanServer {
   server: { id: string; name: string };
+  discovery: { latency: ReadonlyMap<string, OriginTargets<Pick<LatencyTarget, "transport">>> };
   throughput: {
     target: Pick<ThroughputTarget, "transport">;
     fetch: Pick<FetchTarget, "origin" | "protocol">;
@@ -33,6 +42,8 @@ type StreamPlan = Map<string, Record<Direction, Lanes>>;
 interface OriginBudget {
   /** One connection stays free for checkpoints, socket tickets and sign-in checks; WebSockets hold none. */
   control: boolean;
+  /** HTTP progress feeds, each holding a connection for the whole stage. */
+  feeds: number;
   /** The lanes sharing what the reservations leave, in dealing order. */
   lanes: { name: string; lanes: Lanes }[];
 }
@@ -43,6 +54,14 @@ export const normalizeStreamCount = (count: number) =>
 /** The latency stage, or a transfer stage with loaded latency, runs a probe channel. */
 export const needsPings = (activity: Activity) =>
   activity.stage === "latency" || (activity.transfer.length > 0 && activity.loadedLatency);
+
+/** A fetch upload's feed must reach its own origin, where only proven HTTP/1.1 spares the pool by riding an offered WebSocket. */
+export const feedSocket = (
+  discovery: PlanServer["discovery"],
+  fetch: PlanServer["throughput"]["fetch"],
+): boolean =>
+  fetch.protocol === "http1" &&
+  !!discovery.latency.get(fetch.origin)?.targets.some(({ transport }) => transport === "websocket");
 
 /** Every lane keeps one stream; the rest is dealt round-robin up to each ceiling. */
 function deal(available: number, ceilings: readonly number[]): number[] {
@@ -71,10 +90,10 @@ export function planStreams(
   const pools = new Map<string, OriginBudget>();
   const pool = (origin: string) => {
     let budget = pools.get(origin);
-    if (!budget) pools.set(origin, (budget = { control: false, lanes: [] }));
+    if (!budget) pools.set(origin, (budget = { control: false, feeds: 0, lanes: [] }));
     return budget;
   };
-  for (const { server, throughput } of servers) {
+  for (const { server, discovery, throughput } of servers) {
     const lanes: Record<Direction, Lanes> = {
       down: { planned: 0, gating: 0 },
       up: { planned: 0, gating: 0 },
@@ -92,12 +111,13 @@ export function planStreams(
       lanes[direction] = { planned, gating: planned };
       http1?.lanes.push({ name: server.name, lanes: lanes[direction] });
     }
-    if (needsPings(activity) || activity.transfer.includes("up"))
-      pool(throughput.fetch.origin).control = true;
+    const uploads = activity.transfer.includes("up");
+    if (needsPings(activity) || uploads) pool(throughput.fetch.origin).control = true;
+    if (http1 && uploads && !feedSocket(discovery, throughput.fetch)) http1.feeds++;
   }
-  for (const { control, lanes } of pools.values()) {
+  for (const { control, feeds, lanes } of pools.values()) {
     if (!lanes.length) continue;
-    const available = control ? BROWSER_POOL - 1 : BROWSER_POOL;
+    const available = BROWSER_POOL - feeds - (control ? 1 : 0);
     if (available < lanes.length)
       throw new Error(
         `${[...new Set(lanes.map(({ name }) => name))].join(", ")} share one HTTP/1 origin without enough connections for this stage`,
@@ -126,12 +146,13 @@ export function planError(config: TestConfig, servers: readonly PlanServer[]): s
   }
 }
 
-// Before any path is verified, a description assumes HTTP/1.1.
+// Before any path is verified, a description assumes HTTP/1.1 with a WebSocket on its origin.
 const ASSUMED: PlanServer = {
   server: { id: "", name: "" },
+  discovery: { latency: new Map([["", { blocked: null, targets: [{ transport: "websocket" }] }]]) },
   throughput: {
     target: { transport: "fetch-stream" },
-    fetch: { origin: "", protocol: "negotiated" },
+    fetch: { origin: "", protocol: "http1" },
   },
 };
 

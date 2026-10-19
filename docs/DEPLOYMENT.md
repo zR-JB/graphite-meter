@@ -185,6 +185,10 @@ GM_H3_PUBLIC_ORIGIN=https://meter.example.com:7249
   `GM_PUBLIC_LATENCY_ORIGINS`, and they usually name a reverse proxy. The browser reports the protocol it reached,
   and the server reports what arrived upstream. `self` is the origin that served that server's discovery request.
 
+An upload's progress feed stays on the upload's origin, because only the upload's client may read it. Over
+confirmed HTTP/1.1 the browser reads it over `/ws/progress` when that origin also offers WebSocket latency, so it holds
+none of the browser's six connections; otherwise, as over HTTP/2 and HTTP/3, it reads `/upload/progress`.
+
 An origin cannot be both native and negotiated, except as a latency-only origin. Browsers differ on clear HTTP
 loopback from an HTTPS page, so advertise HTTPS paths for HTTPS deployments, including on `localhost`.
 
