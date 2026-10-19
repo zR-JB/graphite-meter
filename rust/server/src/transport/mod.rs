@@ -59,6 +59,9 @@ impl Burst {
 
 /// A stream over one TCP socket, which can move to another runtime's I/O driver.
 pub(crate) trait Rehome {
+    /// Whether bytes written to the stream reach the socket unchanged.
+    const PLAIN: bool;
+
     fn socket(&mut self) -> &mut TcpStream;
 
     /// Registers the socket with the calling runtime's driver through a duplicate descriptor; on an error it stays put.
@@ -72,12 +75,16 @@ pub(crate) trait Rehome {
 }
 
 impl Rehome for TcpStream {
+    const PLAIN: bool = true;
+
     fn socket(&mut self) -> &mut TcpStream {
         self
     }
 }
 
 impl Rehome for TlsStream<BufReader<TcpStream>> {
+    const PLAIN: bool = false;
+
     fn socket(&mut self) -> &mut TcpStream {
         self.get_mut().0.get_mut()
     }

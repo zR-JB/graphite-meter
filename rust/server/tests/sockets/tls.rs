@@ -1,7 +1,9 @@
 //! The HTTPS listener and its certificate: TLS 1.3 only, startup checks, validity and renewal.
 
 use super::*;
-use graphite_meter_server::{config::TlsFiles, transport::tls::Certificates};
+use graphite_meter_server::{
+    config::TlsFiles, engine::download::BLOCK_BYTES, transport::tls::Certificates,
+};
 use graphite_meter_testkit::{Identity, Scratch};
 use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
 use std::{path::PathBuf, sync::Arc, time::SystemTime};
@@ -74,6 +76,32 @@ async fn the_https_listener_serves_http_1_1_over_tls_1_3_only() {
     let refused = TlsConnector::from(Arc::new(tls12))
         .connect(ServerName::try_from("localhost").unwrap(), socket);
     assert!(refused.await.is_err(), "TLS 1.2 is refused");
+}
+
+#[tokio::test]
+async fn plain_and_encrypted_downloads_carry_the_same_bytes() {
+    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
+    let (cert, key) = files(&scratch, &identity);
+    let server = start(&tls_env(cert.to_str().unwrap(), key.to_str().unwrap())).await;
+    let connector = TlsConnector::from(Arc::new(identity.client(&[b"http/1.1"])));
+    let socket = TcpStream::connect(server.tls.unwrap()).await.unwrap();
+    let stream = connector
+        .connect(ServerName::try_from("localhost").unwrap(), socket)
+        .await
+        .unwrap();
+    let block = BLOCK_BYTES;
+    let path = format!("GET /download?bytes={}", 16 * block + 13);
+    let encrypted = Client::new(stream).request(&path, "").await.body;
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(64 << 10).unwrap();
+    let mut plain = Client::new(socket.connect(server.address).await.unwrap());
+    plain
+        .send(&format!("{path} HTTP/1.1\r\nHost: test\r\n\r\n"))
+        .await;
+    // A reader that waits fills the socket, so the server sends blocks in parts.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(plain.answer().await.unwrap().body, encrypted);
+    assert_eq!(plain.request("GET /probe", "").await.status, 200);
 }
 
 #[tokio::test]
