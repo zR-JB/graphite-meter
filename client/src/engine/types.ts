@@ -203,9 +203,12 @@ export interface StageSetup {
 export interface StageResources {
   /** Opens the carriers, receiver and probe channel, resolving once they work, within 3.5 s; loaded latency never holds throughput back. */
   prepare(signal: AbortSignal): Promise<void>;
-  measure(): void;
+  /** Opens the measured window at page time `at`. */
+  measure(at: number): void;
   /** A receiver checkpoint; `final` issues fresh requests and retries a miss within 1.5 s. */
   checkpoint(signal: AbortSignal, final?: boolean): Promise<Checkpoint | null>;
+  /** The window's download bytes the lanes counted by page time `at`, or null without every answer; never rejects. */
+  countAt(at: number): Promise<number | null>;
   /** Resolves once the download bytes counted by `cutoff` reached `download`, with the latest time they stand at; never rejects. */
   flush(cutoff: number): Promise<number | null>;
   /** Replaces an upload id the server no longer knows: the run's one rotation per server. */

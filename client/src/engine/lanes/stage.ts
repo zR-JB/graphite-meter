@@ -94,9 +94,9 @@ class Stage implements StageResources {
     }
   }
 
-  measure(): void {
+  measure(at: number): void {
     this.#measuring = true;
-    this.#down?.measure();
+    this.#down?.measure(at);
     this.#receiver?.measure();
     this.#probes?.measure();
   }
@@ -104,6 +104,10 @@ class Stage implements StageResources {
   async checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
     signal.throwIfAborted();
     return this.#receiver ? this.#receiver.checkpoint(signal, final) : null;
+  }
+
+  async countAt(at: number): Promise<number | null> {
+    return (await this.#down?.countAt(at)) ?? null;
   }
 
   async flush(cutoff: number): Promise<number | null> {

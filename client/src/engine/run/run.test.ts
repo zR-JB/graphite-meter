@@ -1278,6 +1278,38 @@ test("a steady upload and a steady latency stage each finish early", async () =>
   expect(result.latency?.reportedMs).toBe(10);
 });
 
+test("an early finish's steady window opens on what the lanes had counted there, however late they report", async () => {
+  // 1 byte per ms, each reported 30 ms after it was counted: a tick sees 30 bytes too few.
+  let started = 0;
+  let reported = 0;
+  const report = (events: StageEvents, lagMs: number) => {
+    const counted = Math.max(0, clock.t - started - lagMs);
+    events.download(counted - reported);
+    reported = counted;
+  };
+  const h = setup(
+    [
+      {
+        id: "self",
+        rate: 0,
+        measure: (events) => {
+          started = clock.t;
+          clock.every(20, () => report(events, 30));
+        },
+        countAt: (at) => at - started,
+        flush: (events) => report(events, 0),
+      },
+    ],
+    { download: true },
+    { downloadMs: 6_000 },
+    { adaptive: true },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.durationMs).toBeLessThan(6_000);
+  expect(result.download?.reportedBytesPerSec).toBe(1_000);
+});
+
 test("turning adaptive off mid-stage runs the stage to its planned end", async () => {
   const h = setup([{ id: "self" }], { download: true }, { downloadMs: 6_000 }, { adaptive: true });
   h.start();

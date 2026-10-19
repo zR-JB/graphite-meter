@@ -28,7 +28,7 @@ const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, e
 let session: Session | null = null;
 
 self.onmessage = ({ data }: MessageEvent<SessionCommand>) => {
-  if (data.type === "measure") reports.measure(data.epoch);
+  if (data.type === "measure") reports.measure(data.epoch, data.at - performance.timeOrigin);
   else if (data.type === "flush") post(reports.flushed(data.at));
   else if (data.type === "stop")
     void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));

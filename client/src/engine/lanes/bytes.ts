@@ -1,7 +1,7 @@
 // Lane payloads: downloads are counted, never touched; uploads send one incompressible block over and over.
 
 const READ_BYTES = 1024 * 1024;
-/** A server's lanes report together about this often: the page handles 100 a second, a boundary misses 10 ms. */
+/** A server's lanes report together about this often: the page handles 100 a second, and exact counts come from flushes. */
 const REPORT_MS = 10;
 const MIB = 1024 * 1024;
 const BLOCK_BYTES = 4 * MIB;
@@ -51,7 +51,7 @@ export class ByteReports {
   #total = 0;
   readonly #times = new Float64Array(TOTALS);
   readonly #totals = new Float64Array(TOTALS);
-  /** Readings taken this epoch; the latest is at `(#taken - 1) % TOTALS`. */
+  /** Readings taken; the latest is at `(#taken - 1) % TOTALS`. */
   #taken = 0;
   #last = Number.NEGATIVE_INFINITY;
 
@@ -78,14 +78,16 @@ export class ByteReports {
     this.#keep(now, true);
   }
 
-  /** Bytes not yet reported belong to the previous epoch; a lane reopening in its epoch keeps the epoch's total. */
-  measure(epoch: number): void {
+  /** A new epoch counts from `at`, though asked later; a lane reopening in its epoch keeps the epoch's total. */
+  measure(epoch: number, at = performance.now()): void {
     this.#bytes = 0;
     if (epoch === this.#epoch) return;
     this.#epoch = epoch;
-    this.#total = 0;
-    this.#taken = 0;
-    this.#last = Number.NEGATIVE_INFINITY;
+    const before = this.totalAt(at).total;
+    for (let slot = 0; slot < Math.min(this.#taken, TOTALS); slot++)
+      this.#totals[slot] = this.#totals[slot]! - before;
+    this.#total -= before;
+    this.#bytes = this.#total;
   }
 
   /** The epoch's total as counted by `at`; past what is kept, the earliest reading kept and its time. */

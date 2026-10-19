@@ -75,6 +75,7 @@ export interface Peer {
   /** A measuring checkpoint answers the count at the moment it was asked, this long after. */
   checkpointLagMs?: number;
   replaceUpload?(signal: AbortSignal): Promise<void>;
+  countAt?(at: number): number | null;
   /** The lanes report what they counted but had not reported yet, and may answer the time their count stands at. */
   flush?(events: StageEvents, cutoff: number): void | number | Promise<void | number>;
   receives?: false;
@@ -188,6 +189,7 @@ export function resources(
           : Promise.resolve(answer))
       );
     },
+    countAt: async (at) => peer.countAt?.(at) ?? null,
     flush: async (cutoff) => (await peer.flush?.(events, cutoff)) ?? null,
     replaceUpload: (signal) => peer.replaceUpload?.(signal) ?? Promise.resolve(),
   };

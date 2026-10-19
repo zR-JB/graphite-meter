@@ -684,6 +684,7 @@ export class Run {
     const shown = this.#shown!;
     const cadence = this.#cadence(activity);
     const at = this.#clock.activeMs();
+    const opensAt = this.#clock.read();
     for (const seat of seats) {
       seat.server.buckets.reset(
         this.#elapsed,
@@ -695,7 +696,7 @@ export class Run {
       if (activity.stage === "latency") seat.server.latency.idle.reset();
       seat.progressAt = { down: at, up: at };
       seat.heardAt = at;
-      seat.resources.measure();
+      seat.resources.measure(opensAt);
     }
     if (activity.stage === "latency") return;
     // The first upload window starts at the window, not in the warmup.
@@ -1185,6 +1186,20 @@ export class Run {
     for (const { buckets } of this.#servers) buckets.restart(this.#elapsed, this.#continuity);
   }
 
+  /** A steady window starts at a tick, where lanes have not yet reported their latest bytes; their counts there replace it. */
+  async #exactStart(stage: StageRun, start: Boundary): Promise<void> {
+    const seats = active(stage);
+    const at = this.#clock.start + start.atMs;
+    const counts = await Promise.all(seats.map((seat) => seat.resources.countAt(at)));
+    if (!this.#current(stage)) return;
+    const down: Record<string, number> = {};
+    seats.forEach((seat, index) => {
+      const count = counts[index];
+      if (count != null) down[seat.server.id] = count;
+    });
+    this.#aggregate.correct(start, down);
+  }
+
   /** Scores the measured window; true when that confirmed an early finish and cut the timeline there. */
   #evaluate(stage: StageRun): boolean {
     const segment = this.#shown;
@@ -1214,7 +1229,13 @@ export class Run {
           }
         : { score: 0, sampleCount: 0 }
       : this.#aggregate.confidence();
-    if (!latency) this.#aggregate.trackStable(confidence.score);
+    if (!latency) {
+      const before = this.#aggregate.stableStart;
+      this.#aggregate.trackStable(confidence.score);
+      const start = this.#aggregate.stableStart;
+      if (start && start !== before && stage.activity.transfer.includes("down"))
+        void this.#exactStart(stage, start);
+    }
     stage.evaluatedAt = this.#clock.read();
     const at = this.#clock.activeMs();
     const eligible =
