@@ -3,7 +3,14 @@ import type { LaneCommand, ProbeCommand, SessionCommand } from "../../protocol/m
 import { elapse } from "../lanes/fakes.testutil";
 
 const encoder = new TextEncoder();
-const GLOBALS = ["onmessage", "postMessage", "fetch", "WebTransport", "WebSocket"] as const;
+const GLOBALS = [
+  "onmessage",
+  "postMessage",
+  "fetch",
+  "Response",
+  "WebTransport",
+  "WebSocket",
+] as const;
 const saved = Object.fromEntries(GLOBALS.map((name) => [name, Reflect.get(globalThis, name)]));
 let realms = 0;
 
@@ -217,6 +224,32 @@ test("an upload drains each answer and breaks on one past 64 KiB rather than kee
   await elapse(0);
   expect(lane.types()).toEqual(["posted", "broken"]);
   expect(lane.posted.at(-1)).toEqual({ type: "broken", detail: "the upload answer was too large" });
+});
+
+test("an upload lane rebuilds its file-backed part when its largest POST grows past eight parts", async () => {
+  const parts: number[] = [];
+  const lane = await boot<LaneCommand>("./lane.ts", {
+    fetch: async () => new Response(null, { status: 500 }),
+    Response: class extends Response {
+      constructor(body?: BodyInit | null, init?: ResponseInit) {
+        if (body instanceof Blob) parts.push(body.size);
+        super(body, init);
+      }
+    },
+  });
+  for (const sharing of [4, 4, 1]) {
+    lane.send({
+      type: "upload",
+      url: "https://peer.example/upload",
+      request: RECIPE,
+      streams: 1,
+      sharing,
+      rttMs: null,
+    });
+    await elapse(0);
+  }
+  // Firefox's 128 MiB budget: 32 MiB POSTs take 4 MiB parts, a lone lane's 128 MiB POSTs 16 MiB ones.
+  expect(parts).toEqual([4 * 1024 * 1024, 16 * 1024 * 1024]);
 });
 
 test("upload POSTs grow past their turnaround, so one lane stays about 90 % busy on a long path", async () => {

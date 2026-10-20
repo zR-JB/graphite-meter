@@ -1,7 +1,14 @@
 // One HTTP fetch lane (api/upload.md): a counted download loop or an upload loop of sized POSTs.
 import { release } from "../../protocol/documents";
 import type { LaneCommand, LaneReport } from "../../protocol/messages";
-import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } from "../lanes/bytes";
+import {
+  ByteReports,
+  countBytes,
+  largestPost,
+  MAX_POST_BYTES,
+  partBytes,
+  randomBlock,
+} from "../lanes/bytes";
 import { downloadRefused, lost, refused } from "../lanes/endings";
 
 const MIB = 1024 * 1024;
@@ -19,7 +26,8 @@ const MIN_DOWNLOAD_BYTES = MIB;
 const post = (report: LaneReport) => postMessage(report);
 const ignore = () => {};
 const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
-let body: Blob | undefined;
+let body = new Blob();
+let partSize = 0;
 
 self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   if (data.type === "measure") return reports.measure(data.epoch, data.at - performance.timeOrigin);
@@ -81,6 +89,9 @@ async function drained(response: Response): Promise<boolean> {
   return true;
 }
 
+const repeated = (part: Blob) =>
+  new Blob(Array.from({ length: Math.ceil(MAX_POST_BYTES / part.size) }, () => part));
+
 async function upload({
   url,
   request,
@@ -93,9 +104,15 @@ async function upload({
     sharing,
     (navigator as { deviceMemory?: number }).deviceMemory,
   );
-  if (!body) {
+  const size = partBytes(largest);
+  if (size !== partSize) {
+    partSize = size;
     const block = new Blob([randomBlock()]);
-    body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
+    body = repeated(block);
+    const part = new Blob(Array.from({ length: size / block.size }, () => block));
+    void new Response(part)
+      .blob()
+      .then((file) => size === partSize && (body = repeated(file)), ignore);
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ByteReports, largestPost } from "./bytes";
+import { ByteReports, largestPost, partBytes } from "./bytes";
 
 const MiB = 1024 * 1024;
 
@@ -79,4 +79,12 @@ test("a lane's largest POST is its device-memory share of its server's lanes, Fi
       largestPost(lanes, sharing, deviceMemory),
       `${lanes} of ${sharing} lanes, ${deviceMemory} GB`,
     ).toBe(expected);
+});
+
+test("no POST spans more than eight parts, which Firefox would copy through a pipe", () => {
+  for (const largest of [2 * MiB, 32 * MiB, 33 * MiB, 64 * MiB, 128 * MiB, 256 * MiB]) {
+    const part = partBytes(largest);
+    expect(Math.ceil(largest / part), `${largest / MiB} MiB POSTs`).toBeLessThanOrEqual(8);
+    expect(part % (4 * MiB)).toBe(0);
+  }
 });
