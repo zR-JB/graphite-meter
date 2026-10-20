@@ -81,6 +81,9 @@ async function drained(response: Response): Promise<boolean> {
   return true;
 }
 
+const repeated = (part: Blob) =>
+  new Blob(Array.from({ length: MAX_POST_BYTES / part.size }, () => part));
+
 async function upload({
   url,
   request,
@@ -88,14 +91,17 @@ async function upload({
   sharing,
   rttMs,
 }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
+  // Firefox and Safari report none; it stands for them here and in largestPost.
   const memory = (navigator as { deviceMemory?: number }).deviceMemory;
   const largest = largestPost(streams, sharing, memory);
   if (!body) {
     const block = new Blob([randomBlock()]);
-    body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
-    // Firefox copies a Blob's parts across processes for every POST, but sends a consumed Response's large Blob from a file.
+    body = repeated(block);
+    // Firefox copies a Blob's bytes across processes for every POST, but sends a Response's consumed body of a few MiB from a file.
     if (memory === undefined)
-      void new Response(body.slice(0, largest)).blob().then((file) => (body = file), ignore);
+      void new Response(new Blob([block, block]))
+        .blob()
+        .then((file) => (body = repeated(file)), ignore);
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;
