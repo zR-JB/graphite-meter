@@ -88,14 +88,16 @@ async function upload({
   sharing,
   rttMs,
 }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
-  const largest = largestPost(
-    streams,
-    sharing,
-    (navigator as { deviceMemory?: number }).deviceMemory,
-  );
-  if (!body) {
+  const memory = (navigator as { deviceMemory?: number }).deviceMemory;
+  const largest = largestPost(streams, sharing, memory);
+  if (!body || body.size < largest) {
     const block = new Blob([randomBlock()]);
-    body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
+    const parts = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
+    // Firefox copies Blob parts across processes for every POST, but keeps a consumed Response's Blob in a file its parent process sends from.
+    body =
+      memory === undefined
+        ? await new Response(parts.slice(0, largest)).blob().catch(() => parts)
+        : parts;
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;
