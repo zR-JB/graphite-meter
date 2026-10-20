@@ -30,9 +30,10 @@ use std::{
     pin::{Pin, pin},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll, ready},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -44,6 +45,9 @@ use tokio_rustls::TlsAcceptor;
 
 /// hyper's buffer: 128 KiB reads cost less CPU per uploaded byte than 64 KiB; it also bounds a head before parsing.
 const BUFFER_BYTES: usize = 128 << 10;
+/// A body's reader wakes about once a period while it streams in, not per packet; the margin keeps its end readable.
+const WAKE_PERIOD: Duration = Duration::from_millis(1);
+const WAKE_MARGIN: u64 = 2 * BUFFER_BYTES as u64;
 
 #[derive(Clone)]
 pub struct Http1 {
@@ -150,6 +154,7 @@ where
     let mut stream = io.into_inner().inner;
     // A socket that cannot move still works through its first runtime's driver.
     let _ = stream.rehome();
+    super::wake_after(stream.socket(), 1);
     match socket {
         Socket::Feed(..) => websocket::serve(Feed::new(stream), read_buf, socket).await,
         _ => websocket::serve(stream, read_buf, socket).await,
@@ -167,6 +172,7 @@ async fn respond(
     let head = request.method() == Method::HEAD;
     let upgrade = hyper::upgrade::on(&mut request);
     let exchange = shared.exchange();
+    let request = request.map(|body| Counted::new(body, shared.clone()));
     match app.handle(request, &connection, exchange).await {
         Outcome::Response(response) => Ok(shared.reply(response, head)),
         Outcome::WebSocket(response, socket) => {
@@ -189,6 +195,8 @@ struct Shared {
     unflushed: AtomicBool,
     flushed: AtomicWaker,
     feed: AtomicBool,
+    /// Bytes of the request's Content-Length that hyper has yet to hand to the app.
+    unread: AtomicU64,
 }
 
 impl Shared {
@@ -216,6 +224,53 @@ impl Shared {
             body,
             shared: self.clone(),
         })
+    }
+}
+
+struct Counted {
+    body: Incoming,
+    shared: Arc<Shared>,
+}
+
+impl Counted {
+    fn new(body: Incoming, shared: Arc<Shared>) -> Self {
+        let counted = Self { body, shared };
+        counted.count();
+        counted
+    }
+
+    fn count(&self) {
+        let unread = http_body::Body::size_hint(&self.body).exact().unwrap_or(0);
+        self.shared.unread.store(unread, Ordering::Release);
+    }
+}
+
+impl http_body::Body for Counted {
+    type Data = Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, hyper::Error>>> {
+        let frame = ready!(Pin::new(&mut self.body).poll_frame(cx));
+        self.count();
+        Poll::Ready(frame)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        http_body::Body::is_end_stream(&self.body)
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        http_body::Body::size_hint(&self.body)
+    }
+}
+
+/// A body the app dropped unread may still be drained by hyper, which must not wait for its bytes.
+impl Drop for Counted {
+    fn drop(&mut self) {
+        self.shared.unread.store(0, Ordering::Release);
     }
 }
 
@@ -267,6 +322,11 @@ struct Io<S> {
     shared: Arc<Shared>,
     burst: Burst,
     feed: bool,
+    lowat: usize,
+    pace: usize,
+    gathered: usize,
+    since: Instant,
+    room: usize,
 }
 
 enum State {
@@ -290,6 +350,11 @@ impl<S> Io<S> {
             shared,
             burst: Burst::default(),
             feed: false,
+            lowat: 1,
+            pace: 1,
+            gathered: 0,
+            since: Instant::now(),
+            room: 1,
         }
     }
 
@@ -367,7 +432,7 @@ impl<S> Io<S> {
     }
 }
 
-impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
+impl<S: AsyncRead + Rehome + Unpin> AsyncRead for Io<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -376,17 +441,18 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
         let this = &mut *self;
         this.check(cx)?;
         ready!(this.burst.poll_turn(cx));
+        this.match_lowat();
         let filled = buffer.filled().len();
         let result = Pin::new(&mut this.inner).poll_read(cx, buffer);
-        this.burst.moved(buffer.filled().len() - filled);
+        let read = buffer.filled().len() - filled;
+        this.burst.moved(read);
+        this.paced(read);
         match result {
             Poll::Pending => {
                 this.burst.waited();
                 this.blocked(cx)?;
             }
-            Poll::Ready(Ok(()))
-                if buffer.filled().len() > filled && matches!(this.state, State::Waiting) =>
-            {
+            Poll::Ready(Ok(())) if read > 0 && matches!(this.state, State::Waiting) => {
                 let deadline = Instant::now() + EXCHANGE_BOUND;
                 this.deadline.as_mut().reset(deadline);
                 this.state = State::Exchange(None);
@@ -399,6 +465,46 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
 }
 
 impl<S: Rehome> Io<S> {
+    fn match_lowat(&mut self) {
+        if !S::PLAIN {
+            return;
+        }
+        let remaining = self
+            .shared
+            .unread
+            .load(Ordering::Acquire)
+            .saturating_sub(WAKE_MARGIN);
+        // A power of two keeps a steady pace from setting the mark on every read.
+        let lowat = self
+            .pace
+            .min(BUFFER_BYTES)
+            .next_power_of_two()
+            .min(self.room)
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX))
+            .max(1);
+        if lowat != self.lowat {
+            self.lowat = lowat;
+            super::wake_after(self.inner.socket(), lowat);
+        }
+    }
+
+    fn paced(&mut self, read: usize) {
+        if !S::PLAIN {
+            return;
+        }
+        self.gathered += read;
+        let elapsed = self.since.elapsed();
+        if elapsed >= WAKE_PERIOD {
+            let pace = self.gathered as u128 * WAKE_PERIOD.as_nanos() / elapsed.as_nanos();
+            self.pace = usize::try_from(pace).unwrap_or(usize::MAX);
+            self.gathered = 0;
+            self.since = Instant::now();
+            if self.pace.min(BUFFER_BYTES).next_power_of_two() > self.room {
+                self.room = super::lowat_room(self.inner.socket());
+            }
+        }
+    }
+
     fn match_feed(&mut self) {
         let feed = self.shared.feed.load(Ordering::Acquire);
         if feed != self.feed {

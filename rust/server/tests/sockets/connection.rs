@@ -195,3 +195,29 @@ async fn a_feed_the_peer_stops_reading_holds_no_backlog_of_stale_records() {
         .count();
     assert!(records < 120, "{records} records were waiting");
 }
+
+#[tokio::test]
+async fn the_end_of_an_upload_is_read_without_waiting_for_more() {
+    let server = start(&[]).await;
+    let id = server.upload_id().await;
+    let mut client = server.connect().await;
+    let mut bulks = 0;
+    for length in [3 << 20, 1, (1 << 20) + 7] {
+        let tail = length.min(1000);
+        let bulk = "x".repeat(length - tail);
+        client
+            .send(&format!(
+                "POST /upload?id={id} HTTP/1.1\r\nHost: test\r\nContent-Length: {length}\r\n\r\n{bulk}"
+            ))
+            .await;
+        bulks += bulk.len() as u64;
+        while server.checkpoint(&id).await < bulks {
+            sleep(Duration::from_millis(1)).await;
+        }
+        client.send(&"x".repeat(tail)).await;
+        let answer = tokio::time::timeout(Duration::from_secs(5), client.answer()).await;
+        let answer = answer.expect("the last bytes were read").unwrap();
+        assert_eq!(answer.body, format!("{{\"bytes\":{length}}}").as_bytes());
+        bulks += tail as u64;
+    }
+}

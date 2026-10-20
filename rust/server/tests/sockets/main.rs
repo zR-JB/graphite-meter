@@ -153,6 +153,15 @@ impl Running {
             .unwrap();
     }
 
+    async fn checkpoint(&self, id: &str) -> u64 {
+        let mut client = self.connect().await;
+        let answer = client
+            .request(&format!("POST /upload/checkpoint?id={id}"), "")
+            .await;
+        let counters: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        counters["bytes"].as_u64().unwrap()
+    }
+
     async fn upload_id(&self) -> String {
         let mut client = self.connect().await;
         let answer = client.request("POST /upload/session", "").await;

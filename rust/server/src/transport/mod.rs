@@ -64,6 +64,26 @@ const FEED_NOTSENT_LOWAT: u32 = 1 << 10;
 /// Unsent bytes past this sit in kernel memory without making an HTTP/1.1 transfer faster.
 const NOTSENT_LOWAT: u32 = 1 << 20;
 
+/// Has the socket wake its reader only once `bytes` arrived, or the peer closed.
+pub(crate) fn wake_after(socket: &TcpStream, bytes: usize) {
+    #[cfg(target_os = "linux")]
+    let _ = socket2::SockRef::from(socket).set_recv_lowat(bytes);
+}
+
+/// The largest power-of-two mark the receive buffer holds as is: kernels before 6.18 clamp the window to a larger one.
+pub(crate) fn lowat_room(socket: &TcpStream) -> usize {
+    cfg_select! {
+        target_os = "linux" => {
+            let buffer = socket2::SockRef::from(socket).recv_buffer_size().unwrap_or(0);
+            1 << (buffer / 4).max(1).ilog2()
+        }
+        _ => {
+            let _ = socket;
+            1
+        }
+    }
+}
+
 /// Caps the bytes a socket keeps unsent, which pile up only once its window is full.
 pub(crate) fn bound_unsent(socket: &TcpStream, bytes: u32) {
     #[cfg(target_os = "linux")]
