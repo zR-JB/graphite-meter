@@ -1,4 +1,4 @@
-// The dial; per frame its painter writes three transforms, a text node and a class.
+// The dial; per frame its painter draws the needle on a canvas and writes a transform, a text node and a class.
 import type { App } from "../../app/app";
 import { CHECK_FAILED } from "../../engine/net/checks";
 import { STAGES, type Stage } from "../../engine/run/schedule";
@@ -284,45 +284,17 @@ export function Dial(props: {
   });
 
   const needle = new Needle();
-  const ring = (
-    <div class="sweep-ring">
-      <div class="half-clip" hidden>
-        <div class="rotor">
-          <svg>
-            <path />
-          </svg>
-        </div>
-      </div>
-      <div class="half-clip second" hidden>
-        <div class="rotor">
-          <svg>
-            <path />
-          </svg>
-        </div>
-      </div>
-      <svg class="start-cap">
-        <circle />
-      </svg>
-    </div>
-  ) as HTMLElement;
-  const head = (
-    <div class="live-head">
-      <svg>
-        <circle class="head" />
-      </svg>
-    </div>
-  ) as HTMLElement;
+  // One bitmap for the arc, its start cap and its head: cheaper per frame than moving vector art in every engine.
+  const canvas = (<canvas />) as HTMLCanvasElement;
+  const pen = canvas.getContext("2d")!;
+  // The head's place, where a reply's ring widens.
+  const head = (<div class="live-head" />) as HTMLElement;
   const needleLayer = (
     <div class="live" aria-hidden="true">
-      {ring}
+      {canvas}
       {head}
     </div>
   ) as HTMLElement;
-  const [firstClip, secondClip] = ring.querySelectorAll<HTMLElement>(".half-clip");
-  const rotors = [...ring.querySelectorAll<HTMLElement>(".rotor")];
-  const cap = ring.querySelector<SVGSVGElement>(".start-cap")!;
-  const headArt = head.querySelector("svg")!;
-  cap.style.visibility = "hidden";
   effect(() => needleLayer.classList.toggle("warming", warming()));
   // Between runs the needle keeps the hue it last showed; a finished run's latency takes its own.
   effect(() => {
@@ -344,11 +316,16 @@ export function Dial(props: {
 
   // What the painter last wrote, so it writes only changes.
   let drawn = Number.NaN;
+  let inked = "";
   let lit = false;
   let written = Number.NaN;
-  let firstHidden = true;
-  let secondHidden = true;
-  let capHidden = true;
+  let scale = 0;
+  let box = [0, 0, 0, 0];
+  function dot(x: number, y: number, r: number): void {
+    pen.beginPath();
+    pen.arc(x, y, r, 0, 2 * Math.PI);
+    pen.fill();
+  }
   function draw(now: number): boolean {
     const kind = pointing.peek();
     const target =
@@ -358,17 +335,37 @@ export function Dial(props: {
           ? Math.min(1, Math.max(0, live.rtt.at(now) / scaleMs.peek())) * SWEEP_DEG
           : null;
     const degrees = needle.angle(now, visible.peek() ? target : null);
-    if (!(Math.abs(degrees - drawn) < 0.01)) {
+    // The hue glides on a stage change, so the needle reads it from its layer's style.
+    const ink = getComputedStyle(needleLayer).color;
+    if (devicePixelRatio !== scale) {
+      scale = devicePixelRatio;
+      canvas.width = Math.round(box[2]! * scale);
+      canvas.height = Math.round(box[3]! * scale);
+      drawn = Number.NaN;
+    }
+    if (!(Math.abs(degrees - drawn) < 0.01) || ink !== inked) {
       drawn = degrees;
-      rotors[0]!.style.transform = `rotate(${Math.min(180, degrees)}deg)`;
-      rotors[1]!.style.transform = `rotate(${Math.max(0, degrees - 180)}deg)`;
-      head.style.transform = `rotate(${degrees + 135}deg)`;
-      // At rest a half would bleed a hairline at its clip seam; the head covers the first degree, and the start cap while shorter.
-      const { radius, arcWidth, headRadius } = layout.peek();
-      const capped = (degrees * Math.PI * radius) / 180 < headRadius + arcWidth / 2;
-      if (degrees <= 1 !== firstHidden) firstClip!.hidden = firstHidden = degrees <= 1;
-      if (degrees <= 180 !== secondHidden) secondClip!.hidden = secondHidden = degrees <= 180;
-      if (capped !== capHidden) cap.style.visibility = (capHidden = capped) ? "hidden" : "";
+      inked = ink;
+      const { center, radius, arcWidth, headRadius } = layout.peek();
+      const end = ARC_START + (degrees * Math.PI) / 180;
+      pen.setTransform(scale, 0, 0, scale, -box[0]! * scale, -box[1]! * scale);
+      pen.clearRect(box[0]!, box[1]!, box[2]!, box[3]!);
+      pen.fillStyle = pen.strokeStyle = ink;
+      pen.lineWidth = arcWidth;
+      // At rest the head covers the first degree, and the start while the arc is shorter than the head.
+      if (degrees > 1) {
+        pen.beginPath();
+        pen.arc(center.x, center.y, radius, ARC_START, end);
+        pen.stroke();
+      }
+      if ((degrees * Math.PI * radius) / 180 >= headRadius + arcWidth / 2)
+        dot(
+          center.x + Math.cos(ARC_START) * radius,
+          center.y + Math.sin(ARC_START) * radius,
+          arcWidth / 2,
+        );
+      dot(center.x + Math.cos(end) * radius, center.y + Math.sin(end) * radius, headRadius);
+      head.style.transform = `translate(${Math.cos(end) * radius}px, ${Math.sin(end) * radius}px)`;
     }
     const on = needle.lit(visible.peek(), motion.peek());
     if (on !== lit) needleLayer.classList.toggle("visible", (lit = on));
@@ -384,9 +381,19 @@ export function Dial(props: {
       written = key;
       number.set(shown === null ? MISSING : shown === "ms" ? fmtMs(amount) : fmtSpeed(amount));
     }
-    return needle.moving(now) || live.active(now);
+    return needle.moving(now) || live.active(now) || fading;
   }
   const wake = painter(draw, props.away);
+  // A hue that glides, on a stage or theme change, is drawn until it lands.
+  let fading = false;
+  const fade = (event: TransitionEvent, now: boolean) => {
+    if (event.target !== needleLayer || event.propertyName !== "color") return;
+    fading = now;
+    wake();
+  };
+  needleLayer.addEventListener("transitionrun", (event) => fade(event, true));
+  needleLayer.addEventListener("transitionend", (event) => fade(event, false));
+  needleLayer.addEventListener("transitioncancel", (event) => fade(event, false));
   effect(() => {
     needle.update(
       {
@@ -407,42 +414,20 @@ export function Dial(props: {
     wake();
   });
   effect(() => {
-    const { center, radius, arcWidth, headRadius } = layout();
-    const extent = radius + arcWidth / 2 + 1;
-    const diameter = 2 * extent;
-    Object.assign(ring.style, {
-      left: `${center.x - extent}px`,
-      top: `${center.y - extent}px`,
-      width: `${diameter}px`,
-      height: `${diameter}px`,
+    const { center, radius, headRadius } = layout();
+    // The whole pixels around the ring and the head's widest reach.
+    const reach = radius + headRadius + 2;
+    const [x, y] = [Math.floor(center.x - reach), Math.floor(center.y - reach)];
+    box = [x, y, Math.ceil(center.x + reach) - x, Math.ceil(center.y + reach) - y];
+    Object.assign(canvas.style, {
+      left: `${box[0]}px`,
+      top: `${box[1]}px`,
+      width: `${box[2]}px`,
+      height: `${box[3]}px`,
     });
-    // Each half ring turns through its own 180°, so the two clips meet at the crossing.
-    rotors.forEach((rotor, half) => {
-      Object.assign(rotor.style, { width: `${diameter}px`, height: `${diameter}px` });
-      const art = rotor.firstElementChild as SVGSVGElement;
-      sizeArt(art, diameter, diameter);
-      const path = art.firstElementChild!;
-      path.setAttribute(
-        "d",
-        `M${extent} ${extent - radius}A${radius} ${radius} 0 0 ${half} ${extent} ${extent + radius}`,
-      );
-      path.setAttribute("stroke-width", String(arcWidth));
-    });
-    sizeArt(cap, diameter, diameter);
-    const dot = cap.firstElementChild!;
-    dot.setAttribute("cx", String(extent));
-    dot.setAttribute("cy", String(extent - radius));
-    dot.setAttribute("r", String(arcWidth / 2));
+    scale = 0;
     Object.assign(head.style, { left: `${center.x}px`, top: `${center.y}px` });
-    head.style.setProperty("--radius", `${radius}px`);
     head.style.setProperty("--head-r", `${headRadius}px`);
-    // The head's box leaves room for a fifth more; a reply's ring widens past it, bounded by the dial's clip.
-    const reach = Math.ceil(headRadius * 1.2) + 1;
-    Object.assign(headArt.style, { left: `${radius - reach}px`, top: `${-reach}px` });
-    headArt.setAttribute("width", String(2 * reach));
-    headArt.setAttribute("height", String(2 * reach));
-    headArt.setAttribute("viewBox", `${-reach} ${-reach} ${2 * reach} ${2 * reach}`);
-    for (const circle of headArt.children) circle.setAttribute("r", String(headRadius));
     drawn = Number.NaN;
     wake(true);
   });

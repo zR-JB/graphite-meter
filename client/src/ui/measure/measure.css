@@ -151,7 +151,7 @@
     overflow: visible;
     contain: size layout style;
   }
-  :is(.dial-art, .graph .art, .rotor svg, .start-cap, .live-head svg) {
+  :is(.dial-art, .graph .art) {
     max-width: none;
   }
   /* The track takes a faint tint of the running stage from its warmup on. */
@@ -166,31 +166,25 @@
   .gauge-dial.motion .dial-art .track {
     transition: stroke var(--dur-stage) var(--ease-out-head);
   }
-  /* The needle turns as squares; their empty corners must not widen a phone's page. */
+  /* A reply's ring must not widen a phone's page. */
   .live {
     opacity: 0;
     pointer-events: none;
     overflow: clip;
+    color: var(--accent, var(--text-soft));
     &.visible {
       opacity: 1;
     }
-    & path {
-      fill: none;
-      stroke: var(--accent, var(--text-soft));
+    /* A warmup's reading is shown, not counted: its hue faded toward the page until the window opens. */
+    &.warming {
+      color: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
-    & circle {
-      fill: var(--accent, var(--text-soft));
-    }
-    /* A warmup's reading is shown, not counted: its hue faded toward the page until the window opens; opaque, so overlaps paint as one. */
-    &.warming path {
-      stroke: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
-    }
-    &.warming circle {
-      fill: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
+    & canvas {
+      position: absolute;
     }
     & .ripple {
       position: absolute;
-      left: calc(var(--radius) - var(--head-r));
+      left: calc(-1 * var(--head-r));
       top: calc(-1 * var(--head-r));
       width: calc(2 * var(--head-r));
       height: calc(2 * var(--head-r));
@@ -200,55 +194,14 @@
       animation: ripple var(--dur-pulse) var(--ease-out);
     }
   }
+  /* A draining needle blends into the next stage's hue on its way down. */
   .gauge-dial.motion .live {
-    transition: opacity var(--dur-slide) var(--ease-out);
-    /* A draining needle blends into the next stage's hue on its way down. */
-    & :is(path, circle) {
-      transition:
-        stroke calc(0.54 * var(--dur-stage)) var(--ease-out-head),
-        fill calc(0.54 * var(--dur-stage)) var(--ease-out-head);
-    }
-  }
-  /* The rotors and the head are their own layers: a frame of the needle moves them and paints nothing. */
-  .sweep-ring {
-    position: absolute;
-    transform: rotate(225deg);
-  }
-  .half-clip {
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 50%;
-    height: 100%;
-    overflow: hidden;
-    /* One pixel of overlap, so the two halves never meet on an antialiased crack. */
-    &.second {
-      right: auto;
-      left: 0;
-      width: calc(50% + 1px);
-    }
-  }
-  .rotor {
-    position: absolute;
-    top: 0;
-    right: 0;
-    .second > & {
-      right: auto;
-      left: 0;
-    }
-  }
-  .start-cap {
-    position: absolute;
-    inset: 0;
+    transition:
+      opacity var(--dur-slide) var(--ease-out),
+      color calc(0.54 * var(--dur-stage)) var(--ease-out-head);
   }
   .live-head {
     position: absolute;
-    width: 0;
-    height: 0;
-    & svg {
-      position: absolute;
-      overflow: visible;
-    }
   }
   .head-target {
     position: absolute;
