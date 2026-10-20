@@ -97,7 +97,7 @@ async function upload({
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = repeated(block);
-    // Firefox copies a Blob's bytes across processes for every POST, but sends a Response's consumed body of a few MiB from a file.
+    // Firefox copies a Blob's bytes across processes for every POST, but sends a consumed 8 MiB Response from a temporary file.
     if (memory === undefined)
       void new Response(new Blob([block, block]))
         .blob()
