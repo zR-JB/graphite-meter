@@ -64,7 +64,7 @@ const FEED_NOTSENT_LOWAT: u32 = 1 << 10;
 /// Unsent bytes past this sit in kernel memory without making an HTTP/1.1 transfer faster.
 const NOTSENT_LOWAT: u32 = 1 << 20;
 
-/// Caps how much a socket keeps unsent once the peer's window is full.
+/// Caps the bytes a socket keeps unsent, which pile up only once its window is full.
 pub(crate) fn bound_unsent(socket: &TcpStream, bytes: u32) {
     #[cfg(target_os = "linux")]
     let _ = socket2::SockRef::from(socket).set_tcp_notsent_lowat(bytes);
