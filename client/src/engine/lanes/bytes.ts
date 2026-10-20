@@ -130,8 +130,13 @@ export function randomBlock(): Uint8Array<ArrayBuffer> {
   return block;
 }
 
-/** Bodies repeat an 8 MiB random part read back from a Response, which Firefox keeps in a file it sends from rather than copying the part across processes for every POST. */
+/** Bodies repeat one random part by reference, so memory stays at the part whatever their size. */
 export const MAX_POST_BYTES = 256 * MIB;
+const MAX_PARTS = 8;
+
+/** Keeps POSTs up to `largest` within MAX_PARTS parts: Firefox sends that many file-backed parts, such as one read back from a Response, by reference, but copies a body of more, or a page-made Blob, across processes. */
+export const partBytes = (largest: number) =>
+  Math.max(1, Math.ceil(largest / (MAX_PARTS * BLOCK_BYTES))) * BLOCK_BYTES;
 
 /** A lane's share of a server's posting budget by device memory; Firefox reports none and stalls larger POSTs, so it pools all lanes. */
 export function largestPost(

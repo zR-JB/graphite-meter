@@ -1,7 +1,14 @@
 // One HTTP fetch lane (api/upload.md): a counted download loop or an upload loop of sized POSTs.
 import { release } from "../../protocol/documents";
 import type { LaneCommand, LaneReport } from "../../protocol/messages";
-import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } from "../lanes/bytes";
+import {
+  ByteReports,
+  countBytes,
+  largestPost,
+  MAX_POST_BYTES,
+  partBytes,
+  randomBlock,
+} from "../lanes/bytes";
 import { downloadRefused, lost, refused } from "../lanes/endings";
 
 const MIB = 1024 * 1024;
@@ -82,7 +89,7 @@ async function drained(response: Response): Promise<boolean> {
 }
 
 const repeated = (part: Blob) =>
-  new Blob(Array.from({ length: MAX_POST_BYTES / part.size }, () => part));
+  new Blob(Array.from({ length: Math.ceil(MAX_POST_BYTES / part.size) }, () => part));
 
 async function upload({
   url,
@@ -99,9 +106,8 @@ async function upload({
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = repeated(block);
-    void new Response(new Blob([block, block]))
-      .blob()
-      .then((part) => (body = repeated(part)), ignore);
+    const part = new Blob(Array.from({ length: partBytes(largest) / block.size }, () => block));
+    void new Response(part).blob().then((file) => (body = repeated(file)), ignore);
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;
