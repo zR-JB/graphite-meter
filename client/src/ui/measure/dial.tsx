@@ -1,4 +1,4 @@
-// The dial; per frame its painter writes three transforms, a text node and a class.
+// The dial; per frame its painter writes a path, a transform, a text node and a class.
 import type { App } from "../../app/app";
 import { CHECK_FAILED } from "../../engine/net/checks";
 import { STAGES, type Stage } from "../../engine/run/schedule";
@@ -43,7 +43,7 @@ import {
   type ResultArc,
 } from "./dial-model";
 import type { Live } from "./live";
-import { Figure, inView, measure, painter } from "./paint";
+import { Figure, inView, measure, painter, svg } from "./paint";
 
 /** A result leaves as its arcs drain back to zero, so the next run starts empty. */
 const RESULT_DRAIN_MS = 160;
@@ -284,27 +284,15 @@ export function Dial(props: {
   });
 
   const needle = new Needle();
-  const ring = (
-    <div class="sweep-ring">
-      <div class="half-clip" hidden>
-        <div class="rotor">
-          <svg>
-            <path />
-          </svg>
-        </div>
-      </div>
-      <div class="half-clip second" hidden>
-        <div class="rotor">
-          <svg>
-            <path />
-          </svg>
-        </div>
-      </div>
-      <svg class="start-cap">
-        <circle />
-      </svg>
-    </div>
-  ) as HTMLElement;
+  // The live arc in sectors, each its own drawing, so a frame redraws only the sector the needle ends in.
+  const pieces = SECTORS.map(() => svg("path"));
+  const sectors = pieces.map((piece) => {
+    const art = svg("svg");
+    art.append(piece);
+    return art;
+  });
+  const cap = svg("svg");
+  cap.append(svg("circle"));
   const head = (
     <div class="live-head">
       <svg>
@@ -314,13 +302,11 @@ export function Dial(props: {
   ) as HTMLElement;
   const needleLayer = (
     <div class="live" aria-hidden="true">
-      {ring}
+      {sectors}
+      {cap}
       {head}
     </div>
   ) as HTMLElement;
-  const [firstClip, secondClip] = ring.querySelectorAll<HTMLElement>(".half-clip");
-  const rotors = [...ring.querySelectorAll<HTMLElement>(".rotor")];
-  const cap = ring.querySelector<SVGSVGElement>(".start-cap")!;
   const headArt = head.querySelector("svg")!;
   cap.style.visibility = "hidden";
   effect(() => needleLayer.classList.toggle("warming", warming()));
@@ -346,9 +332,8 @@ export function Dial(props: {
   let drawn = Number.NaN;
   let lit = false;
   let written = Number.NaN;
-  let firstHidden = true;
-  let secondHidden = true;
   let capHidden = true;
+  const ends = SECTORS.map(() => Number.NaN);
   function draw(now: number): boolean {
     const kind = pointing.peek();
     const target =
@@ -360,14 +345,18 @@ export function Dial(props: {
     const degrees = needle.angle(now, visible.peek() ? target : null);
     if (!(Math.abs(degrees - drawn) < 0.01)) {
       drawn = degrees;
-      rotors[0]!.style.transform = `rotate(${Math.min(180, degrees)}deg)`;
-      rotors[1]!.style.transform = `rotate(${Math.max(0, degrees - 180)}deg)`;
-      head.style.transform = `rotate(${degrees + 135}deg)`;
-      // At rest a half would bleed a hairline at its clip seam; the head covers the first degree, and the start cap while shorter.
-      const { radius, arcWidth, headRadius } = layout.peek();
+      const { center, radius, arcWidth, headRadius } = layout.peek();
+      SECTORS.forEach((from, index) => {
+        const end = degrees <= from ? 0 : Math.min(degrees, from + SECTOR_DEG);
+        if (end === ends[index]) return;
+        ends[index] = end;
+        if (end) pieces[index]!.setAttribute("d", sectorPath(center, radius, from, end));
+        else pieces[index]!.removeAttribute("d");
+      });
+      const at = pointAt({ x: 0, y: 0 }, radius, degrees);
+      head.style.transform = `translate(${at.x}px, ${at.y}px)`;
+      // The start cap rounds the arc's start once the head no longer covers it.
       const capped = (degrees * Math.PI * radius) / 180 < headRadius + arcWidth / 2;
-      if (degrees <= 1 !== firstHidden) firstClip!.hidden = firstHidden = degrees <= 1;
-      if (degrees <= 180 !== secondHidden) secondClip!.hidden = secondHidden = degrees <= 180;
       if (capped !== capHidden) cap.style.visibility = (capHidden = capped) ? "hidden" : "";
     }
     const on = needle.lit(visible.peek(), motion.peek());
@@ -408,40 +397,24 @@ export function Dial(props: {
   });
   effect(() => {
     const { center, radius, arcWidth, headRadius } = layout();
-    const extent = radius + arcWidth / 2 + 1;
-    const diameter = 2 * extent;
-    Object.assign(ring.style, {
-      left: `${center.x - extent}px`,
-      top: `${center.y - extent}px`,
-      width: `${diameter}px`,
-      height: `${diameter}px`,
+    // Two pixels past the stroke for its antialiasing.
+    const reach = arcWidth / 2 + 2;
+    SECTORS.forEach((from, index) => {
+      boxArt(sectors[index]!, sectorBox(center, radius, reach, from, from + SECTOR_DEG));
+      pieces[index]!.setAttribute("stroke-width", String(arcWidth));
     });
-    // Each half ring turns through its own 180°, so the two clips meet at the crossing.
-    rotors.forEach((rotor, half) => {
-      Object.assign(rotor.style, { width: `${diameter}px`, height: `${diameter}px` });
-      const art = rotor.firstElementChild as SVGSVGElement;
-      sizeArt(art, diameter, diameter);
-      const path = art.firstElementChild!;
-      path.setAttribute(
-        "d",
-        `M${extent} ${extent - radius}A${radius} ${radius} 0 0 ${half} ${extent} ${extent + radius}`,
-      );
-      path.setAttribute("stroke-width", String(arcWidth));
-    });
-    sizeArt(cap, diameter, diameter);
+    ends.fill(Number.NaN);
+    const start = pointAt(center, radius, 0);
+    boxArt(cap, [start.x - reach, start.y - reach, 2 * reach, 2 * reach]);
     const dot = cap.firstElementChild!;
-    dot.setAttribute("cx", String(extent));
-    dot.setAttribute("cy", String(extent - radius));
+    dot.setAttribute("cx", String(start.x));
+    dot.setAttribute("cy", String(start.y));
     dot.setAttribute("r", String(arcWidth / 2));
     Object.assign(head.style, { left: `${center.x}px`, top: `${center.y}px` });
-    head.style.setProperty("--radius", `${radius}px`);
     head.style.setProperty("--head-r", `${headRadius}px`);
     // The head's box leaves room for a fifth more; a reply's ring widens past it, bounded by the dial's clip.
-    const reach = Math.ceil(headRadius * 1.2) + 1;
-    Object.assign(headArt.style, { left: `${radius - reach}px`, top: `${-reach}px` });
-    headArt.setAttribute("width", String(2 * reach));
-    headArt.setAttribute("height", String(2 * reach));
-    headArt.setAttribute("viewBox", `${-reach} ${-reach} ${2 * reach} ${2 * reach}`);
+    const space = Math.ceil(headRadius * 1.2) + 1;
+    boxArt(headArt, [-space, -space, 2 * space, 2 * space]);
     for (const circle of headArt.children) circle.setAttribute("r", String(headRadius));
     drawn = Number.NaN;
     wake(true);
@@ -654,6 +627,57 @@ function sizeArt(art: SVGSVGElement, width: number, height: number): void {
 }
 
 const angle = (fraction: number) => ARC_START + ARC_SWEEP * fraction;
+
+const SECTOR_DEG = 30;
+/** Sectors round the whole circle, as a rescale can carry the needle past the ring's end. */
+const SECTORS = Array.from({ length: 360 / SECTOR_DEG }, (_, index) => index * SECTOR_DEG);
+
+const pointAt = (center: { x: number; y: number }, radius: number, degrees: number) => {
+  const at = ARC_START + (degrees * Math.PI) / 180;
+  return { x: center.x + Math.cos(at) * radius, y: center.y + Math.sin(at) * radius };
+};
+
+/** A later sector starts a pixel early, so no seam shows where two meet. */
+const sectorStart = (radius: number, from: number) => from && from - 180 / (Math.PI * radius);
+
+function sectorPath(center: { x: number; y: number }, radius: number, from: number, to: number) {
+  const start = pointAt(center, radius, sectorStart(radius, from));
+  const end = pointAt(center, radius, to);
+  return `M${start.x} ${start.y}A${radius} ${radius} 0 0 1 ${end.x} ${end.y}`;
+}
+
+/** The box around the ring's sector from `from` to `to` degrees, `reach` either side of its center line. */
+function sectorBox(
+  center: { x: number; y: number },
+  radius: number,
+  reach: number,
+  from: number,
+  to: number,
+): number[] {
+  // Its corners, and the ring's outermost points between them.
+  const points = [sectorStart(radius, from), to, 45, 135, 225, 315]
+    .filter((degrees, index) => index < 2 || (degrees > from && degrees < to))
+    .flatMap((degrees) => [radius - reach, radius + reach].map((r) => pointAt(center, r, degrees)));
+  const x = Math.min(...points.map((point) => point.x));
+  const y = Math.min(...points.map((point) => point.y));
+  return [
+    x,
+    y,
+    Math.max(...points.map((point) => point.x)) - x,
+    Math.max(...points.map((point) => point.y)) - y,
+  ];
+}
+
+/** Sizes a drawing to the whole pixels around a box of the dial, drawn in the dial's own coordinates. */
+function boxArt(art: SVGSVGElement, [left, top, across, down]: number[]): void {
+  const [x, y] = [Math.floor(left!), Math.floor(top!)];
+  const width = Math.ceil(left! + across!) - x;
+  const height = Math.ceil(top! + down!) - y;
+  Object.assign(art.style, { left: `${x}px`, top: `${y}px` });
+  art.setAttribute("width", String(width));
+  art.setAttribute("height", String(height));
+  art.setAttribute("viewBox", `${x} ${y} ${width} ${height}`);
+}
 
 /** Every result's arc, longest underneath, kept by stage so a scale change glides them without replaying the sweep. */
 function ResultLayer(props: {
