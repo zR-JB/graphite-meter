@@ -303,12 +303,12 @@ impl<S> Io<S> {
         match &mut self.state {
             State::Reply(bound) => Ok(bound.check(cx)?),
             State::Open => Ok(()),
-            State::Waiting | State::Exchange(_) if self.deadline.as_mut().poll(cx).is_pending() => {
-                Ok(())
-            }
             // A request admitted while its body is read is bound by its lane instead.
             State::Exchange(Some(watch)) if watch.admitted().is_some() => {
                 self.state = State::Open;
+                Ok(())
+            }
+            State::Waiting | State::Exchange(_) if self.deadline.as_mut().poll(cx).is_pending() => {
                 Ok(())
             }
             State::Waiting | State::Exchange(_) => Err(io::ErrorKind::TimedOut.into()),
@@ -473,5 +473,42 @@ impl<S: AsyncWrite + Rehome + Unpin> AsyncWrite for Io<S> {
             this.blocked(cx)?;
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{lane::Work, limits::Quota, peer::ClientKeys};
+    use std::{task::Waker, time::Duration};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test(start_paused = true)]
+    async fn an_admitted_exchange_leaves_its_deadline_at_once_and_an_unadmitted_one_times_out() {
+        let mut cx = Context::from_waker(Waker::noop());
+        let shared = Arc::new(Shared::default());
+        let mut io = Io::new((), shared.clone(), Instant::now() + EXCHANGE_BOUND);
+        let hold = Quota::new(1, 1).acquire(&ClientKeys::Exempt, 1).unwrap();
+        let _lane = shared.exchange().admit(
+            ClientKeys::Exempt,
+            hold,
+            Duration::from_secs(3600),
+            &Work::default(),
+            &CancellationToken::new(),
+            None,
+        );
+        io.check(&mut cx).unwrap();
+        assert!(
+            matches!(io.state, State::Open),
+            "admitted before the deadline"
+        );
+
+        let shared = Arc::new(Shared::default());
+        let mut io = Io::new((), shared.clone(), Instant::now() + EXCHANGE_BOUND);
+        let _unadmitted = shared.exchange();
+        io.check(&mut cx).unwrap();
+        tokio::time::advance(EXCHANGE_BOUND).await;
+        let expired = io.check(&mut cx).unwrap_err();
+        assert_eq!(expired.kind(), io::ErrorKind::TimedOut);
     }
 }
