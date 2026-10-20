@@ -91,17 +91,17 @@ async function upload({
   sharing,
   rttMs,
 }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
-  // Firefox and Safari report none; it stands for them here and in largestPost.
-  const memory = (navigator as { deviceMemory?: number }).deviceMemory;
-  const largest = largestPost(streams, sharing, memory);
+  const largest = largestPost(
+    streams,
+    sharing,
+    (navigator as { deviceMemory?: number }).deviceMemory,
+  );
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = repeated(block);
-    // Firefox copies a Blob's bytes across processes for every POST, but sends a consumed 8 MiB Response from a temporary file.
-    if (memory === undefined)
-      void new Response(new Blob([block, block]))
-        .blob()
-        .then((file) => (body = repeated(file)), ignore);
+    void new Response(new Blob([block, block]))
+      .blob()
+      .then((part) => (body = repeated(part)), ignore);
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;

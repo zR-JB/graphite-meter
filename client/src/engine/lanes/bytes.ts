@@ -130,7 +130,7 @@ export function randomBlock(): Uint8Array<ArrayBuffer> {
   return block;
 }
 
-/** Bodies repeat one random block, so memory stays at the block whatever their size. */
+/** Bodies repeat an 8 MiB random part read back from a Response, which Firefox keeps in a file it sends from rather than copying the part across processes for every POST. */
 export const MAX_POST_BYTES = 256 * MIB;
 
 /** A lane's share of a server's posting budget by device memory; Firefox reports none and stalls larger POSTs, so it pools all lanes. */
