@@ -26,7 +26,8 @@ const MIN_DOWNLOAD_BYTES = MIB;
 const post = (report: LaneReport) => postMessage(report);
 const ignore = () => {};
 const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
-let body: Blob | undefined;
+let body = new Blob();
+let partSize = 0;
 
 self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   if (data.type === "measure") return reports.measure(data.epoch, data.at - performance.timeOrigin);
@@ -103,11 +104,15 @@ async function upload({
     sharing,
     (navigator as { deviceMemory?: number }).deviceMemory,
   );
-  if (!body) {
+  const size = partBytes(largest);
+  if (size !== partSize) {
+    partSize = size;
     const block = new Blob([randomBlock()]);
     body = repeated(block);
-    const part = new Blob(Array.from({ length: partBytes(largest) / block.size }, () => block));
-    void new Response(part).blob().then((file) => (body = repeated(file)), ignore);
+    const part = new Blob(Array.from({ length: size / block.size }, () => block));
+    void new Response(part)
+      .blob()
+      .then((file) => size === partSize && (body = repeated(file)), ignore);
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;
