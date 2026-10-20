@@ -54,7 +54,6 @@ const MAX_CONCURRENT_STREAMS: u32 = 250;
 const FRAME_BYTES: usize = 64 << 10;
 const PREFACE_BOUND: Duration = Duration::from_secs(10);
 /// Unsent downloads wait in h2's scheduler, where control replies interleave.
-#[cfg(target_os = "linux")]
 const NOTSENT_LOWAT: u32 = 64 << 10;
 
 #[derive(Clone)]
@@ -72,8 +71,7 @@ impl Http2 {
     ) -> impl Future<Output = ()> + Send + use<> {
         let floor = self.app.budget().lease(FLOOR_BYTES);
         let _ = socket.set_nodelay(true);
-        #[cfg(target_os = "linux")]
-        let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(NOTSENT_LOWAT);
+        super::bound_unsent(&socket, NOTSENT_LOWAT);
         let (listener, socket) = (self.clone(), socket.into_std());
         async move {
             let (Some(_floor), Ok(socket)) = (floor, socket.and_then(TcpStream::from_std)) else {

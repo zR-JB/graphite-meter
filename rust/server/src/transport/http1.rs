@@ -69,6 +69,7 @@ impl Http1 {
                 return;
             };
             let _ = socket.set_nodelay(true);
+            super::bound_unsent(&socket, super::NOTSENT_LOWAT);
             let connection = Connection::new(listener.endpoint, peer.ip());
             let Some(acceptor) = &listener.tls else {
                 return listener.serve(socket, connection, accepted).await;
