@@ -206,6 +206,7 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_
     );
     drop(exhausted);
 
+    settled(&budget).await;
     let short = exhaust(&budget, 128 << 10);
     let closed = match h3.connect_from("127.0.0.2", transport(None)).await {
         Ok(refused) => refused.quic.closed().await,
