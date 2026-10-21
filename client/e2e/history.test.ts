@@ -328,14 +328,21 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
 
 test("a page shown again after a night away dates its results at once", async (page) => {
   await fixturePage(page);
-  await seed(page, { records: [record(1, Date.now() - 60_000)] });
+  const at = await page.evaluate(() => {
+    const now = Date.now();
+    return Math.max(new Date(now).setHours(0, 0, 0, 0), now - 60_000);
+  });
+  await seed(page, { records: [record(1, at)] });
   await history(page);
   const heading = page.locator(".history-list h3");
   await expect(heading).toHaveText("Today");
   // The night passes in the background; the minute clock has not ticked since.
   await page.evaluate(() => {
     const real = Date.now;
-    Date.now = () => real() + 86_400_000;
+    Date.now = () => {
+      const next = new Date(real());
+      return next.setDate(next.getDate() + 1);
+    };
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await expect(heading).toHaveText("Yesterday");
