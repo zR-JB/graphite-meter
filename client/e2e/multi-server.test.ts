@@ -27,18 +27,11 @@ export const combined = {
   },
 };
 
-// At GB/s Firefox's one network thread starves all but one loopback server; a 200 Mbit/s link shares evenly.
-const LINK_BYTES_PER_SEC = 25e6;
-
 test("four servers share one run and keep separate receiver windows", async (page) => {
   const peers = await Promise.all(
-    ["Frankfurt", "Amsterdam", "Helsinki"].map((name) => spawnPeer(name, {}, LINK_BYTES_PER_SEC)),
+    ["Frankfurt", "Amsterdam", "Helsinki"].map((name) => spawnPeer(name)),
   );
-  const self = await spawnPeer(
-    "Home",
-    catalog(...peers.map(({ server }) => server)),
-    LINK_BYTES_PER_SEC,
-  );
+  const self = await spawnPeer("Home", catalog(...peers.map(({ server }) => server)));
   try {
     await shareOneRun(page, [{ ...self.server, id: "self" }, ...peers.map(({ server }) => server)]);
   } finally {
