@@ -314,7 +314,7 @@ function Lane(props: {
 
   // Marks glide to each summary on the frame clock while seen; a saved or unseen row snaps.
   const glides = new Map<(typeof GLIDED)[number], Glide>();
-  const wake = painter((now) => draw(now), props.away);
+  const wake = painter((now) => draw(now), props.away, true);
   effect(() => {
     const values = shown();
     const snap = !props.motion();

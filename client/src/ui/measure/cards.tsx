@@ -505,7 +505,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       }
       return live.active(now);
     };
-    const wake = painter(draw, props.away);
+    const wake = painter(draw, props.away, true);
     effect(() => {
       if (!glided()) return;
       units();

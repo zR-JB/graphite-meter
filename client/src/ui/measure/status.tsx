@@ -60,16 +60,20 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
   const moved = new Figure("readout", 7);
   const recoveringText = document.createTextNode("");
   effect(() => moved.set(fmtBytes(bytes(), app.preferences.unitBase())));
-  const wake = painter((now) => {
-    // A stopped run keeps the time it showed when it stopped.
-    const phase = run.phase.peek();
-    if (phase !== "aborted" && phase !== "error")
-      elapsed.set(fmtDuration(run.result.peek()?.durationMs ?? live.runClock.at(now)));
-    const rest = fmtDuration(Math.max(0, live.budget.peek() - live.phaseClock.at(now)));
-    if (left.shown.peek().recovering) setText(recoveringText, rest);
-    else remaining.set(rest);
-    return live.active(now);
-  });
+  const wake = painter(
+    (now) => {
+      // A stopped run keeps the time it showed when it stopped.
+      const phase = run.phase.peek();
+      if (phase !== "aborted" && phase !== "error")
+        elapsed.set(fmtDuration(run.result.peek()?.durationMs ?? live.runClock.at(now)));
+      const rest = fmtDuration(Math.max(0, live.budget.peek() - live.phaseClock.at(now)));
+      if (left.shown.peek().recovering) setText(recoveringText, rest);
+      else remaining.set(rest);
+      return live.active(now);
+    },
+    undefined,
+    true,
+  );
   effect(() => {
     live.moved();
     run.result();

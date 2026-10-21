@@ -20,6 +20,7 @@ import type { RateUnits, Units } from "../../view/format";
 import { latencyAxisMs, throughputScales } from "../../view/scales";
 import { stageState, type StageState } from "../../view/words";
 import { resultArcs } from "./dial-model";
+import { sampled } from "./paint";
 
 /** A stalled sample fades the rates to zero once, over this long. */
 const STALL_FADE_MS = 800;
@@ -107,6 +108,7 @@ function createLive(app: App) {
       down.set(sample.down ?? 0, correction);
       up.set(sample.bridgedUp ?? sample.up ?? 0, correction);
       rateStage.set(sample.stage);
+      sampled.set(sampled.peek() + 1);
       bump();
     });
   });

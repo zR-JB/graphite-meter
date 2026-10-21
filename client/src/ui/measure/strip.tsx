@@ -548,7 +548,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     });
     return leading && props.active(now);
   }
-  const wake = painter(draw);
+  const wake = painter(draw, undefined, true);
   effect(() => {
     binned();
     props.ceiling();
