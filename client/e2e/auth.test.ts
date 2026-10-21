@@ -86,19 +86,42 @@ test("a wrong password keeps the card's host, show key and focus", async (page) 
   }
 });
 
-test("signing out lands on the signed-out notice, even with a token another sign-in replaced", async (page) => {
+test("signing out stops the page's workers and lands on the signed-out notice, even with a token another sign-in replaced", async (page) => {
+  await page.addInitScript(() => {
+    const workers = Object.assign(window, { workers: 0 });
+    window.Worker = new Proxy(window.Worker, {
+      construct(target, args) {
+        const worker = Reflect.construct(target, args) as Worker;
+        workers.workers++;
+        const terminate = worker.terminate.bind(worker);
+        worker.terminate = () => {
+          worker.terminate = terminate;
+          workers.workers--;
+          terminate();
+        };
+        return worker;
+      },
+    });
+    const submit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function () {
+      localStorage.setItem("workers-at-sign-out", String(workers.workers));
+      submit.call(this);
+    };
+  });
   await open(page, `${locked.url}/login`, {
     servers: [{ id: "self", url: locked.url }],
   });
   await signIn(page);
   const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
   await expect(signOut).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).workers)).toBeGreaterThan(0);
   await page.evaluate(() => {
     document.querySelector<HTMLInputElement>('form.account input[name="csrf"]')!.value = "replaced";
   });
   await signOut.click();
   await expect(page.getByRole("status")).toHaveText("You are signed out.");
   expect(await page.evaluate(() => location.search)).toBe("?reason=signed_out");
+  expect(await page.evaluate(() => localStorage.getItem("workers-at-sign-out"))).toBe("0");
 });
 
 test("a sign-out that would leave a result unsaved asks first, and signs out after staying", async (page) => {
