@@ -3,7 +3,7 @@ import { incoherence, type StagePlans } from "../src/engine/run/result";
 import type { TestConfig as RunnerConfig } from "../src/engine/types";
 import { planned, STAGES } from "../src/engine/run/schedule";
 import { STAGE } from "../src/view/words";
-import { describe, freePort, host, launch, pace, type Server } from "./servers";
+import { describe, launch, type Server } from "./servers";
 import { expect, settled, type Page } from "./webview";
 
 /** The History database: the contract this suite holds the client to, written out on its own. */
@@ -36,33 +36,18 @@ export const catalog = (...servers: Server[]) => ({
   }),
 });
 
-/** A server of its own, `env` possibly depending on it; a `paced` one serves its HTTPS origin through a link of that many bytes per second. */
+/** A server of its own, `env` possibly depending on it. */
 export async function spawnPeer(
   name: string,
   env: Record<string, string> | ((server: Server) => Record<string, string>) = {},
-  paced?: number,
 ) {
   const server = await describe(name.toLowerCase(), name);
-  const port = paced ? await freePort() : 0;
-  const close = paced ? await pace(+new URL(server.url).port, port, paced) : () => {};
-  const listener: Record<string, string> = paced
-    ? { GM_H1_TLS_ADDR: `${host}:${port}`, GM_H1_TLS_PUBLIC_ORIGIN: server.url }
-    : {};
-  const child = await launch(JSON.parse(process.env.GM_E2E_LAUNCH!), server, {
-    ...listener,
-    ...(typeof env === "function" ? env(server) : env),
-  }).catch((error) => {
-    close();
-    throw error;
-  });
-  const kill = child.kill.bind(child);
-  return Object.assign(child, {
+  const child = await launch(
+    JSON.parse(process.env.GM_E2E_LAUNCH!),
     server,
-    kill: (signal?: NodeJS.Signals | number) => {
-      close();
-      kill(signal);
-    },
-  });
+    typeof env === "function" ? env(server) : env,
+  );
+  return Object.assign(child, { server });
 }
 
 export const baseConfig = {

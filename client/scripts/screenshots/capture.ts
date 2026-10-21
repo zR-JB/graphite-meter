@@ -315,7 +315,7 @@ await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({ time
 const settingsShots = await shoot(phone);
 errors.push(...phone.errors);
 await phone.close();
-for (const { kill } of servers) kill();
+for (const server of servers) server.kill();
 if (errors.length) throw new Error(`the app reported errors:\n${errors.join("\n")}`);
 
 const PALETTE = {
