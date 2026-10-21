@@ -43,6 +43,7 @@ export function AccountControl(props: { app: App }): Node {
         let leaving = false;
         const leave = () => {
           csrf.value = csrfHeaders("POST", document.cookie)["X-CSRF-Token"] ?? csrf.value;
+          props.app.dispose();
           form.submit();
         };
         return [
