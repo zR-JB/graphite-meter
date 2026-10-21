@@ -155,6 +155,9 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
 });
 
 async function arcsDrawn(page: Page) {
+  await expect
+    .poll(() => page.locator(".result-arc").all((paths) => paths.length))
+    .toBeGreaterThan(0);
   await page.evaluate(settled);
   const arcs = await page.locator(".result-arc").all((paths: SVGPathElement[]) =>
     paths.map((path) => ({
@@ -162,7 +165,6 @@ async function arcsDrawn(page: Page) {
       wanted: path.getTotalLength() * Number(getComputedStyle(path).getPropertyValue("--fraction")),
     })),
   );
-  expect(arcs.length).toBeGreaterThan(0);
   // A browser that drops the dash array draws the whole ring.
   for (const arc of arcs) expect(Math.abs(arc.drawn - arc.wanted)).toBeLessThan(1);
 }

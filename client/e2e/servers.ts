@@ -65,19 +65,25 @@ const inherited = () =>
     ),
   );
 
+const LINK_BYTES_PER_SEC = 25e6;
+
+/** Starts `server` with its HTTPS origin behind a paced link, closed when the server exits. */
 export async function launch(
   { bin, cert, key }: Launch,
   server: Server,
   env: Record<string, string> = {},
 ) {
   await mkdir(logs, { recursive: true });
+  const listener = await freePort();
+  const unlink = await pace(+new URL(server.url).port, listener, LINK_BYTES_PER_SEC);
   const child = Bun.spawn([bin], {
     env: {
       ...inherited(),
       GM_SERVER_NAME: server.name,
       GM_SERVER_LOCATION: "Loopback fixture",
       GM_H1_ADDR: new URL(server.http).host,
-      GM_H1_TLS_ADDR: new URL(server.url).host,
+      GM_H1_TLS_ADDR: `${host}:${listener}`,
+      GM_H1_TLS_PUBLIC_ORIGIN: server.url,
       GM_H2_ADDR: new URL(server.h2).host,
       GM_H3_ADDR: new URL(server.h3).host,
       GM_TLS_CERT: cert,
@@ -96,6 +102,7 @@ export async function launch(
     stdout: "ignore",
     stderr: Bun.file(resolve(logs, `${server.name}-${Date.now()}.log`)),
   });
+  void child.exited.then(unlink);
   const deadline = Date.now() + 15_000;
   while (true) {
     if (child.exitCode !== null) throw new Error(`${server.name} exited with ${child.exitCode}`);
@@ -153,7 +160,9 @@ export async function pace(
     up(client, server);
     down(server, client);
   });
-  await new Promise<void>((resolve) => proxy.listen(listen, host, resolve));
+  await new Promise<void>((resolve, reject) =>
+    proxy.once("error", reject).listen(listen, host, resolve),
+  );
   return () => {
     proxy.close();
     for (const socket of open) socket.destroy();
