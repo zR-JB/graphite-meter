@@ -6,9 +6,9 @@ import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
 /** A view drawn at the sample cadence still draws this often, so it lands once samples stop. */
-const SAMPLE_GAP_MS = 250;
+export const SAMPLE_GAP_MS = 250;
 
-/** Counts the run's samples; views away from the dial draw on the frame after each, so far-apart changes share frames. */
+/** Counts the run's changes; views away from the dial and the dial's figure draw on the frame after each, so far-apart changes share frames. */
 export const sampled = signal(0);
 
 /** A view's painter: `wake()` draws next frame and on while `draw` returns true; `wake(true)` draws before the next layout. */

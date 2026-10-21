@@ -51,6 +51,7 @@ function createLive(app: App) {
   let movedAt = Number.NEGATIVE_INFINITY;
   const moved = signal(0);
   const bump = () => {
+    sampled.set(sampled.peek() + 1);
     movedAt = pageMs();
     moved.set(moved.peek() + 1);
   };
@@ -108,7 +109,6 @@ function createLive(app: App) {
       down.set(sample.down ?? 0, correction);
       up.set(sample.bridgedUp ?? sample.up ?? 0, correction);
       rateStage.set(sample.stage);
-      sampled.set(sampled.peek() + 1);
       bump();
     });
   });

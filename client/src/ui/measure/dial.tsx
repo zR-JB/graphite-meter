@@ -43,7 +43,7 @@ import {
   type ResultArc,
 } from "./dial-model";
 import type { Live } from "./live";
-import { Figure, inView, measure, painter, svg } from "./paint";
+import { Figure, inView, measure, painter, SAMPLE_GAP_MS, sampled, svg } from "./paint";
 
 /** A result leaves as its arcs drain back to zero, so the next run starts empty. */
 const RESULT_DRAIN_MS = 160;
@@ -332,6 +332,8 @@ export function Dial(props: {
   let drawn = Number.NaN;
   let lit = false;
   let written = Number.NaN;
+  let figureBeat = -1;
+  let figureAt = Number.NEGATIVE_INFINITY;
   let capHidden = true;
   const ends = SECTORS.map(() => Number.NaN);
   function draw(now: number): boolean {
@@ -362,7 +364,12 @@ export function Dial(props: {
     const on = needle.lit(visible.peek(), motion.peek());
     if (on !== lit) needleLayer.classList.toggle("visible", (lit = on));
     // The figure reads the shown view, glided; its text changes only when what it reads does.
+    // The figure steps with the cards' figures, so the same quantity never reads two values at once.
     const shown = figure.shown.peek().reading;
+    if (sampled.peek() === figureBeat && now - figureAt < SAMPLE_GAP_MS)
+      return needle.moving(now) || live.active(now);
+    figureBeat = sampled.peek();
+    figureAt = now;
     const page = units.peek();
     const amount =
       shown === "rate"
@@ -393,6 +400,7 @@ export function Dial(props: {
     run.running();
     figure.shown();
     units();
+    figureBeat = -1;
     wake();
   });
   effect(() => {
