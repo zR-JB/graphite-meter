@@ -339,7 +339,10 @@ test("a page shown again after a night away dates its results at once", async (p
   // The night passes in the background; the minute clock has not ticked since.
   await page.evaluate(() => {
     const real = Date.now;
-    Date.now = () => real() + 86_400_000;
+    Date.now = () => {
+      const next = new Date(real());
+      return next.setDate(next.getDate() + 1);
+    };
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await expect(heading).toHaveText("Yesterday");
