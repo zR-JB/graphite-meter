@@ -14,6 +14,8 @@ type Upload = Extract<SessionCommand, { type: "upload" }>;
 const YIELD_MS = 4;
 /** An upload's datagram loop reads the clock, for its report window and its yield, once per this many datagrams. */
 const CLOCK_EVERY = 16;
+/** Chrome copies aside whatever part of a stream write its 64 KiB pipe cannot take, so writes stay that size. */
+const WRITE_BYTES = 64 * 1024;
 /** A flood of receiver progress reaches the page at most this often. */
 const RECORD_MS = 50;
 const UNESTABLISHED: EndReport = {
@@ -222,9 +224,9 @@ class Session {
   async #writeStream(transport: WebTransport, block: Uint8Array<ArrayBuffer>): Promise<void> {
     try {
       const writer = (await transport.createUnidirectionalStream()).getWriter();
-      while (this.#state === "open") {
+      for (let at = 0; this.#state === "open"; at = (at + WRITE_BYTES) % block.length) {
         await writer.ready;
-        await writer.write(block);
+        await writer.write(block.subarray(at, at + WRITE_BYTES));
       }
       // A stop ends the stream with its FIN.
       await writer.close();
