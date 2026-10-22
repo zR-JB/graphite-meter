@@ -235,6 +235,7 @@ impl Store {
     }
 
     /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, briefly; `None` once it ended.
+    /// A dial that never reached the server leaves its ticket unspent, so a full login drops the one nearest expiry.
     pub(super) fn mint(
         &self,
         lease: &AuthLease,
@@ -248,7 +249,6 @@ impl Store {
         if lease.is_ended(now) {
             return None;
         }
-        // A dial that never reached the server leaves its ticket unspent, so the oldest gives way, never the next dial.
         let held = || {
             let tickets = state.tickets.iter();
             tickets.filter(|(_, ticket)| ticket.lease.login == lease.login)
