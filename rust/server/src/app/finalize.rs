@@ -104,14 +104,8 @@ pub fn close(headers: &mut HeaderMap, version: Version) {
 }
 
 impl App {
-    /// Applies a passed answer's headers: `access`, hardening while authentication is on, a bootstrap probe's HTTP/3 port.
-    pub(super) fn finalize(
-        &self,
-        response: &mut Response<Body>,
-        access: Option<&Access>,
-        bootstrap: bool,
-        version: Version,
-    ) {
+    /// Applies a passed answer's headers: `access`, and hardening while authentication is on.
+    pub(super) fn finalize(&self, response: &mut Response<Body>, access: Option<&Access>) {
         let headers = response.headers_mut();
         match access {
             Some(Access::Public) => Access::Public.apply_measurement(headers),
@@ -121,7 +115,11 @@ impl App {
         if self.auth.enabled() {
             harden(headers, true);
         }
-        if bootstrap && let Some(alt_svc) = &self.alt_svc {
+    }
+
+    /// Every answer on the HTTP/3 port's TCP side names HTTP/3, errors too, so a browser that forgot it relearns it.
+    pub(super) fn bootstrap(&self, headers: &mut HeaderMap, version: Version) {
+        if let Some(alt_svc) = &self.alt_svc {
             headers.insert(header::ALT_SVC, alt_svc.clone());
             close(headers, version);
         }

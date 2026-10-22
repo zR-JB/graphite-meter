@@ -193,9 +193,6 @@ impl App {
         let mut response = match self.gate(&request, connection) {
             Err(answer) => answer,
             Ok((route, peer)) => {
-                let bootstrap = connection.endpoint.bootstrap()
-                    && route == Some(Route::Probe)
-                    && request.method() != Method::OPTIONS;
                 let access = self.auth.access(route, peer.auth(), request.headers());
                 let access = access.as_ref();
                 let outcome = self
@@ -206,7 +203,7 @@ impl App {
                 | Outcome::WebSocket(response, ..)
                 | Outcome::WebTransport(response, ..) = &mut outcome
                 {
-                    self.finalize(response, access, bootstrap, version);
+                    self.finalize(response, access);
                 }
                 let Outcome::Response(response) = outcome else {
                     return outcome;
@@ -214,6 +211,9 @@ impl App {
                 response
             }
         };
+        if connection.endpoint.bootstrap() {
+            self.bootstrap(response.headers_mut(), version);
+        }
         response.body_mut().bound_by_default(deadline);
         Outcome::Response(response)
     }
