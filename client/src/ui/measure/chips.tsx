@@ -224,7 +224,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     }
     return clocked.peek() && live.active(now);
   };
-  const wake = painter(draw, props.away);
+  const wake = painter(draw, props.away, live.beat);
   effect(() => {
     look();
     timed();

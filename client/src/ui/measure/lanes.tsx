@@ -68,6 +68,7 @@ export function LatencyProfileView(props: {
   label?: string;
   added?: () => AddedLatency | null;
   head?: () => LanesHead;
+  beat?: () => number | null;
   /** While it holds the marks draw nothing, and they draw again as the lanes return. */
   away?: Read<boolean>;
 }): HTMLElement {
@@ -126,6 +127,7 @@ export function LatencyProfileView(props: {
           row={row}
           live={live}
           away={props.away}
+          beat={props.beat}
           motion={motion}
           axis={axis}
           idle={idleCenter}
@@ -199,6 +201,7 @@ function Lane(props: {
   row: Read<Row>;
   live: boolean;
   away?: Read<boolean>;
+  beat?: () => number | null;
   motion: () => boolean;
   axis: () => number;
   idle: () => number | null;
@@ -314,7 +317,7 @@ function Lane(props: {
 
   // Marks glide to each summary on the frame clock while seen; a saved or unseen row snaps.
   const glides = new Map<(typeof GLIDED)[number], Glide>();
-  const wake = painter((now) => draw(now), props.away);
+  const wake = painter((now) => draw(now), props.away, props.beat);
   effect(() => {
     const values = shown();
     const snap = !props.motion();
@@ -590,6 +593,7 @@ export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolea
         added={added}
         head={head}
         away={props.away}
+        beat={live.beat}
       />
     </div>
   );

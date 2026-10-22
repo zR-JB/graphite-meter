@@ -384,6 +384,7 @@ function createLive(app: App) {
     budget: budget as Read<number>,
     runClock,
     moved: moved as Read<number>,
+    beat: () => (rateStage.peek() === null ? null : moved.peek()),
     /** Painting may stop once no run is live and the last change has landed. */
     active: (now: number) => run.running.peek() || now - movedAt < SETTLE_MS,
     states,

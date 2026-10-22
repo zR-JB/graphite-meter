@@ -50,6 +50,7 @@ interface StripProps {
   /** Writes the leading edge at `now` into `head`; false when there is none. */
   head: (now: number, head: Head) => boolean;
   active: (now: number) => boolean;
+  beat: () => number | null;
   label: string;
 }
 
@@ -548,7 +549,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     });
     return leading && props.active(now);
   }
-  const wake = painter(draw);
+  const wake = painter(draw, undefined, props.beat);
   effect(() => {
     binned();
     props.ceiling();
