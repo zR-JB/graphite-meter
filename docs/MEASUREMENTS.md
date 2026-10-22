@@ -35,7 +35,8 @@ Results are plain values, and nothing is graded. Both clients show a missing val
 
 Download counts payload bytes the client consumed. Upload counts bytes and elapsed time at the server's receiver, so
 it is receiver-timed. Sender-queued bytes are not delivery. Warmup bytes are excluded, and chart smoothing changes no
-result.
+result. A browser can hold a lane's arrived bytes for 60 to 100 ms before scripts see them and then release them at
+once, so a short early-finish window can read up to about 2 % high or low in a single run; the median is unaffected.
 
 ### Coordinated servers
 
