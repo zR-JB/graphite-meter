@@ -116,12 +116,4 @@ impl App {
             harden(headers, true);
         }
     }
-
-    /// Every answer on the HTTP/3 port's TCP side names HTTP/3, errors too, so a browser that forgot it relearns it.
-    pub(super) fn bootstrap(&self, headers: &mut HeaderMap, version: Version) {
-        if let Some(alt_svc) = &self.alt_svc {
-            headers.insert(header::ALT_SVC, alt_svc.clone());
-            close(headers, version);
-        }
-    }
 }
