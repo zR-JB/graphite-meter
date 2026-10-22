@@ -412,6 +412,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
         live: () => false,
         head: () => false,
         active: live.active,
+        beat: live.beat,
         label: CARDS.idleOverTime,
       });
       return () => graph;
@@ -458,6 +459,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       live: running,
       head,
       active: live.active,
+      beat: live.beat,
       label: CARDS.overTime(STAGE[stage].label),
     });
     // A server shown alone has no series of its own.
@@ -505,7 +507,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       }
       return live.active(now);
     };
-    const wake = painter(draw, props.away, true);
+    const wake = painter(draw, props.away, live.beat);
     effect(() => {
       if (!glided()) return;
       units();

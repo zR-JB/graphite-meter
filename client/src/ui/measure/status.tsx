@@ -72,7 +72,7 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
       return live.active(now);
     },
     undefined,
-    true,
+    live.beat,
   );
   effect(() => {
     live.moved();

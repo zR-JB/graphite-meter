@@ -20,7 +20,6 @@ import type { RateUnits, Units } from "../../view/format";
 import { latencyAxisMs, throughputScales } from "../../view/scales";
 import { stageState, type StageState } from "../../view/words";
 import { resultArcs } from "./dial-model";
-import { sampled } from "./paint";
 
 /** A stalled sample fades the rates to zero once, over this long. */
 const STALL_FADE_MS = 800;
@@ -51,7 +50,6 @@ function createLive(app: App) {
   let movedAt = Number.NEGATIVE_INFINITY;
   const moved = signal(0);
   const bump = () => {
-    sampled.set(sampled.peek() + 1);
     movedAt = pageMs();
     moved.set(moved.peek() + 1);
   };
@@ -386,6 +384,7 @@ function createLive(app: App) {
     budget: budget as Read<number>,
     runClock,
     moved: moved as Read<number>,
+    beat: () => (rateStage.peek() === null ? null : moved.peek()),
     /** Painting may stop once no run is live and the last change has landed. */
     active: (now: number) => run.running.peek() || now - movedAt < SETTLE_MS,
     states,

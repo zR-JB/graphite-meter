@@ -59,3 +59,31 @@ test("a queued resize never paints or restarts after its view is disposed", asyn
   frames.shift()?.(20);
   expect(draws).toBe(0);
 });
+
+test("painters on a beat draw together on the frame after it moves, and every 250 ms without it", () => {
+  let beat = 0;
+  const drawn: [string, number][] = [];
+  const [wakes, dispose] = scope(() =>
+    ["card", "strip"].map((name) =>
+      painter(
+        (now) => (drawn.push([name, now]), true),
+        undefined,
+        () => beat,
+      ),
+    ),
+  );
+  for (const wake of wakes) wake();
+  const tick = (now: number) => {
+    const due = frames;
+    frames = [];
+    for (const frame of due) frame(now);
+  };
+  tick(1000);
+  tick(1017);
+  beat++;
+  tick(1033);
+  tick(1050);
+  for (let now = 1067; now <= 1300; now += 16.5) tick(now);
+  expect(drawn.map(([, now]) => Math.round(now))).toEqual([1000, 1000, 1033, 1033, 1298, 1298]);
+  dispose();
+});

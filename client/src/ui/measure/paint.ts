@@ -5,32 +5,47 @@ import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/
 
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
-/** A view drawn at the sample cadence still draws this often, so it lands once samples stop. */
-export const SAMPLE_GAP_MS = 250;
+const BEAT_GAP_MS = 250;
 
-/** Counts the run's changes; views away from the dial and the dial's figure draw on the frame after each, so far-apart changes share frames. */
-export const sampled = signal(0);
+let liveAt = Number.NEGATIVE_INFINITY;
+let beatAt = Number.NEGATIVE_INFINITY;
+let beatSeen: number | null = null;
+let beaten = Number.NEGATIVE_INFINITY;
+let onBeat = true;
+const liveFrame = (now: number) => {
+  if (now !== liveAt && now >= liveAt && now - liveAt < LIVE_FRAME_MS) return false;
+  liveAt = now;
+  return true;
+};
 
-/** A view's painter: `wake()` draws next frame and on while `draw` returns true; `wake(true)` draws before the next layout. */
+/** Whether a frame draws views on `beat`, decided once a frame so far-apart views change together: after it moves, else every 250 ms. */
+export function beatFrame(now: number, beat: number | null): boolean {
+  if (beat === null) return true;
+  if (now !== beatAt) {
+    beatAt = now;
+    onBeat = beat !== beatSeen || now < beaten || now - beaten >= BEAT_GAP_MS;
+    if (onBeat) [beatSeen, beaten] = [beat, now];
+  }
+  return onBeat;
+}
+
+/** A view's painter: `wake()` draws next frame and on while `draw` returns true, on `beat`'s frames if given; `wake(true)` draws before the next layout. */
 export function painter(
   draw: (now: number) => boolean,
   away?: Read<boolean>,
-  atSamples = false,
+  beat?: () => number | null,
 ): (resized?: boolean) => void {
   let stop: (() => void) | null = null;
-  let drawn = Number.NEGATIVE_INFINITY;
   // A change waits to be drawn; the last draw is still moving; a draw is queued before the next layout.
   let due = false;
   let moving = false;
   let queued = false;
   let disposed = false;
-  let beat = -1;
   const halt = () => {
     stop?.();
     stop = null;
   };
   const paint = (now: number) => {
-    drawn = now;
     due = false;
     moving = untrack(() => draw(now));
     return moving;
@@ -41,9 +56,7 @@ export function painter(
         stop = null;
         return false;
       }
-      if (now - drawn < LIVE_FRAME_MS) return true;
-      if (atSamples && !due && sampled.peek() === beat && now - drawn < SAMPLE_GAP_MS) return true;
-      beat = sampled.peek();
+      if (!liveFrame(now) || (beat && !beatFrame(now, beat()) && !due)) return true;
       if (paint(now)) return true;
       stop = null;
       return false;
