@@ -84,12 +84,6 @@ pub enum GrantRefusal {
     Full,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MintRefusal {
-    Ended,
-    Full,
-}
-
 pub(super) struct LoginView {
     pub name: String,
     pub provider: String,
@@ -240,24 +234,30 @@ impl Store {
         lock(&self.0).grant(login, browser, credentials)
     }
 
-    /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, briefly.
+    /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, briefly; `None` once it ended.
     pub(super) fn mint(
         &self,
         lease: &AuthLease,
         target: String,
         origin: Option<HeaderValue>,
-    ) -> Result<SocketTicket, MintRefusal> {
+    ) -> Option<SocketTicket> {
         let token = format!("gmw_{}", random::<32>());
         let now = Instant::now();
         let mut state = lock(&self.0);
         state.sweep(now);
         if lease.is_ended(now) {
-            return Err(MintRefusal::Ended);
+            return None;
         }
-        let tickets = state.tickets.values();
-        let held = tickets.filter(|ticket| ticket.lease.login == lease.login);
-        if held.count() >= MAX_LOGIN_TICKETS {
-            return Err(MintRefusal::Full);
+        // A dial that never reached the server leaves its ticket unspent, so the oldest gives way, never the next dial.
+        let held = || {
+            let tickets = state.tickets.iter();
+            tickets.filter(|(_, ticket)| ticket.lease.login == lease.login)
+        };
+        if held().count() >= MAX_LOGIN_TICKETS
+            && let Some(oldest) = held().min_by_key(|(_, ticket)| ticket.deadline)
+        {
+            let oldest = *oldest.0;
+            state.tickets.remove(&oldest);
         }
         let deadline = (now + TICKET_LIFETIME).min(lease.expires);
         let expires = SystemTime::now() + (deadline - now);
@@ -276,7 +276,7 @@ impl Store {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        Ok(SocketTicket {
+        Some(SocketTicket {
             token,
             expires: u64::try_from(expires).unwrap_or(u64::MAX),
         })

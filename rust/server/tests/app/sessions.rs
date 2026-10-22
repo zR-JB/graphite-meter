@@ -97,7 +97,9 @@ async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
             "{target}"
         );
     }
-    for _ in 0..8 {
+    let oldest = ticket(&app, &login, "/ws/session", target).await;
+    for _ in 0..7 {
+        tokio::time::advance(Duration::from_millis(1)).await;
         ticket(
             &app,
             &login,
@@ -106,11 +108,24 @@ async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
         )
         .await;
     }
-    let full = mint(&app, &login, "/ws/session", target).await;
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let newest = ticket(&app, &login, "/ws/session", target).await;
     assert_eq!(
-        (full.status(), header(&full, "retry-after")),
-        (StatusCode::TOO_MANY_REQUESTS, Some("1"))
+        tls(&app, websocket(&format!("/ws/ping?token={oldest}"), PUBLIC))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN,
+        "a ninth ticket replaces the oldest unspent one"
     );
+    assert!(is_socket(
+        &outcome(
+            &app,
+            Endpoint::H1Tls,
+            "192.0.2.1",
+            websocket(&format!("/ws/ping?token={newest}"), PUBLIC)
+        )
+        .await
+    ));
 }
 
 #[tokio::test]

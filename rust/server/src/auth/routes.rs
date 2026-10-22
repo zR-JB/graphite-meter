@@ -8,12 +8,11 @@ use super::{
     password::{Password, Verdict},
     policy::{Cookie, auth_route, cookie, cookie_lease},
     protect,
-    store::{MintRefusal, random},
+    store::random,
 };
 use crate::{
     app::{query, response},
     clock::{http_date, rfc3339},
-    limits::Refusal,
     peer::Peer,
     transport::body::Body,
 };
@@ -113,9 +112,8 @@ pub(super) fn mint<B>(
     }
     let requester = request.headers().get(header::ORIGIN).cloned();
     match auth.store.mint(lease, format!("{origin}{path}"), requester) {
-        Ok(ticket) => response::json_of(&ticket),
-        Err(MintRefusal::Ended) => response::status(StatusCode::FORBIDDEN),
-        Err(MintRefusal::Full) => response::busy(Refusal::Client),
+        Some(ticket) => response::json_of(&ticket),
+        None => response::status(StatusCode::FORBIDDEN),
     }
 }
 
