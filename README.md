@@ -16,7 +16,7 @@ A self-hosted speed and latency test, in one container or one binary, for the br
   <img src="docs/assets/hero-light.png" width="100%" alt="The browser app on a desktop after a completed test, 9.40 Gbit/s down and 9.39 Gbit/s up with 0.4 ms idle latency and 1.3 ms added under load, and a phone in front of it showing another test at 1197 Mbit/s down, 864.0 Mbit/s up and 2.7 ms latency">
 </picture>
 
-<sub>Browser app 0.13.3 in Chrome on a desktop and a phone.</sub>
+<sub>Browser app 0.13.4 in Chrome on a desktop and a phone.</sub>
 
 </div>
 
@@ -64,7 +64,7 @@ from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse p
   <img src="docs/assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under download load and 2.8 ms under upload load">
 </picture>
 
-<sub>Terminal client 0.13.3.</sub>
+<sub>Terminal client 0.13.4.</sub>
 
 </div>
 
@@ -85,7 +85,7 @@ graphite-meter-client --url https://meter.example.net --server frankfurt --serve
   <img src="docs/assets/phones-light.png" width="700" alt="Two phone screens: Settings with three test servers and the throughput paths, and History with four results">
 </picture>
 
-<sub>Browser app 0.13.3 in Chrome on a phone.</sub>
+<sub>Browser app 0.13.4 in Chrome on a phone.</sub>
 
 </div>
 
