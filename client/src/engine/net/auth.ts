@@ -210,7 +210,6 @@ export async function exchangeGrant(
       body: JSON.stringify({ verifier }),
       credentials: "omit",
       redirect: "error",
-      cache: "no-store",
       signal: AbortSignal.any([signal, AbortSignal.timeout(EXCHANGE_TIMEOUT_MS)]),
     }).catch(() => {
       signal.throwIfAborted();

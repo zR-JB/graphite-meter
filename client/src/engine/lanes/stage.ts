@@ -231,7 +231,6 @@ class Stage implements StageResources {
     try {
       response = await auth.fetch(`${throughput.fetch.origin}${ROUTES.uploadSession}`, {
         method: "POST",
-        cache: "no-store",
         signal: AbortSignal.any([signal, AbortSignal.timeout(ESTABLISH_MS)]),
       });
     } catch (cause) {
