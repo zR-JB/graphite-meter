@@ -11,10 +11,10 @@ import {
 } from "./harness";
 import { expect, test } from "../webview";
 
-/** T4 over each of `paths`, named, targeted and why today's code fails it, then T7 over their runs. */
-export function distanceTests(paths: (readonly [string, string, string?])[]) {
+/** T4 over each of `paths`, named and targeted, then T7 over their runs. */
+export function distanceTests(paths: (readonly [string, string])[]) {
   const pages: Attempt[][] = [];
-  for (const [name, target, failing] of paths)
+  for (const [name, target] of paths)
     test(
       `T4: four servers at 10 to 160 ms RTT measure every stage of five ${name} runs`,
       async (page) => {
@@ -24,6 +24,8 @@ export function distanceTests(paths: (readonly [string, string, string?])[]) {
             page,
             fleet,
             runConfig(target, {
+              // Latency over WebSocket keeps Firefox's WebTransport lockout, which T0 and T1 cover, out of distance.
+              transports: { throughputTarget: target, latencyTarget: "transport:websocket" },
               duration: {
                 warmupMs: 500,
                 latencyMs: 1000,
@@ -43,7 +45,7 @@ export function distanceTests(paths: (readonly [string, string, string?])[]) {
           await fleet.close();
         }
       },
-      { timeout: 300_000, failing },
+      { timeout: 300_000 },
     );
   budgetTest(`the ${paths.map(([name]) => name).join(", ")} runs`, pages);
 }
