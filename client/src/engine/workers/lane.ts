@@ -19,10 +19,8 @@ const TURNAROUNDS = 9;
 const MIN_POST_BYTES = 128 * 1024;
 /** An upload's answer is a short record; a peer that sends more is not kept waiting for. */
 const MAX_ANSWER_BYTES = 64 * 1024;
-/** A body asked for past its stage's planned end, as a lengthened one can be, lasts this long. */
-const MIN_BODY_MS = 1_000;
-/** Bodies last this long while the stage's end is unknown, so the last ends in its warmup, not its window. */
-const PROVISIONAL_MS = 250;
+/** Bodies last at least this long: while the stage's end is unknown, so the last ends in its warmup, and past its end, so a stop waits for one. */
+const SHORT_BODY_MS = 250;
 /** A stop waits for a body ending this soon; a later one, as an early finish leaves, is cut. */
 const STOP_WAIT_MS = 500;
 /** A body that ends early below this came from something else, such as a proxy's page; a longer one is fetched again. */
@@ -81,8 +79,8 @@ async function bodies({
       const ms = !timed
         ? Infinity
         : until === null
-          ? PROVISIONAL_MS
-          : Math.ceil(Math.max(MIN_BODY_MS, until - performance.timeOrigin - sentAt));
+          ? SHORT_BODY_MS
+          : Math.ceil(Math.max(SHORT_BODY_MS, until - performance.timeOrigin - sentAt));
       bodyEnd = timed ? sentAt + ms : null;
       const response = await fetch(timed ? `${url}&ms=${ms}` : url, init);
       if (!response.ok || !response.body) {

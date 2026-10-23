@@ -361,8 +361,8 @@ export class Run {
       this.#record(server.id, "throughput", reason, message, charged);
     this.#mintedAt = Date.now();
     for (const server of this.#servers)
-      for (const stage of STAGES)
-        if (UPLOADS.includes(stage) && planned(this.#plan, stage))
+      for (const stage of UPLOADS)
+        if (planned(this.#plan, stage))
           server.uploadIds[stage] = this.#mint(server.prepared, this.#minting.signal).catch(
             () => null,
           );
@@ -657,7 +657,6 @@ export class Run {
       });
       if (!this.#current(stage) || stage.phase !== "preparing") return;
       this.#tickAt = this.#clock.resume();
-      for (const seat of active(stage)) seat.resources.replanned();
       const shown = this.#shown!;
       this.#show(shown, "running");
       stage.phase = "warmup";
@@ -668,6 +667,7 @@ export class Run {
         stage.ramp = { at, down: active(stage).reduce((sum, seat) => sum + seat.shown, 0) };
       }
       if (shown.phase !== "warmup") this.#measure(stage);
+      else for (const seat of active(stage)) seat.resources.replanned();
       this.#tick();
       this.#arm();
     });
@@ -735,6 +735,8 @@ export class Run {
       seat.progressAt = { down: at, up: at };
       seat.heardAt = at;
       seat.resources.measure(opensAt);
+      // A late tick or a gap may have moved the window's start, and with it the stage's end.
+      seat.resources.replanned();
     }
     if (activity.stage === "latency") return;
     // The first upload window starts at the window, not in the warmup.
@@ -1184,7 +1186,11 @@ export class Run {
   /** A page gap starts a new interval before any evidence after it applies; true when one did. */
   #resumeAfterGap(stage: StageRun): boolean {
     this.#clock.read();
-    if (!this.#clock.takeGap() || stage.phase !== "measuring") return false;
+    if (!this.#clock.takeGap()) return false;
+    // The timeline left the gap out, so the stage's end moved.
+    if (stage.phase === "warmup" || stage.phase === "measuring")
+      for (const seat of active(stage)) seat.resources.replanned();
+    if (stage.phase !== "measuring") return false;
     this.#resumeEvidence(stage);
     return true;
   }

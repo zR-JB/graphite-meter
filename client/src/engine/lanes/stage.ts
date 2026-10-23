@@ -267,7 +267,8 @@ class Stage implements StageResources {
     const minted = this.#uploadId;
     this.#uploadId = Promise.resolve(null);
     const id =
-      (await minted) ?? (await mintUpload(this.#setup.server, signal, () => this.#signedOut()));
+      (await abortable(minted, signal)) ??
+      (await mintUpload(this.#setup.server, signal, () => this.#signedOut()));
     if (this.#throughputEnded) throw new Error("throughput already ended");
     const carried = throughput.target.transport !== "fetch-stream";
     const route = carried

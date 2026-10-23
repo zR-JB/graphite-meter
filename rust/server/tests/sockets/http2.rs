@@ -385,3 +385,32 @@ async fn a_connection_announces_250_streams_and_64_kib_frames_and_waits_ten_seco
         tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut Vec::new())).await;
     assert!(closed.is_ok(), "the connection closed");
 }
+
+#[tokio::test]
+async fn a_download_ends_on_the_server_s_clock_without_a_length() {
+    let h2 = H2::start(&[]).await;
+    let mut connection = h2.connect(1 << 20).await;
+    let started = std::time::Instant::now();
+    let answer = connection.get("GET", &format!("{ENDLESS}&ms=50")).await;
+    assert_eq!(
+        (answer.status(), answer.headers().get("content-length")),
+        (http::StatusCode::OK, None)
+    );
+    let (mut body, mut read) = (answer.into_body(), 0);
+    while let Some(chunk) = body.data().await {
+        let chunk = chunk.unwrap();
+        read += chunk.len();
+        body.flow_control().release_capacity(chunk.len()).unwrap();
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        read > 0 && elapsed >= Duration::from_millis(50) && elapsed < Duration::from_secs(2),
+        "{read} bytes in {elapsed:?}"
+    );
+    let probe = connection.get("GET", "/probe").await;
+    assert_eq!(
+        probe.status(),
+        200,
+        "the connection serves the next request"
+    );
+}

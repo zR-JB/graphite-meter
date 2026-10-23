@@ -5,8 +5,8 @@ This spec governs the message-based channels: the WebSocket latency bus (`/ws/pi
 datagram bus (`/wt/ping`), plus the WebTransport session routes, defined by their CONNECT URL (see [WebTransport
 routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also open a
 receiver-progress stream. The plain request/response HTTP endpoints (`/servers`, `/preflight`, `/probe`,
-`/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here:
-they use normal HTTP (query params, status codes, streaming bodies).
+`/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here, except
+where `/download` shares a query rule below: they use normal HTTP (query params, status codes, streaming bodies).
 
 The Rust server and terminal client and the TypeScript browser client share the conformance corpus
 `api/wire.testvectors.txt`.

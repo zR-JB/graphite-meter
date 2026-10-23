@@ -1373,6 +1373,20 @@ test("a live change while a stage prepares replans it only once its clock runs",
   expect(replans).toEqual([1_000]);
 });
 
+test("a stage replans as its clock resumes, as its window opens and after a page gap", async () => {
+  const replans: number[] = [];
+  const h = setup(
+    [{ id: "self", replanned: () => replans.push(h.clock.t) }],
+    { download: true },
+    { warmupMs: 500, downloadMs: 6_000 },
+  );
+  h.start();
+  await h.elapse(1_000);
+  h.clock.t += 3_000;
+  await h.elapse(100);
+  expect(replans).toEqual([0, 500, 4_000]);
+});
+
 test("a page gap while measuring starts a new interval and forbids an early finish", async () => {
   const h = setup([{ id: "self" }], { download: true }, { downloadMs: 12_000 }, { adaptive: true });
   h.start();
