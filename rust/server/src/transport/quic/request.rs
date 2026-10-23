@@ -95,9 +95,9 @@ impl Requests {
                 .upper()
                 .is_some_and(|bytes| bytes > LARGE_REPLY_BYTES);
         let mut reply = H3Reply {
+            stopped: large.then(|| Box::pin(send.stopped()) as Stopped),
             send,
             large: large.then(|| Large::new(&self.large, &self.quic)),
-            stopped: None,
         };
         let _ = pump(&mut reply, response, bodiless).await;
     }
@@ -146,6 +146,21 @@ struct H3Reply {
     stopped: Option<Stopped>,
 }
 
+/// noq reports a stop to a blocked write only once it may write again, which a peer may allow only after the reset.
+async fn unless_stopped<T, E>(
+    stopped: Option<&mut Stopped>,
+    write: impl Future<Output = Result<T, E>>,
+) -> Result<T, Aborted> {
+    let Some(stopped) = stopped else {
+        return write.await.map_err(|_| Aborted);
+    };
+    tokio::select! {
+        biased;
+        written = write => written.map_err(|_| Aborted),
+        _ = stopped => Err(Aborted),
+    }
+}
+
 impl Sink for H3Reply {
     async fn head(
         &mut self,
@@ -153,13 +168,11 @@ impl Sink for H3Reply {
         end: bool,
         bound: &mut ReplyBound,
     ) -> Result<(), Aborted> {
-        within(
-            bound,
-            self.send.send_response(Response::from_parts(head, ())),
-        )
-        .await?;
+        let Self { send, stopped, .. } = self;
+        let response = send.send_response(Response::from_parts(head, ()));
+        within(bound, unless_stopped(stopped.as_mut(), response)).await?;
         if end {
-            within(bound, self.send.finish()).await?;
+            within(bound, unless_stopped(stopped.as_mut(), send.finish())).await?;
         }
         Ok(())
     }
@@ -170,25 +183,31 @@ impl Sink for H3Reply {
         last: bool,
         bound: &mut ReplyBound,
     ) -> Result<(), Aborted> {
+        let Self {
+            send,
+            large,
+            stopped,
+        } = self;
         while !data.is_empty() {
-            if let Some(large) = &self.large {
-                within(bound, large.paced()).await?;
+            if let Some(large) = large {
+                within(bound, unless_stopped(stopped.as_mut(), large.paced())).await?;
             }
-            let frame = data.split_to(data.len().min(FRAME_BYTES));
-            within(bound, self.send.send_data(frame)).await?;
+            let frame = send.send_data(data.split_to(data.len().min(FRAME_BYTES)));
+            within(bound, unless_stopped(stopped.as_mut(), frame)).await?;
             bound.progressed();
-            if self.large.as_ref().is_some_and(Large::crowded) {
+            if large.as_ref().is_some_and(Large::crowded) {
                 tokio::task::yield_now().await;
             }
         }
         if last {
-            within(bound, self.send.finish()).await?;
+            within(bound, unless_stopped(stopped.as_mut(), send.finish())).await?;
         }
         Ok(())
     }
 
     async fn end(&mut self, bound: &mut ReplyBound) -> Result<(), Aborted> {
-        within(bound, self.send.finish()).await
+        let Self { send, stopped, .. } = self;
+        within(bound, unless_stopped(stopped.as_mut(), send.finish())).await
     }
 
     fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()> {

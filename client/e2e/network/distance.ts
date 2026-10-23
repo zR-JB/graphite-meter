@@ -1,4 +1,5 @@
 // Section 2.3: four servers at 10, 40, 90 and 160 ms RTT, each 100 Mbit/s with one 1000-packet queue per direction.
+import type { TestConfig } from "../../src/engine/types";
 import {
   attempt,
   budgetTest,
@@ -11,10 +12,10 @@ import {
 } from "./harness";
 import { expect, test } from "../webview";
 
-/** T4 over each of `paths`, named and targeted, then T7 over their runs. */
-export function distanceTests(paths: (readonly [string, string])[]) {
+/** T4 over each of `paths`, named and targeted with their settings, then T7 over their runs. */
+export function distanceTests(paths: (readonly [string, string, Partial<TestConfig>?])[]) {
   const pages: Attempt[][] = [];
-  for (const [name, target] of paths)
+  for (const [name, target, patch] of paths)
     test(
       `T4: four servers at 10 to 160 ms RTT measure every stage of five ${name} runs`,
       async (page) => {
@@ -33,6 +34,7 @@ export function distanceTests(paths: (readonly [string, string])[]) {
                 uploadMs: 2000,
                 bidirectionalMs: 2000,
               },
+              ...patch,
             }),
           );
           const runs: Attempt[] = [];
