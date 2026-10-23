@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
-import { SignInRequired, StageFailure, type StageEvents } from "../types";
+import { SignInRequired, StageFailure, type StageEvents, type StageSetup } from "../types";
 import { incoherence, type RunResult } from "./result";
-import { Run, type RunEvent, type RunPlan } from "./run";
+import { Run, type RunEvent, type RunOptions, type RunPlan } from "./run";
 import type { Activity, Stage } from "./schedule";
 import { FakeClock, prepared, resources, type Peer } from "./fakes.testutil";
 
@@ -14,10 +14,17 @@ function harness(
     adaptive?: boolean;
     loadedLatency?: boolean;
     deal?: (activity: Activity) => void;
+    mint?: RunOptions["mint"];
   } = {},
 ) {
   const clock = new FakeClock();
   const calls: string[] = [];
+  const setups: {
+    stage: Stage;
+    server: string;
+    endsIn: number;
+    uploadId: StageSetup["uploadId"];
+  }[] = [];
   const events: RunEvent[] = [];
   const plan: RunPlan = {
     stages: { latency: false, download: false, upload: false, bidirectional: false, ...stages },
@@ -42,6 +49,7 @@ function harness(
     calls,
     events,
     plan,
+    setups,
     get run(): Run {
       return run!;
     },
@@ -51,8 +59,17 @@ function harness(
         focus: options.focus ?? peers[0]!.id,
         dropped: [],
         plan,
-        open: (setup) =>
-          resources(peers.find(({ id }) => id === setup.server.server.id)!, setup, calls, clock),
+        open: (setup) => {
+          const { activity, server, endsIn, uploadId } = setup;
+          setups.push({
+            stage: activity.stage,
+            server: server.server.id,
+            endsIn: endsIn(),
+            uploadId,
+          });
+          return resources(peers.find(({ id }) => id === server.server.id)!, setup, calls, clock);
+        },
+        mint: options.mint ?? (async () => "u"),
         streams: (servers, activity) => {
           options.deal?.(activity);
           return new Map(
@@ -1673,4 +1690,57 @@ test("lanes a later stage cannot be dealt end the run with what earlier stages m
   expect(result.multiServer.failures).toMatchObject([
     { stage: "upload", message: "No lanes for this stage" },
   ]);
+});
+
+test("upload ids are minted at the start, one per upload stage and server, and each stage takes its own with its planned end", async () => {
+  const minted: string[] = [];
+  const h = setup(
+    two(),
+    { download: true, upload: true, bidirectional: true },
+    { downloadMs: 1_000, uploadMs: 2_000, bidirectionalMs: 3_000 },
+    {
+      mint: async ({ server }) => {
+        minted.push(`${server.id}${minted.length}`);
+        return minted.at(-1)!;
+      },
+    },
+  );
+  h.start();
+  expect(minted).toEqual(["a0", "a1", "b2", "b3"]);
+  await h.result();
+  const taken = await Promise.all(
+    h.setups.map(async ({ stage, server, endsIn, uploadId }) => [
+      stage,
+      server,
+      endsIn,
+      await uploadId,
+    ]),
+  );
+  expect(taken).toEqual([
+    ["download", "a", 1_000, null],
+    ["download", "b", 1_000, null],
+    ["upload", "a", 2_000, "a0"],
+    ["upload", "b", 2_000, "b2"],
+    ["bidirectional", "a", 3_000, "a1"],
+    ["bidirectional", "b", 3_000, "b3"],
+  ]);
+});
+
+test("a stage starting 90 s or more after the run started mints its own upload id", async () => {
+  const now = spyOn(Date, "now").mockReturnValue(0);
+  try {
+    const h = setup(
+      two({
+        prepare: (activity) => void (activity.stage === "download" && now.mockReturnValue(90_000)),
+      }),
+      { download: true, upload: true },
+      { downloadMs: 1_000, uploadMs: 1_000 },
+    );
+    h.start();
+    await h.result();
+    const uploads = h.setups.filter(({ stage }) => stage === "upload");
+    expect(await Promise.all(uploads.map(({ uploadId }) => uploadId))).toEqual([null, null]);
+  } finally {
+    now.mockRestore();
+  }
 });

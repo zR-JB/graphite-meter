@@ -49,6 +49,7 @@ interface RunEnvironment {
   /** Hands a finished run to History; null withdraws the one shown. */
   finished(run: { result: RunResult; plans: StagePlans } | null): void;
   open: OpenStage;
+  mint: RunOptions["mint"];
   streams: RunOptions["streams"];
   clock?: Clock;
 }
@@ -304,6 +305,7 @@ export function createRun(env: RunEnvironment) {
       dropped: ready.dropped,
       plan: runPlan,
       open: env.open,
+      mint: env.mint,
       streams: env.streams,
       clock: env.clock,
     });

@@ -90,6 +90,10 @@ enforces the stream ceiling from the receiving side: the server stops reading th
 client stream with `STOP_SENDING` code 0, without an error frame, since a byte stream carries no
 channel to report one on.
 
+The plain `GET /download` also takes `ms=`, a positive whole number of milliseconds. Its body then ends at whichever
+comes first, `bytes` or that long after the server began it, without a `Content-Length` (HTTP/1.1 frames it chunked),
+so a lane ends on the server's clock and its connection stays reusable. HEAD and `bytes=0` answer no body either way.
+
 `datagrams=` is presence-based: the bare `datagrams=` spelled above is the request, and so is
 any value the server cannot read. A spelling of zero or false (`0`, `false`, `off`, `no`, matched
 case-insensitively with surrounding whitespace ignored) is a request for no datagrams and is

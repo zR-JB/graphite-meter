@@ -336,3 +336,29 @@ async fn connection_credit_reaches_the_reply_that_waited_longest() {
         200
     );
 }
+
+#[tokio::test]
+async fn a_download_ends_on_the_server_s_clock_without_a_length() {
+    let h3 = H3::start(&[]).await;
+    let connection = h3.connect(transport(None)).await;
+    let started = std::time::Instant::now();
+    let (answer, mut body) = connection
+        .send("GET", &format!("{ENDLESS}&ms=50"), b"")
+        .await;
+    let read = read(&mut body).await.unwrap().len();
+    let elapsed = started.elapsed();
+    assert_eq!(
+        (answer.status(), answer.headers().get("content-length")),
+        (http::StatusCode::OK, None)
+    );
+    assert!(
+        read > 0 && elapsed >= Duration::from_millis(50) && elapsed < Duration::from_secs(2),
+        "{read} bytes in {elapsed:?}"
+    );
+    let (probe, _) = connection.send("GET", "/probe", b"").await;
+    assert_eq!(
+        probe.status(),
+        200,
+        "the connection serves the next request"
+    );
+}

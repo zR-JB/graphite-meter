@@ -197,6 +197,10 @@ export interface StageSetup {
   events: StageEvents;
   /** Run ms, the clock checkpoints are stamped with. */
   now(): number;
+  /** Timeline ms until the stage's planned end, a live change included. */
+  endsIn(): number;
+  /** An upload id minted when the run started, for the stage's first upload; null leaves the stage to mint one. */
+  uploadId: Promise<string | null>;
   /** The server's latency bus for the run: opened by the first stage that probes, adopted by each later one. */
   bus: { current: LatencyBus | null };
 }
@@ -207,6 +211,8 @@ export interface StageResources {
   prepare(signal: AbortSignal): Promise<void>;
   /** Opens the measured window at page time `at`. */
   measure(at: number): void;
+  /** The run's clock started for the stage, or its planned end moved: download bodies follow it from their next request. */
+  replanned(): void;
   /** A receiver checkpoint; `final` issues fresh requests and retries a miss within 1.5 s. */
   checkpoint(signal: AbortSignal, final?: boolean): Promise<Checkpoint | null>;
   /** The window's download bytes the lanes counted by page time `at`, or null without every answer; never rejects. */

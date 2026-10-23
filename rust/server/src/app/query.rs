@@ -1,6 +1,7 @@
 //! Query parameters and URL-encoded forms; transfer parameters clamped (`api/wire.md#webtransport-routes`).
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use std::time::Duration;
 
 /// The transfer size when `bytes=` is missing or unreadable.
 const DEFAULT_TRANSFER_BYTES: u64 = 25 << 20;
@@ -85,6 +86,12 @@ pub fn transfer_bytes(query: Option<&str>) -> u64 {
         Some(bytes) if bytes >= 0 => (bytes as u64).min(MAX_TRANSFER_BYTES),
         _ => DEFAULT_TRANSFER_BYTES,
     }
+}
+
+/// `ms=`: a positive whole number of milliseconds, else none.
+pub fn transfer_ms(query: Option<&str>) -> Option<Duration> {
+    let ms = get(query, "ms").as_deref().and_then(integer)?;
+    (ms > 0).then(|| Duration::from_millis(ms as u64))
 }
 
 /// `streams=`: missing, non-numeric or below one reads as one, and above the cap as the cap.

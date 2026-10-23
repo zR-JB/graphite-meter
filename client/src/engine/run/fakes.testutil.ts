@@ -150,6 +150,7 @@ export function resources(
       calls.push(`begin:${tag}`);
       await peer.prepare?.(activity, events);
     },
+    replanned() {},
     measure() {
       measuring = true;
       started = clock.t;

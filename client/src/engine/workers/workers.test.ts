@@ -139,10 +139,11 @@ test("a download counts bytes into the epoch they were read in, from the time it
   });
   lane.send({
     type: "download",
-    url: "https://peer.example/download",
+    url: "https://peer.example/download?bytes=1",
     request: RECIPE,
     epoch: 0,
     streams: 1,
+    until: 0,
   });
   await elapse(0);
   body.push("warmup");
@@ -165,6 +166,66 @@ test("a download counts bytes into the epoch they were read in, from the time it
   ]);
 });
 
+test("a download's bodies end on the server's clock at the lane's latest end; a stop waits only for one ending soon", async () => {
+  const bodies = [source(), source(), source(), source()];
+  const asked: string[] = [];
+  const bootLane = () =>
+    boot<LaneCommand>("./lane.ts", {
+      fetch: async (url: string) => {
+        asked.push(url);
+        return new Response(bodies[asked.length - 1]!.stream);
+      },
+    });
+  const at = (ms: number) => performance.timeOrigin + performance.now() + ms;
+  const download = (until: number | null): LaneCommand => ({
+    type: "download",
+    url: "https://peer.example/download?bytes=1",
+    request: RECIPE,
+    epoch: 0,
+    streams: 1,
+    until: until === null ? null : at(until),
+  });
+  const lane = await bootLane();
+  lane.send(download(5_000));
+  await elapse(0);
+  // The stage's end moved: the next body follows it.
+  lane.send({ type: "until", until: at(6_400) });
+  await elapse(5_000);
+  bodies[0]!.controller().close();
+  await elapse(1_000);
+  lane.send({ type: "stop" });
+  await elapse(0);
+  expect(lane.types()).toEqual([]);
+  bodies[1]!.controller().close();
+  await elapse(0);
+  expect([asked, lane.types()]).toEqual([
+    [
+      "https://peer.example/download?bytes=1&ms=5000",
+      "https://peer.example/download?bytes=1&ms=1400",
+    ],
+    ["stopped"],
+  ]);
+  // A body far from its end, as an early finish leaves, is not waited for.
+  const cut = await bootLane();
+  cut.send(download(5_000));
+  await elapse(0);
+  cut.send({ type: "stop" });
+  expect(cut.types()).toEqual(["stopped"]);
+  // One that ends early and short came from something else; before the stage's end is known, bodies are short.
+  const early = await bootLane();
+  early.send(download(null));
+  await elapse(0);
+  expect(asked.at(-1)).toBe("https://peer.example/download?bytes=1&ms=250");
+  bodies[3]!.controller().close();
+  await elapse(0);
+  expect(early.posted).toEqual([
+    {
+      type: "ended",
+      ending: { reason: "connection-lost", retry: true, detail: "the download ended early" },
+    },
+  ]);
+});
+
 test("a flush reports the bytes counted so far before it answers", async () => {
   const body = source();
   const lane = await boot<LaneCommand>("./lane.ts", {
@@ -172,10 +233,11 @@ test("a flush reports the bytes counted so far before it answers", async () => {
   });
   lane.send({
     type: "download",
-    url: "https://peer.example/download",
+    url: "https://peer.example/download?bytes=1",
     request: RECIPE,
     epoch: 1,
     streams: 1,
+    until: 0,
   });
   await elapse(0);
   body.push("counted");
@@ -194,10 +256,11 @@ test("a download whose answer ends short ends the lane, so its owner paces the r
   });
   lane.send({
     type: "download",
-    url: "https://peer.example/download",
+    url: "https://peer.example/download?bytes=1",
     request: RECIPE,
     epoch: 0,
     streams: 1,
+    until: 0,
   });
   await elapse(0);
   expect(fetches).toBe(1);

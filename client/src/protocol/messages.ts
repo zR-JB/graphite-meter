@@ -51,9 +51,19 @@ export interface Flushed {
   at: number;
 }
 
-/** A lane worker reopens with `download` or `upload` after each ending and stops by termination. */
+/** A lane worker reopens with `download` or `upload` after each ending; `stop` lets a download's body end, which `stopped` acknowledges. */
 export type LaneCommand =
-  | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
+  | {
+      type: "download";
+      url: string;
+      request: RequestRecipe;
+      epoch: number;
+      streams: number;
+      /** Epoch ms by which the server's clock ends each body (`ms=`), or null while the stage's end is not yet known. */
+      until: number | null;
+    }
+  /** The stage's planned end moved: later bodies end by this epoch ms instead. */
+  | { type: "until"; until: number }
   | {
       type: "upload";
       url: string;
@@ -65,13 +75,15 @@ export type LaneCommand =
       rttMs: number | null;
     }
   | { type: "measure"; epoch: number; at: number }
-  | { type: "flush"; at: number };
+  | { type: "flush"; at: number }
+  | { type: "stop" };
 
 /** `posted` is one completed upload POST timed on the worker clock, as presentation evidence, never a measurement. */
 export type LaneReport =
   | BytesReport
   | { type: "posted"; bytes: number; elapsedMs: number }
   | EndReport
+  | { type: "stopped" }
   | Flushed;
 
 /** A session worker (re)dials with `download` or `upload`; `stop` finalizes an upload and is acknowledged by `stopped`. */

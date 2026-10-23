@@ -143,7 +143,7 @@ impl http_body::Body for Body {
     fn is_end_stream(&self) -> bool {
         match &self.content {
             Content::Full(bytes) => bytes.is_empty(),
-            Content::Download(source) => source.remaining() == 0,
+            Content::Download(source) => source.ended(),
             Content::Feed(_) => false,
         }
     }
@@ -151,7 +151,14 @@ impl http_body::Body for Body {
     fn size_hint(&self) -> SizeHint {
         match &self.content {
             Content::Full(bytes) => SizeHint::with_exact(bytes.len() as u64),
-            Content::Download(source) => SizeHint::with_exact(source.remaining()),
+            Content::Download(source) => source.length().map_or_else(
+                || {
+                    let mut hint = SizeHint::default();
+                    hint.set_upper(source.remaining());
+                    hint
+                },
+                SizeHint::with_exact,
+            ),
             Content::Feed(_) => SizeHint::default(),
         }
     }

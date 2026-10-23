@@ -143,6 +143,7 @@ export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
           events.warmupDownload(Math.round((plan.down * (1 + plan.overshoot) * TICK_MS) / 1000)),
         );
     },
+    replanned() {},
     measure() {
       stop();
       started = now;

@@ -12,6 +12,7 @@ import {
   type Ending,
   type FailureReason,
   type OpenStage,
+  type PreparedServer,
   type ProbeChannel,
   type ProbeChannelEvents,
   type Role,
@@ -28,14 +29,43 @@ import { abortable, delay } from "../run/clock";
 
 /** Readiness gets a dial's budget and a margin for the workers to report within it. */
 const READY_MS = ESTABLISH_MS + 500;
-/** Large enough that a stage ends by aborting a download, not by fetching it again. */
+/** Large enough that only the server's clock ends a download. */
 const DOWNLOAD_BYTES = 64 * 1024 ** 3;
+/** Download bodies end this long after the stage's planned end, so its last window still sees bytes flow. */
+const END_MARGIN_MS = 250;
 /** Bounds the probes in flight. A loaded stage shares the link with its transfer, so its window stays small. */
 const IN_FLIGHT = { fixed: 16, replyDriven: 4, loaded: 2 };
 /** One sign-in check answers every break this long after it started, so an outage is not checked per reopening. */
 const SIGN_IN_CHECK_MS = 3_000;
 
 export const openStage: OpenStage = (setup) => new Stage(setup);
+
+/** A new upload id from the server's throughput origin; a broken request asks `signedOut` whether the sign-in ended. */
+export async function mintUpload(
+  { auth, server, throughput }: PreparedServer,
+  signal: AbortSignal,
+  signedOut: () => Promise<boolean> = async () => false,
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await auth.fetch(`${throughput.fetch.origin}${ROUTES.uploadSession}`, {
+      method: "POST",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(ESTABLISH_MS)]),
+    });
+  } catch (cause) {
+    if (cause instanceof SignInRequired || signal.aborted) throw cause;
+    // A broken request may be the sign-in or grant ending. The check, too, ends with the budget.
+    if (await abortable(signedOut(), signal)) throw new SignInRequired(server);
+    throw new Error("upload session could not be established", { cause });
+  }
+  if (!response.ok) {
+    release(response);
+    throw new Error(`upload session returned HTTP ${response.status}`);
+  }
+  const { uploadId } = uploadSession(await readJSON(response));
+  signal.throwIfAborted();
+  return uploadId;
+}
 
 class Stage implements StageResources {
   readonly #setup: StageSetup;
@@ -56,9 +86,13 @@ class Stage implements StageResources {
   #signInCheck: { at: number; ended: Promise<boolean> } | null = null;
   /** Lanes and feeds that reopened once already; a second ending other than a server bound fails the stage. */
   readonly #reopened = new Set<string>();
+  /** The run's clock runs for this stage, so its planned end is exact. */
+  #planned = false;
+  #uploadId: Promise<string | null>;
 
   constructor(setup: StageSetup) {
     this.#setup = setup;
+    this.#uploadId = setup.uploadId;
   }
 
   async prepare(signal: AbortSignal): Promise<void> {
@@ -101,6 +135,18 @@ class Stage implements StageResources {
     this.#down?.measure(at);
     this.#receiver?.measure();
     this.#probes?.measure();
+  }
+
+  replanned(): void {
+    this.#planned = true;
+    this.#down?.ends(this.#bodiesEnd()!);
+  }
+
+  /** Epoch ms download bodies end by, just past the planned end so the window's last bytes flow; null while the
+   *  clock holds for the stage to prepare, as its end is not known yet. */
+  #bodiesEnd(): number | null {
+    if (!this.#planned) return null;
+    return performance.timeOrigin + performance.now() + this.#setup.endsIn() + END_MARGIN_MS;
   }
 
   async checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
@@ -217,7 +263,11 @@ class Stage implements StageResources {
   /** Mints an upload id and opens its receiver; HTTP lanes write only once the feed is open, so it reports from the first byte. */
   async #prepareUpload(signal: AbortSignal): Promise<Receiver> {
     const { auth, discovery, throughput } = this.#setup.server;
-    const id = await this.#mintUpload(signal);
+    // The run's id serves the stage's first upload; a replacement is minted.
+    const minted = this.#uploadId;
+    this.#uploadId = Promise.resolve(null);
+    const id =
+      (await minted) ?? (await mintUpload(this.#setup.server, signal, () => this.#signedOut()));
     if (this.#throughputEnded) throw new Error("throughput already ended");
     const carried = throughput.target.transport !== "fetch-stream";
     const route = carried
@@ -232,29 +282,6 @@ class Stage implements StageResources {
     await receiver.opened(signal);
     if (!carried) this.#up = this.#carrier("up", receiver);
     return receiver;
-  }
-
-  async #mintUpload(signal: AbortSignal): Promise<string> {
-    const { auth, server, throughput } = this.#setup.server;
-    let response: Response;
-    try {
-      response = await auth.fetch(`${throughput.fetch.origin}${ROUTES.uploadSession}`, {
-        method: "POST",
-        signal: AbortSignal.any([signal, AbortSignal.timeout(ESTABLISH_MS)]),
-      });
-    } catch (cause) {
-      if (cause instanceof SignInRequired || signal.aborted) throw cause;
-      // A broken request may be the sign-in or grant ending. The check, too, ends with the budget.
-      if (await abortable(this.#signedOut(), signal)) throw new SignInRequired(server);
-      throw new Error("upload session could not be established", { cause });
-    }
-    if (!response.ok) {
-      release(response);
-      throw new Error(`upload session returned HTTP ${response.status}`);
-    }
-    const { uploadId } = uploadSession(await readJSON(response));
-    signal.throwIfAborted();
-    return uploadId;
   }
 
   /** Opens one direction's carrier and its lanes now, or none once throughput ended. */
@@ -287,6 +314,7 @@ class Stage implements StageResources {
               request: auth.request(url, "GET"),
               epoch,
               streams: count,
+              until: this.#bodiesEnd(),
             };
           }),
       };

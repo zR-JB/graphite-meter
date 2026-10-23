@@ -42,6 +42,7 @@ function stage(
   target: FetchTarget | SessionTarget = FETCH,
   bus: StageSetup["bus"] = { current: null },
   server: Partial<PreparedServer> = {},
+  uploadId: StageSetup["uploadId"] = Promise.resolve(null),
 ) {
   const events: [keyof StageEvents, ...unknown[]][] = [];
   const spawned = FakeWorker.spawned.length;
@@ -91,6 +92,8 @@ function stage(
           events.push([type, ...args]),
     }),
     now: () => performance.now(),
+    endsIn: () => 6_000,
+    uploadId,
     bus,
   });
   const workers = (url: string) =>
@@ -523,6 +526,65 @@ test("a session ended at the server's bound reopens without spending the stage's
   }
   expect(worker.commands.filter(({ type }) => type === "download")).toHaveLength(4);
   expect(session.events.filter(([type]) => type === "failed")).toEqual([]);
+});
+
+test("a stage's download lanes end on the server's clock just past its planned end once the clock runs, and a stop waits at most 1 s for them", async () => {
+  const lanes = stage(DOWNLOAD);
+  void lanes.resources.prepare(new AbortController().signal);
+  await elapse(150);
+  const opened = lanes.lanes();
+  // While the clock holds for the stage to prepare, its end is not known yet.
+  expect(opened.map(({ commands }) => commands[0]!.until)).toEqual([null, null, null]);
+  for (const lane of opened) bytes(lane, 0);
+  await elapse(0);
+  lanes.resources.replanned();
+  // 6 s planned and a 250 ms margin.
+  expect(opened.map(({ commands }) => commands.at(-1))).toEqual(
+    Array(3).fill({ type: "until", until: performance.timeOrigin + performance.now() + 6_250 }),
+  );
+  const finished = outcome(lanes.resources.finish());
+  expect(opened.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "stop" }));
+  opened[0]!.report({ type: "stopped" });
+  opened[1]!.report({ type: "broken", detail: "TypeError: network error" });
+  await elapse(500);
+  expect(opened.map(({ terminated }) => terminated)).toEqual([false, false, false]);
+  opened[2]!.report({ type: "stopped" });
+  await elapse(0);
+  expect([finished.at, opened.every(({ terminated }) => terminated)]).toEqual([500, true]);
+  const late = stage(DOWNLOAD);
+  void late.resources.prepare(new AbortController().signal);
+  for (const lane of late.lanes()) bytes(lane, 0);
+  await elapse(0);
+  const cut = outcome(late.resources.finish());
+  await elapse(1_000);
+  expect([cut.at, late.lanes().every(({ terminated }) => terminated)]).toEqual([1_000, true]);
+});
+
+test("a stage's first upload takes the run's id; its replacement is minted", async () => {
+  const minted: string[] = [];
+  const upload = stage(
+    { stage: "upload", transfer: ["up"], loadedLatency: false },
+    {
+      fetch: async (url: string) => {
+        minted.push(url);
+        return Response.json({ uploadId: "u2" });
+      },
+    },
+    SESSION,
+    { current: null },
+    {},
+    Promise.resolve("u1"),
+  );
+  outcome(upload.resources.prepare(new AbortController().signal));
+  await elapse(0);
+  expect([minted, upload.session().commands[0]]).toMatchObject([
+    [],
+    { type: "upload", url: `${ORIGIN}/wt/upload?id=u1` },
+  ]);
+  void upload.resources.replaceUpload(new AbortController().signal);
+  await elapse(0);
+  expect(minted).toEqual([`${ORIGIN}/upload/session`]);
+  upload.resources.discard();
 });
 
 test("one latency bus serves the server's run: a later stage adopts and re-paces it, and only a discard closes it", async () => {

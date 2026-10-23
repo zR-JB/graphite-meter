@@ -449,7 +449,8 @@ impl App {
         Ok(Outcome::WebSocket(accepted, socket))
     }
 
-    /// `bytes=` payload bytes; HEAD and an empty download drop their lane at once.
+    /// `bytes=` payload bytes, ending at `ms=` on the server's clock without a length; HEAD and an empty download drop
+    /// their lane at once.
     fn download<B>(
         &self,
         request: &Request<B>,
@@ -458,10 +459,19 @@ impl App {
         exchange: Exchange,
     ) -> Result<Response<Body>, Response<Body>> {
         let lane = self.admit(peer, connection, exchange, false)?;
-        let bytes = query::transfer_bytes(request.uri().query());
+        let query = request.uri().query();
+        let bytes = query::transfer_bytes(query);
+        let until = query::transfer_ms(query).and_then(|ms| Instant::now().checked_add(ms));
         let body = match request.method() == Method::HEAD || bytes == 0 {
             true => Body::empty(),
-            false => Body::download(self.block.source(bytes)).with_lane(lane),
+            false => {
+                let source = self.block.source(bytes);
+                let source = match until {
+                    Some(until) => source.ending_at(until),
+                    None => source,
+                };
+                Body::download(source).with_lane(lane)
+            }
         };
         let mut response = Response::new(body);
         let headers = response.headers_mut();
@@ -470,7 +480,9 @@ impl App {
             HeaderValue::from_static("application/octet-stream"),
         );
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes));
+        if until.is_none() {
+            headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes));
+        }
         Ok(response)
     }
 
