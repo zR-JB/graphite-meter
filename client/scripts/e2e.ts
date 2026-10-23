@@ -27,7 +27,7 @@ for (const [path, expected, name] of [
   if (actual !== `${name} ${expected}`) throw new Error(`${actual} is not ${name} ${expected}`);
 }
 
-// The network group's servers have fixed addresses, which only its private network namespace holds.
+// The network group's servers have fixed addresses, which it owns in its network namespace or on a CI runner.
 const network = process.env.GM_E2E_NETWORK === "1";
 const dir = await mkdtemp(join(tmpdir(), "gm-e2e-"));
 // Everything the suite starts inherits it: servers, workers, browsers and their profiles, and port reservations.
@@ -97,6 +97,9 @@ try {
     ["-CA", ca, "-CAkey", caKey, "-keyout", key, "-out", cert, "-subj", `/CN=${host}`].concat([
       "-addext",
       `subjectAltName=IP:${host},${NETWORK_FLEET.map((s) => `IP:${new URL(s.url).hostname}`)},DNS:localhost`,
+      // Firefox refuses a leaf that says it is a CA, which openssl's defaults make it.
+      "-addext",
+      "basicConstraints=critical,CA:FALSE",
     ]),
   ]) {
     const openssl = Bun.spawnSync(

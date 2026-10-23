@@ -36,7 +36,7 @@ use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Auth
 use std::{
     collections::HashMap,
     future::poll_fn,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     pin::{Pin, pin},
     sync::{Arc, Mutex},
     task::{Context, Poll},
@@ -67,14 +67,14 @@ pub struct App {
 pub struct ConnectionLog(Mutex<HashMap<IpAddr, usize>>);
 
 impl ConnectionLog {
-    fn line(&self, peer: IpAddr, change: isize, what: &str) {
+    fn line(&self, peer: SocketAddr, change: isize, what: &str) {
         let held = {
             let mut held = lock(&self.0);
-            let count = held.entry(peer).or_default();
+            let count = held.entry(peer.ip()).or_default();
             *count = count.saturating_add_signed(change);
             let count = *count;
             if count == 0 {
-                held.remove(&peer);
+                held.remove(&peer.ip());
             }
             count
         };
@@ -82,10 +82,10 @@ impl ConnectionLog {
     }
 }
 
-/// An accepted QUIC connection, logged as ended when dropped.
-pub struct QuicConnection(Arc<ConnectionLog>, IpAddr);
+/// The log's record of an accepted QUIC connection, which logs its end when dropped.
+pub struct LoggedQuic(Arc<ConnectionLog>, SocketAddr);
 
-impl Drop for QuicConnection {
+impl Drop for LoggedQuic {
     fn drop(&mut self) {
         self.0.line(self.1, -1, "ended");
     }
@@ -206,10 +206,10 @@ impl App {
     }
 
     /// Under `GM_VERBOSE`, logs an accepted QUIC connection from `peer`, and its end once the guard drops.
-    pub fn quic_accepted(&self, peer: IpAddr) -> Option<QuicConnection> {
+    pub fn quic_accepted(&self, peer: SocketAddr) -> Option<LoggedQuic> {
         let log = self.connection_log.clone()?;
         log.line(peer, 1, "accepted");
-        Some(QuicConnection(log, peer))
+        Some(LoggedQuic(log, peer))
     }
 
     /// A QUIC handshake from `peer`, held until it completes; `None` if it needs Retry first, as one does when

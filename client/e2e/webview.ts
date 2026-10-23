@@ -615,11 +615,11 @@ function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: T
   const register =
     options.chrome && browser !== "chrome"
       ? bunTest.skip
-      : options.failing && !process.env.GM_TEMP_SHOW
+      : options.failing
         ? bunTest.failing
         : bunTest;
   register(
-    name,
+    options.failing ? `${name} [fails ${options.failing}]` : name,
     async () => {
       const page = new Page(options);
       try {

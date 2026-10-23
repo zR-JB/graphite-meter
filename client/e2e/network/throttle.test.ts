@@ -40,12 +40,14 @@ test.chrome(
         everyMs: 50,
       });
       await Bun.sleep(15_000);
-      fleet.stopNeighbours();
+      await fleet.stopNeighbours();
       const run = await refused.end();
       const dials = fleet.logs[0]!.lines(from).flatMap(
         (line) => /request:\s+CONNECT \/wt\/\S+ .*: (\d+)$/.exec(line)?.[1] ?? [],
       );
-      expect(dials.filter((status) => status !== "200").length).toBeLessThanOrEqual(4);
+      const failed = dials.filter((status) => status !== "200").length;
+      expect(failed).toBeGreaterThan(0);
+      expect(failed).toBeLessThanOrEqual(4);
       expect(dials).not.toContain("429");
       expect(`${run.notice} ${measured(run).failures.join(" ")}`).toContain("Reload");
       await page.reload();

@@ -1,6 +1,6 @@
 // The network group's tools: a shaped link per server and direction, UDP outages, a same-address neighbour, and each
 // server's connection log, from which a run's budget is counted. `mise run e2e <server> network` runs the group in a
-// private network namespace, where its tests own loopback's queues one at a time.
+// private network namespace, or on a CI runner's own loopback, whose queues its tests own one at a time.
 import { test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { HistoryRecord } from "../../src/app/history/records";
@@ -20,18 +20,17 @@ import { freshBrowser } from "../browsers";
 import { launch, NETWORK_FLEET, type Server } from "../servers";
 import { browser, expect, type Page } from "../webview";
 
-/** One direction of a server's access link: one-way delay, rate, random loss and a drop-tail queue in packets. */
+/** One direction of a server's access link: one-way delay, rate and random loss, behind a 1000-packet queue. */
 export interface Direction {
   delayMs: number;
   mbit: number;
   lossPercent?: number;
-  queue?: number;
 }
 export interface Link {
   down: Direction;
   up: Direction;
 }
-export const link = (rttMs: number, mbit = 100): Link => ({
+export const link = (rttMs: number, mbit: number): Link => ({
   down: { delayMs: rttMs / 2, mbit },
   up: { delayMs: rttMs / 2, mbit },
 });
@@ -65,8 +64,11 @@ export const capped = (handlers: number) => ({
 
 const address = (server: Server) => new URL(server.url).hostname;
 
+// Root in the group's own network namespace; on a CI runner's loopback, sudo, which never prompts.
+const TC = process.env.GM_E2E_HOST_LOOPBACK ? ["sudo", "-n", "tc"] : ["tc"];
+
 function tc(command: string) {
-  const run = Bun.spawnSync(["tc", ...command.split(" ")], { stderr: "pipe" });
+  const run = Bun.spawnSync([...TC, ...command.split(" ")], { stderr: "pipe" });
   if (run.exitCode !== 0) throw new Error(`tc ${command}: ${run.stderr}`);
 }
 
@@ -74,7 +76,7 @@ function tc(command: string) {
 function shape(links: Link[]) {
   // Loopback's queues are the group's alone, so whatever a failed test left is cleared first.
   for (const leftover of ["root", "ingress"])
-    Bun.spawnSync(["tc", "qdisc", "del", "dev", "lo", leftover], { stderr: "ignore" });
+    Bun.spawnSync([...TC, "qdisc", "del", "dev", "lo", leftover], { stderr: "ignore" });
   tc(
     `qdisc add dev lo root handle 1: prio bands ${3 + 2 * links.length} priomap ${"0 ".repeat(16).trim()}`,
   );
@@ -84,11 +86,11 @@ function shape(links: Link[]) {
       ["src", 4 + 2 * i, link.down],
       ["dst", 5 + 2 * i, link.up],
     ] as const;
-    for (const [side, band, { delayMs, mbit, lossPercent = 0, queue = 1000 }] of sides) {
+    for (const [side, band, { delayMs, mbit, lossPercent = 0 }] of sides) {
       // tc reads class and handle numbers as hexadecimal.
       const minor = band.toString(16);
       tc(
-        `qdisc add dev lo parent 1:${minor} handle ${minor}0: netem delay ${delayMs}ms loss ${lossPercent}% rate ${mbit}mbit limit ${queue}`,
+        `qdisc add dev lo parent 1:${minor} handle ${minor}0: netem delay ${delayMs}ms loss ${lossPercent}% rate ${mbit}mbit limit 1000`,
       );
       tc(
         `filter add dev lo parent 1: protocol ip prio 1 u32 match ip ${side} ${address(NETWORK_FLEET[i]!)}/32 flowid 1:${minor}`,
@@ -110,12 +112,16 @@ export class ConnectionLog {
 }
 
 export type Fleet = Awaited<ReturnType<typeof shapedFleet>>;
+// A test that timed out runs on beside the next, so the next ends its fleet before taking the same addresses.
+let current: { close(): Promise<void> } | undefined;
 
 /** Servers S1.. on links of their own, the first with the others in its catalog and, with `signIn`, a password. */
 export async function shapedFleet(
   links: Link[],
   { signIn = false, env = [] }: { signIn?: boolean; env?: Record<string, string>[] } = {},
 ) {
+  await current?.close();
+  const owner = (current = { close: async () => {} });
   const servers = NETWORK_FLEET.slice(0, links.length);
   // The servers' origins outlive each test, and a browser keeps what it learned of them, such as Firefox's HTTP/3
   // exclusions, for as long as it runs.
@@ -147,6 +153,7 @@ export async function shapedFleet(
     launch.status === "fulfilled" ? [launch.value] : [],
   );
   const neighbours: Bun.Subprocess[] = [];
+  let closing: Promise<void> | undefined;
   const fleet = {
     servers,
     signIn,
@@ -179,17 +186,24 @@ export async function shapedFleet(
         }),
       );
     },
-    stopNeighbours() {
-      for (const child of neighbours.splice(0)) child.kill();
+    async stopNeighbours() {
+      const stopping = neighbours.splice(0);
+      for (const child of stopping) child.kill();
+      await Promise.all(stopping.map((child) => child.exited));
     },
-    async close() {
-      fleet.stopNeighbours();
-      for (const child of fleet.children) child.kill();
-      await Promise.all(fleet.children.map((child) => child.exited));
-      tc("qdisc del dev lo root");
-      tc("qdisc del dev lo ingress");
+    close() {
+      return (closing ??= (async () => {
+        await fleet.stopNeighbours();
+        for (const child of fleet.children) child.kill();
+        await Promise.all(fleet.children.map((child) => child.exited));
+        if (current !== owner) return;
+        current = undefined;
+        tc("qdisc del dev lo root");
+        tc("qdisc del dev lo ingress");
+      })());
     },
   };
+  owner.close = fleet.close;
   const failed = launches.find((launch) => launch.status === "rejected");
   if (failed) {
     await fleet.close();
@@ -248,12 +262,15 @@ export interface ServerBudget {
   id: string;
   /** Latency buses opened: WebSocket or WebTransport pings. */
   buses: number;
-  /** The most QUIC connections the server held for the browser's address, and what the run's paths need. */
+  /** The most QUIC connections opened in the run the server held at once, and what the run's paths need. */
   quic: number;
   quicPlan: number;
-  /** HTTP lane requests, and the CORS preflights they took. */
-  lanes: number;
-  preflights: number;
+  /** QUIC connections the server refused at accept, which no page can see. */
+  quicRefused: number;
+  /** Download lane requests, one per lane and stage; upload POSTs, several per lane, and their CORS preflights. */
+  downloads: number;
+  uploads: number;
+  uploadPreflights: number;
   /** Lane requests that reached the TCP side of the HTTP/3 port, which serves no transfer. */
   companionLanes: number;
   /** Answers 429 or 503. */
@@ -269,25 +286,34 @@ export interface Attempt {
   servers: ServerBudget[];
 }
 
-const QUIC = /quic:\s+connection from \S+ (accepted|refused|ended): (\d+) held/;
+const QUIC = /quic:\s+connection from (\S+) (accepted|refused|ended): \d+ held/;
 const REQUEST = /request:\s+(\S+) (\S+) from \S+ on (\S+): (\d+)/;
-const LANE = /^\/(download|upload)$/;
 
 function budget(log: ConnectionLog, from: number, to: number) {
-  let held = 0;
-  for (const line of log.lines(0, from)) held = +(QUIC.exec(line)?.[2] ?? held);
-  const counts = { buses: 0, quic: held, lanes: 0, preflights: 0, refused: 0, companionLanes: 0 };
+  // The run's own connections: those accepted inside its window, by address and port.
+  const own = new Set<string>();
+  const counts = {
+    buses: 0,
+    quic: 0,
+    quicRefused: 0,
+    downloads: 0,
+    uploads: 0,
+    uploadPreflights: 0,
+    companionLanes: 0,
+    refused: 0,
+  };
   for (const line of log.lines(from, to)) {
-    const quic = QUIC.exec(line);
-    if (quic) counts.quic = Math.max(counts.quic, +quic[2]!);
+    const [, peer, event] = QUIC.exec(line) ?? [];
+    if (event === "refused") counts.quicRefused++;
+    if (event === "accepted") own.add(peer!);
+    if (event === "ended") own.delete(peer!);
+    counts.quic = Math.max(counts.quic, own.size);
     const [, method, path, endpoint, status] = REQUEST.exec(line) ?? [];
-    if (!path) continue;
-    if (/^\/(ws|wt)\/ping$/.test(path) && /^(101|200)$/.test(status!)) counts.buses++;
-    if (LANE.test(path) && method === "OPTIONS") counts.preflights++;
-    else if (LANE.test(path)) {
-      counts.lanes++;
-      if (endpoint === "H3Companion") counts.companionLanes++;
-    }
+    if (/^\/(ws|wt)\/ping$/.test(path ?? "") && /^(101|200)$/.test(status!)) counts.buses++;
+    if (path === "/download" && method === "GET") counts.downloads++;
+    if (path === "/upload") counts[method === "OPTIONS" ? "uploadPreflights" : "uploads"]++;
+    if (/^\/(download|upload)$/.test(path ?? "") && endpoint === "H3Companion")
+      counts.companionLanes++;
     if (status === "429" || status === "503") counts.refused++;
   }
   return counts;
@@ -356,10 +382,10 @@ export function measured(run: Attempt) {
 
 /**
  * The connection budget runs must keep (T7), for the runs of each page: after a page's first run no worker is created;
- * per server at most one latency bus, QUIC connections within the paths' plan, and no more lane preflights than
- * `laneUrls`, the lanes a cached preflight covers.
+ * per server at most one latency bus, QUIC connections within the paths' plan, and no preflight per upload POST: a
+ * lane posts several times to one URL, whose preflight the browser caches.
  */
-export function overBudget(pages: Attempt[][], laneUrls = Infinity) {
+function overBudget(pages: Attempt[][]) {
   return pages.flatMap((runs, p) =>
     runs.flatMap((run, i) => {
       const at = `page ${p + 1} run ${i + 1}`;
@@ -370,8 +396,8 @@ export function overBudget(pages: Attempt[][], laneUrls = Infinity) {
             server.buses > 1 && `${server.buses} latency buses`,
             server.quic > server.quicPlan &&
               `${server.quic} QUIC connections held, ${server.quicPlan} planned`,
-            server.preflights > laneUrls &&
-              `${server.preflights} lane preflights for ${laneUrls} lanes`,
+            2 * server.uploadPreflights > server.uploads &&
+              `${server.uploadPreflights} preflights for ${server.uploads} upload POSTs`,
           ]
             .filter(Boolean)
             .map((problem) => `${at} ${server.id}: ${problem}`),
@@ -381,13 +407,10 @@ export function overBudget(pages: Attempt[][], laneUrls = Infinity) {
   );
 }
 
-/** T7 over the runs a file's scenarios recorded, one list per page; it fails until step 8 keeps workers and the bus. */
-export function budgetTest(runs: string, pages: Attempt[][], laneUrls?: number) {
-  (process.env.GM_TEMP_SHOW ? test : test.failing)(
-    `T7: ${runs} keep one bus, their workers and the QUIC plan`,
-    () => {
-      expect(pages.flat().length).toBeGreaterThanOrEqual(2);
-      expect(overBudget(pages, laneUrls)).toEqual([]);
-    },
-  );
+/** T7 over the runs a file's scenarios recorded, one list per page; workers are judged from a page's second run. */
+export function budgetTest(runs: string, pages: Attempt[][]) {
+  test.failing(`T7: ${runs} keep one bus, their workers and the QUIC plan [fails until step 8: stages create lane workers and rebuild the bus]`, () => {
+    expect(pages.flat().length).toBeGreaterThan(0);
+    expect(overBudget(pages)).toEqual([]);
+  });
 }

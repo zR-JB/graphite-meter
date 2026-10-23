@@ -446,11 +446,10 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/browser.py --server image
-      # A network namespace cannot load queueing modules itself; Firefox trusts the run's CA through certutil.
-      - name: Load the network group's queueing modules and certutil
-        if: startsWith(matrix.group, 'network')
+      # The network group's Firefox trusts the run's CA through certutil.
+      - name: Install certutil
+        if: startsWith(matrix.group, 'network') && matrix.browser == 'firefox'
         run: |
-          sudo modprobe -a sch_netem sch_prio sch_ingress cls_u32 act_gact
           if ! command -v certutil; then
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends libnss3-tools
@@ -466,6 +465,8 @@ jobs:
           GM_FIREFOX_PATH: ${{ steps.firefox.outputs.firefox-path }}
           GM_EXPECTED_FIREFOX_VERSION: ${{ matrix.browser == 'firefox' && needs.plan.outputs.firefox || '' }}
           GROUP: ${{ matrix.group }}
+          # The runner refuses users a network namespace; the network group shapes this throwaway machine's loopback.
+          GM_E2E_HOST_LOOPBACK: ${{ startsWith(matrix.group, 'network') && '1' || '' }}
         run: mise run e2e "$RUNNER_TEMP/image/graphite-meter-server" "$GROUP"
       - name: Upload E2E failure diagnostics
         if: failure()

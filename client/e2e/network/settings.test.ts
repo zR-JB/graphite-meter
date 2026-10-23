@@ -46,7 +46,12 @@ test(
       const next = await attempt(page, fleet);
       expect(measured(next)).toEqual({ outcome: "complete", failures: [] });
       expect(next.record!.result.multiServer.servers[0]!.throughput.protocol).toBe("http2");
-      expect(next.servers[0]!.lanes).toBeGreaterThanOrEqual(2 * 3);
+      expect(
+        await page.evaluate(
+          () => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config.transferStreams,
+        ),
+      ).toEqual({ mode: "forced", count: 3 });
+      expect(next.servers[0]!.downloads).toBeGreaterThanOrEqual(3);
     } finally {
       await fleet.close();
     }

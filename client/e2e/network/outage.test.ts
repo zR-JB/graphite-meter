@@ -25,16 +25,26 @@ test(
       for (const gap of [5, 14, 20]) {
         await Bun.sleep(gap * 1000);
         const run = await start(page, fleet);
-        // Into the download, which a run of today's Firefox may already have failed.
+        // A second into the download, or once the run ended, as today's Firefox may fail it before it starts.
         if (!runs.length) {
-          await Bun.sleep(4500);
+          await expect
+            .poll(
+              () =>
+                page.evaluate(() => document.querySelector("#console")?.getAttribute("data-phase")),
+              {
+                timeout: 20_000,
+              },
+            )
+            .toMatch(/^(download|upload|complete|error|aborted)$/);
+          await Bun.sleep(1000);
           await fleet.udpOutage(fleet.servers[0]!, 2000);
         }
         runs.push(await run.end());
       }
       const later = runs.slice(1);
       expect(later.map(measured)).toEqual(later.map(() => ({ outcome: "complete", failures: [] })));
-      expect(runs.map((run) => run.servers[0]!.refused)).toEqual(runs.map(() => 0));
+      const refused = runs.map(({ servers: [server] }) => server!.refused + server!.quicRefused);
+      expect(refused).toEqual(runs.map(() => 0));
       const failures = runs.flatMap((run) => measured(run).failures);
       expect(failures.filter((failure) => / server-(busy|capacity):/.test(failure))).toEqual([]);
     } finally {

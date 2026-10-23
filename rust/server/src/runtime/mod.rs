@@ -213,7 +213,7 @@ impl Server {
                             (app.clone(), shutdown.clone(), runtime.clone());
                         let logged = app.clone();
                         let serve = move |incoming, peer: SocketAddr| {
-                            let accepted = logged.quic_accepted(peer.ip());
+                            let accepted = logged.quic_accepted(peer);
                             let serving = http3.connection(incoming, peer);
                             async move {
                                 let _accepted = accepted;

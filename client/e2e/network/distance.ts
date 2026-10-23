@@ -11,12 +11,10 @@ import {
 } from "./harness";
 import { expect, test } from "../webview";
 
-const STREAMS = 4;
-
-/** T4 over each of `paths`, named and targeted, then T7 over their runs. */
-export function distanceTests(paths: (readonly [string, string])[]) {
+/** T4 over each of `paths`, named, targeted and why today's code fails it, then T7 over their runs. */
+export function distanceTests(paths: (readonly [string, string, string?])[]) {
   const pages: Attempt[][] = [];
-  for (const [name, target] of paths)
+  for (const [name, target, failing] of paths)
     test(
       `T4: four servers at 10 to 160 ms RTT measure every stage of five ${name} runs`,
       async (page) => {
@@ -33,7 +31,6 @@ export function distanceTests(paths: (readonly [string, string])[]) {
                 uploadMs: 2000,
                 bidirectionalMs: 2000,
               },
-              transferStreams: { mode: "forced", count: STREAMS },
             }),
           );
           const runs: Attempt[] = [];
@@ -46,8 +43,7 @@ export function distanceTests(paths: (readonly [string, string])[]) {
           await fleet.close();
         }
       },
-      { timeout: 300_000 },
+      { timeout: 300_000, failing },
     );
-  // A server's lanes have one URL per transfer stage, which a cached preflight covers.
-  budgetTest(`the ${paths.map(([name]) => name).join(", ")} runs`, pages, 2 * STREAMS);
+  budgetTest(`the ${paths.map(([name]) => name).join(", ")} runs`, pages);
 }

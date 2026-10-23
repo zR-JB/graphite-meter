@@ -275,10 +275,18 @@ case "$usage_group" in
 esac
 cd client
 if [[ $usage_group != network* ]]; then bun run e2e "$@"; fi
-# The network scenarios own loopback's queues in a private network namespace, one test at a time.
+# The network scenarios own loopback's queues, one test at a time, in a private network namespace; CI runners refuse
+# users one, so there GM_E2E_HOST_LOOPBACK lends them the throwaway machine's own loopback through sudo.
 if [[ $usage_group == all || $usage_group == network* ]]; then
-  GM_E2E_NETWORK=1 unshare -rn bash -ec 'ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off; exec "$@"' \
-    network bun run e2e bun test ./e2e/network --no-orphans --timeout=600000 "$@"
+  export GM_E2E_NETWORK=1
+  loopback='ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off'
+  network=(bun run e2e bun test ./e2e/network --no-orphans --timeout=600000 "$@")
+  if [[ -n ${GM_E2E_HOST_LOOPBACK:-} ]]; then
+    sudo -n bash -ec "$loopback"
+    "${network[@]}"
+  else
+    unshare -rn bash -ec "$loopback; exec \"\$@\"" network "${network[@]}"
+  fi
 fi
 '''
 

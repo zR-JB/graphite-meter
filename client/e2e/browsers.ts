@@ -223,6 +223,8 @@ function launchFirefox(): Promise<Bidi> {
     stopFirefox = async () => {
       process.off("exit", stop);
       child.kill();
+      await Promise.race([child.exited, Bun.sleep(5_000)]);
+      child.kill("SIGKILL");
       await child.exited;
       stop();
     };
