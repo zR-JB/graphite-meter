@@ -97,20 +97,25 @@ async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
             "{target}"
         );
     }
-    for _ in 0..8 {
-        ticket(
-            &app,
-            &login,
-            "/ws/session",
-            "https://meter.example:8443/ws/ping",
-        )
-        .await;
+    let mut tokens = Vec::new();
+    for _ in 0..9 {
+        tokio::time::advance(Duration::from_millis(1)).await;
+        tokens.push(ticket(&app, &login, "/ws/session", target).await);
     }
-    let full = mint(&app, &login, "/ws/session", target).await;
+    let path = |token: &String| format!("/ws/ping?token={token}");
     assert_eq!(
-        (full.status(), header(&full, "retry-after")),
-        (StatusCode::TOO_MANY_REQUESTS, Some("1"))
+        tls(&app, websocket(&path(&tokens[0]), PUBLIC))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN,
+        "a ninth ticket replaces the one nearest expiry"
     );
+    for token in &tokens[1..] {
+        let request = websocket(&path(token), PUBLIC);
+        assert!(is_socket(
+            &outcome(&app, Endpoint::H1Tls, "192.0.2.1", request).await
+        ));
+    }
 }
 
 #[tokio::test]
