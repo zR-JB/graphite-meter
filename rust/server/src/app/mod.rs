@@ -52,7 +52,7 @@ pub struct App {
     block: Block,
     /// The process's discovery generation: 32 hex digits.
     generation: String,
-    /// What a bootstrap probe answer names: the HTTP/3 port.
+    /// What every answer on the HTTP/3 port's TCP side names, errors too, so a browser that forgot it relearns it.
     alt_svc: Option<HeaderValue>,
     shutdown: CancellationToken,
 }
@@ -193,9 +193,6 @@ impl App {
         let mut response = match self.gate(&request, connection) {
             Err(answer) => answer,
             Ok((route, peer)) => {
-                let bootstrap = connection.endpoint.bootstrap()
-                    && route == Some(Route::Probe)
-                    && request.method() != Method::OPTIONS;
                 let access = self.auth.access(route, peer.auth(), request.headers());
                 let access = access.as_ref();
                 let outcome = self
@@ -206,7 +203,7 @@ impl App {
                 | Outcome::WebSocket(response, ..)
                 | Outcome::WebTransport(response, ..) = &mut outcome
                 {
-                    self.finalize(response, access, bootstrap, version);
+                    self.finalize(response, access);
                 }
                 let Outcome::Response(response) = outcome else {
                     return outcome;
@@ -214,6 +211,14 @@ impl App {
                 response
             }
         };
+        if connection.endpoint.bootstrap()
+            && let Some(alt_svc) = &self.alt_svc
+        {
+            response
+                .headers_mut()
+                .insert(header::ALT_SVC, alt_svc.clone());
+            finalize::close(response.headers_mut(), version);
+        }
         response.body_mut().bound_by_default(deadline);
         Outcome::Response(response)
     }
@@ -546,7 +551,7 @@ impl Endpoint {
         matches!(self, Self::H1 | Self::H1Tls)
     }
 
-    /// Its probe answers point at the HTTP/3 port.
+    /// Its answers point at the HTTP/3 port.
     pub const fn bootstrap(self) -> bool {
         matches!(self, Self::H3Companion)
     }

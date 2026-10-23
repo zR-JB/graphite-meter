@@ -180,7 +180,7 @@ pub(super) async fn pass(mut duration: Duration) {
 const CANCELLED: Error = Error::Reset(Code::H3_REQUEST_CANCELLED);
 
 #[tokio::test]
-async fn the_companion_answers_bootstrap_probes_with_alt_svc_and_serves_no_transfer() {
+async fn the_companion_points_every_answer_at_http3_and_serves_no_transfer() {
     let h3 = H3::start(&[]).await;
     let (companion, port) = (h3.server.companion.unwrap(), h3.server.quic.unwrap().port());
     assert_eq!(
@@ -201,14 +201,9 @@ async fn the_companion_answers_bootstrap_probes_with_alt_svc_and_serves_no_trans
         Some(format!("h3=\":{port}\"").as_str())
     );
     assert_eq!(probe.header("connection"), Some("close"));
-    assert_eq!(
-        connect()
-            .await
-            .request("GET /download?bytes=1", "")
-            .await
-            .status,
-        404
-    );
+    let download = connect().await.request("GET /download?bytes=1", "").await;
+    assert_eq!(download.status, 404);
+    assert_eq!(download.header("alt-svc"), probe.header("alt-svc"));
 }
 
 #[tokio::test]
