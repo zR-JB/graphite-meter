@@ -9,7 +9,7 @@ import {
   start,
   type Attempt,
 } from "./harness";
-import { browser, expect, test } from "../webview";
+import { expect, test } from "../webview";
 
 const pages: Attempt[][] = [];
 
@@ -43,21 +43,14 @@ test(
       }
       const later = runs.slice(1);
       expect(later.map(measured)).toEqual(later.map(() => ({ outcome: "complete", failures: [] })));
-      const refused = runs.map(({ servers: [server] }) => server!.refused + server!.quicRefused);
-      expect(refused).toEqual(runs.map(() => 0));
+      expect(runs.map(({ servers: [server] }) => server!.refused)).toEqual(runs.map(() => 0));
       const failures = runs.flatMap((run) => measured(run).failures);
       expect(failures.filter((failure) => / server-(busy|capacity):/.test(failure))).toEqual([]);
     } finally {
       await fleet.close();
     }
   },
-  {
-    timeout: 300_000,
-    failing:
-      browser === "firefox"
-        ? "until step 3: QUIC connections abandoned in the outage hold the server's per-address quota"
-        : undefined,
-  },
+  { timeout: 300_000 },
 );
 
 budgetTest("T1's runs", pages);

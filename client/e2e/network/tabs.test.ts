@@ -41,13 +41,7 @@ test(
       await fleet.close();
     }
   },
-  {
-    timeout: 180_000,
-    failing:
-      browser === "firefox"
-        ? "until step 3: two user contexts' QUIC connections fill the server's per-address quota"
-        : undefined,
-  },
+  { timeout: 180_000 },
 );
 
 test(

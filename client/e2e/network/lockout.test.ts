@@ -9,7 +9,7 @@ import {
   shapedFleet,
   type Attempt,
 } from "./harness";
-import { browser, expect, test } from "../webview";
+import { expect, test } from "../webview";
 
 const pages: Attempt[][] = [];
 
@@ -30,13 +30,7 @@ test(
       await fleet.close();
     }
   },
-  {
-    timeout: 300_000,
-    failing:
-      browser === "firefox"
-        ? "until step 3: Firefox's own QUIC connections fill the server's per-address quota"
-        : undefined,
-  },
+  { timeout: 300_000 },
 );
 
 budgetTest("T0's runs", pages);

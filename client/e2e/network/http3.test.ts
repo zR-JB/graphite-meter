@@ -16,18 +16,23 @@ const pages: Attempt[][] = [];
 // Chrome reaches these servers' HTTP/3 only by its forced-QUIC flag; its Alt-Svc racing and broken-alternative
 // marking are not covered, since no public test instance is available.
 test(
-  "T3: an HTTP/3 run started 20 s after its check carries every lane over HTTP/3",
+  "T3: HTTP/3 runs started 20 s after the check or the last run carry every lane over HTTP/3",
   async (page) => {
     const fleet = await shapedFleet([link(100, 100)], { signIn: true });
     try {
       await openApp(page, fleet, runConfig("protocol:http3"));
-      await Bun.sleep(20_000);
-      const run = await attempt(page, fleet);
-      pages.push([run]);
-      expect(measured(run)).toEqual({ outcome: "complete", failures: [] });
-      expect(run.record!.result.multiServer.servers[0]!.throughput.browserProtocol).toBe("h3");
-      expect(run.servers[0]!.downloads).toBeGreaterThan(0);
-      expect(run.servers[0]!.companionLanes).toBe(0);
+      const runs: Attempt[] = [];
+      pages.push(runs);
+      for (let i = 0; i < 2; i++) {
+        await Bun.sleep(20_000);
+        runs.push(await attempt(page, fleet));
+      }
+      for (const run of runs) {
+        expect(measured(run)).toEqual({ outcome: "complete", failures: [] });
+        expect(run.record!.result.multiServer.servers[0]!.throughput.browserProtocol).toBe("h3");
+        expect(run.servers[0]!.downloads).toBeGreaterThan(0);
+        expect(run.servers[0]!.companionLanes).toBe(0);
+      }
     } finally {
       await fleet.close();
     }

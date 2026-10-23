@@ -265,8 +265,6 @@ export interface ServerBudget {
   /** The most QUIC connections opened in the run the server held at once, and what the run's paths need. */
   quic: number;
   quicPlan: number;
-  /** QUIC connections the server refused at accept, which no page can see. */
-  quicRefused: number;
   /** Download lane requests, one per lane and stage; upload POSTs, several per lane, and their CORS preflights. */
   downloads: number;
   uploads: number;
@@ -286,7 +284,7 @@ export interface Attempt {
   servers: ServerBudget[];
 }
 
-const QUIC = /quic:\s+connection from (\S+) (accepted|refused|ended): \d+ held/;
+const QUIC = /quic:\s+connection from (\S+) (accepted|ended): \d+ held/;
 const REQUEST = /request:\s+(\S+) (\S+) from \S+ on (\S+): (\d+)/;
 
 function budget(log: ConnectionLog, from: number, to: number) {
@@ -295,7 +293,6 @@ function budget(log: ConnectionLog, from: number, to: number) {
   const counts = {
     buses: 0,
     quic: 0,
-    quicRefused: 0,
     downloads: 0,
     uploads: 0,
     uploadPreflights: 0,
@@ -304,7 +301,6 @@ function budget(log: ConnectionLog, from: number, to: number) {
   };
   for (const line of log.lines(from, to)) {
     const [, peer, event] = QUIC.exec(line) ?? [];
-    if (event === "refused") counts.quicRefused++;
     if (event === "accepted") own.add(peer!);
     if (event === "ended") own.delete(peer!);
     counts.quic = Math.max(counts.quic, own.size);

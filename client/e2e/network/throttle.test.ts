@@ -49,7 +49,10 @@ test.chrome(
       expect(failed).toBeGreaterThan(0);
       expect(failed).toBeLessThanOrEqual(4);
       expect(dials).not.toContain("429");
-      expect(`${run.notice} ${measured(run).failures.join(" ")}`).toContain("Reload");
+      expect(measured(run).outcome).not.toBe("complete");
+      // The page stops dialing WebTransport once its cap is spent, and says why and what resets it.
+      const paused = await attempt(page, fleet);
+      expect(`${paused.notice} ${measured(paused).failures.join(" ")}`).toContain("Reload");
       await page.reload();
       expect(measured(await attempt(page, fleet))).toEqual({ outcome: "complete", failures: [] });
     } finally {
@@ -58,6 +61,7 @@ test.chrome(
   },
   {
     timeout: 180_000,
-    failing: "until step 4: lanes redial every 300 ms to 1.2 s with no page-wide cap",
+    failing:
+      "until Start names the page's WebTransport cap (spec 7.3): a paused page's Start says only that its path is unavailable",
   },
 );
