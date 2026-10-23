@@ -155,12 +155,10 @@ export class Receiver {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
         // The browser bounds a keepalive request; a deadline here could end it before a slow path even connects.
-        void this.#auth
-          .fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true })
-          .then(
-            (response) => release(response),
-            () => {},
-          );
+        void this.#auth.fetch(this.#feed, { method: "DELETE", keepalive: true }).then(
+          (response) => release(response),
+          () => {},
+        );
       else
         try {
           const signal = AbortSignal.any([
@@ -169,7 +167,6 @@ export class Receiver {
           ]);
           const response = await this.#auth.fetch(this.#feed, {
             method: "DELETE",
-            cache: "no-store",
             signal,
           });
           release(response);
@@ -335,7 +332,6 @@ export class Receiver {
     const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(CHECKPOINT_MS)]);
     const response = await this.#auth.fetch(this.#checkpoint, {
       method: "POST",
-      cache: "no-store",
       signal,
     });
     if (!response.ok) {

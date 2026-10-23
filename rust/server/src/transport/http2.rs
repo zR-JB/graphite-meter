@@ -3,7 +3,7 @@
 use super::{
     Burst,
     body::{Aborted, ReplyBound, Sink, pump},
-    lifecycle::{Activity, Event, Grace, Lifecycle},
+    lifecycle::{Activity, Event, Lifecycle},
     tls,
     window::{Incoming, ReceiveWindow},
 };
@@ -111,7 +111,7 @@ impl Http2 {
             return;
         };
         let window = Arc::new(Http2Window::new(self.app.clone()));
-        let mut lifecycle = Lifecycle::new(connection.work.clone(), Grace::Fresh);
+        let mut lifecycle = Lifecycle::new(connection.work.clone());
         let mut streams = FuturesUnordered::new();
         // A child token: polling it never takes the server-wide token's waiter lock.
         let shutdown = self.app.shutdown().child_token();

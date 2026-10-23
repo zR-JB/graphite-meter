@@ -6,7 +6,6 @@ use noq::{
 };
 use std::{
     collections::VecDeque,
-    hash::{BuildHasher, RandomState},
     io::{self, IoSliceMut},
     net::SocketAddr,
     num::NonZeroUsize,
@@ -27,55 +26,31 @@ const QUEUE_DATAGRAMS: usize = 1024;
 const FIRST_FLIGHTS: usize = 64;
 /// Set in the first byte of long-header packets: Initial, 0-RTT, Handshake, Retry and version negotiation.
 const LONG_HEADER: u8 = 0x80;
-/// noq's hashed connection ID: a random nonce, then a keyed hash of it.
-const NONCE_BYTES: usize = 3;
-const HASHED_CID_BYTES: usize = 8;
-/// The set's connection IDs: the endpoint's index, then the hashed ID.
-const CID_BYTES: usize = 1 + HASHED_CID_BYTES;
+const RANDOM_CID_BYTES: usize = 8;
+/// The set's connection IDs: the endpoint's index, then random bytes.
+const CID_BYTES: usize = 1 + RANDOM_CID_BYTES;
 /// The IDs a client may choose for a new connection's first packets (RFC 9000, 7.2).
 const CLIENT_CID_BYTES: RangeInclusive<usize> = 8..=20;
 
 pub(super) fn cid_generator(
     shard: u8,
 ) -> Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync> {
-    Arc::new(move || {
-        Box::new(ShardCids {
-            shard,
-            hash: RandomState::new(),
-        })
-    })
+    Arc::new(move || Box::new(ShardCids(shard)))
 }
 
-/// The shard's index, then noq's hashed connection ID format, which noq does not export.
-struct ShardCids {
-    shard: u8,
-    hash: RandomState,
-}
-
-impl ShardCids {
-    fn signature(&self, nonce: &[u8]) -> [u8; 8] {
-        self.hash.hash_one(nonce).to_le_bytes()
-    }
-}
+/// The shard's index, then random bytes; a single endpoint is shard 0.
+struct ShardCids(u8);
 
 impl ConnectionIdGenerator for ShardCids {
     fn generate_cid(&mut self) -> ConnectionId {
-        let mut cid = [0; CID_BYTES];
-        cid[0] = self.shard;
-        let (nonce, signature) = cid[1..].split_at_mut(NONCE_BYTES);
-        nonce.copy_from_slice(&crate::random::<NONCE_BYTES>());
-        signature.copy_from_slice(&self.signature(nonce)[..signature.len()]);
+        let mut cid = [self.0; CID_BYTES];
+        cid[1..].copy_from_slice(&crate::random::<RANDOM_CID_BYTES>());
         ConnectionId::new(&cid)
     }
 
-    fn validate(&self, cid: ConnectionId) -> Result<(), InvalidCid> {
-        if cid.len() != self.cid_len() || cid[0] != self.shard {
-            return Err(InvalidCid);
-        }
-        let (nonce, signature) = cid[1..].split_at(NONCE_BYTES);
-        (self.signature(nonce)[..signature.len()] == *signature)
-            .then_some(())
-            .ok_or(InvalidCid)
+    /// noq asks only before a stateless reset, which Firefox takes for a close that forgets the origin's HTTP/3.
+    fn validate(&self, _: ConnectionId) -> Result<(), InvalidCid> {
+        Err(InvalidCid)
     }
 
     fn cid_len(&self) -> usize {

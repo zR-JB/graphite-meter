@@ -30,8 +30,8 @@ async fn the_close_code_table_reaches_the_peer() -> Result<(), TestError> {
         let Served {
             peers,
             serving,
+            stop,
             mut outcomes,
-            ..
         } = pair(DRAFT02)
             .await?
             .sessions(move |session| async move { session.close(code, reason).await });
@@ -44,7 +44,8 @@ async fn the_close_code_table_reaches_the_peer() -> Result<(), TestError> {
         connect.finish()?;
         assert_eq!(stopped(&connect).await, None);
         assert_eq!(outcomes.recv().await, Some(()));
-        // The connection lingers a second so the CLOSE arrives first.
+        // Going away, the connection lingers a second so the CLOSE arrives first.
+        stop.notify_one();
         settled(&peers.budget).await;
         assert!(peers.server.close_reason().is_none());
         jump(Duration::from_secs(1)).await;
@@ -148,9 +149,9 @@ async fn session_streams_wait_for_the_head_with_a_small_connection_window() -> R
 }
 
 #[tokio::test]
-async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection()
+async fn prepared_datagrams_repeat_and_a_connection_outlives_its_last_session()
 -> Result<(), TestError> {
-    let Served { peers, serving, .. } = pair(PLAIN).await?.sessions(|session| async move {
+    let Served { peers, .. } = pair(PLAIN).await?.sessions(|session| async move {
         for _ in 0..2 {
             let reply = session.read_datagram().await.unwrap();
             session
@@ -159,7 +160,7 @@ async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection()
         }
         let _ = session.closed().await;
     });
-    let (driver, requests) = client(&peers);
+    let (_driver, requests) = client(&peers);
     let session = accepted(&requests).await?;
     let mut repeated = session.prepare_datagram(b"PING,2")?;
     for _ in 0..2 {
@@ -171,11 +172,11 @@ async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection()
     }
     drop(session);
     settled(&peers.budget).await;
-    let ended = (driver.await?, serving.await?);
-    assert_eq!(
-        ended,
-        (Ok(()), Ok(())),
-        "a sessions-only connection ends with its session"
+    jump(Duration::from_secs(60)).await;
+    yields().await;
+    assert!(
+        peers.server.close_reason().is_none(),
+        "it idles without a close"
     );
     Ok(())
 }

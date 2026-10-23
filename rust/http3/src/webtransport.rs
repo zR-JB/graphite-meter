@@ -313,7 +313,7 @@ async fn dialect(shared: &Shared, wait: Option<Duration>) -> Result<Option<Diale
     Ok(peer.and_then(|peer| peer.webtransport(shared.quic.max_datagram_size().is_some())))
 }
 
-/// How long a closing session waits for the peer's FIN, and a sessions-only connection for the CLOSE.
+/// How long a closing session waits for the peer's FIN, and a connection going away for the CLOSE.
 const CLOSE_WAIT: Duration = Duration::from_secs(1);
 /// Wire bytes a peer may send on its CONNECT stream after the head, far more than its CLOSE takes.
 const MAX_CONNECT_BYTES: u64 = 64 * 1024;
@@ -323,8 +323,7 @@ const MAX_DEFERRED_RESETS: usize = 64;
 pub(crate) struct Sessions {
     connects: Vec<Connect>,
     resets: Vec<PendingReset>,
-    pub(crate) carried: bool,
-    /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended arrives first.
+    /// A connection going away stays open until then, so the CLOSE of a session this side ended arrives first.
     pub(crate) linger: Option<Instant>,
 }
 
@@ -332,7 +331,6 @@ impl Sessions {
     /// Runs every CONNECT stream and pending reset; `Ready` once one is done with.
     pub(crate) fn poll(&mut self, cx: &mut Context<'_>, shared: &Shared) -> Poll<()> {
         let (connects, resets) = shared.sessions().take();
-        self.carried |= !connects.is_empty();
         self.connects.extend(connects);
         for reset in resets {
             self.defer(reset, shared);
@@ -394,7 +392,7 @@ pub(crate) struct Connect {
     peer_finished: bool,
     /// The peer's CLOSE arrived, so only its FIN may follow.
     peer_closed: bool,
-    /// This side ended the session, so a sessions-only connection lingers for its CLOSE.
+    /// This side ended the session, so a connection going away lingers for its CLOSE.
     closed_here: bool,
     _charge: Charge,
 }

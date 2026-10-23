@@ -29,9 +29,6 @@ use tokio::{
 
 const DRAIN: Duration = Duration::from_secs(5);
 
-/// A server connection without requests or streams closes after this long, whatever its HTTP version.
-pub const CONNECTION_IDLE: Duration = Duration::from_secs(15);
-
 /// The layer's fixed per-connection state, for the floor: driver, shared stream state, critical streams, futures.
 pub const CONNECTION_BYTES: usize = size_of::<Driver>()
     + size_of::<Shared>()
@@ -64,8 +61,6 @@ pub(crate) struct Shared {
     pub(crate) peer: watch::Sender<Option<Peer>>,
     live: AtomicUsize,
     going_away: AtomicBool,
-    /// A request other than a CONNECT arrived.
-    pub(crate) served: AtomicBool,
     closed: OnceLock<Code>,
     wake: Notify,
     sessions: Mutex<Registry>,
@@ -146,7 +141,6 @@ pub(crate) struct Driver {
     next_request: u64,
     goaway: Option<u64>,
     drain: Option<Instant>,
-    idle_since: Option<Instant>,
     timer: Pin<Box<Sleep>>,
     ended: bool,
 }
@@ -165,7 +159,6 @@ impl Driver {
             peer: watch::Sender::new(None),
             live: AtomicUsize::new(0),
             going_away: AtomicBool::new(false),
-            served: AtomicBool::new(false),
             closed: OnceLock::new(),
             wake: Notify::new(),
             sessions: Mutex::default(),
@@ -187,7 +180,6 @@ impl Driver {
             next_request: 0,
             goaway: None,
             drain: None,
-            idle_since: None,
             timer: Box::pin(tokio::time::sleep(Duration::ZERO)),
             ended: false,
         }
@@ -281,21 +273,13 @@ impl Driver {
         }
     }
 
-    /// When this server connection closes with H3_NO_ERROR, if anything bounds it.
-    fn close_at(&mut self, now: Instant) -> Option<Instant> {
-        if self.shared.role == Role::Client {
-            return None;
-        }
-        if self.shared.live.load(Ordering::Relaxed) > 0 {
-            self.idle_since = None;
+    /// When this server connection closes with H3_NO_ERROR: once going away, never for being idle.
+    fn close_at(&self, now: Instant) -> Option<Instant> {
+        if self.shared.role == Role::Client || self.shared.live.load(Ordering::Relaxed) > 0 {
             return self.drain;
         }
-        let idle = *self.idle_since.get_or_insert(now) + CONNECTION_IDLE;
-        // A connection that only carried sessions ends with its last one: browsers would hold its slot.
-        let only_sessions = self.sessions.carried && !self.shared.served.load(Ordering::Acquire);
-        let done =
-            (self.goaway.is_some() || only_sessions).then(|| self.sessions.linger.unwrap_or(now));
-        [self.drain, Some(idle), done].into_iter().flatten().min()
+        let done = self.goaway.map(|_| self.sessions.linger.unwrap_or(now));
+        [self.drain, done].into_iter().flatten().min()
     }
 
     /// Refused past GOAWAY or over the budget, a new stream gets H3_REQUEST_REJECTED.
@@ -307,8 +291,6 @@ impl Driver {
         self.next_request = self.next_request.max(id + 4);
         match stream::charges(&self.shared.budget) {
             Some(charges) if self.goaway.is_none_or(|goaway| id < goaway) => {
-                // A request that ends before the next pass still restarts the idle period.
-                self.idle_since = None;
                 Some(RequestStream::new(&self.shared, send, recv, charges))
             }
             _ => {

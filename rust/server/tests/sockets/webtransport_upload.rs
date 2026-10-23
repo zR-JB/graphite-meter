@@ -152,3 +152,37 @@ async fn datagrams_count_only_when_asked_and_their_lane_leaves_once_finalized() 
         }
     }
 }
+
+#[tokio::test]
+async fn a_session_keeps_its_credit_beside_an_http_upload_and_returns_it_when_it_ends() {
+    let h3 = H3::start(&[]).await;
+    let idle = settled(&h3.server.budget).await;
+    let control = h3.connect(transport(None)).await;
+    let id = control.upload_id().await;
+    let connection = h3.connect(transport(None)).await;
+    let session = connection.session(&format!("/wt/upload?id={id}")).await;
+    let mut feed = Feed::of(&session).await;
+    assert_eq!(feed.next().await, Some(Record::Ready));
+    let _open = lane(&session, 100_000).await;
+    until_bytes(&control, &id, 100_000).await;
+    let mut answer = connection
+        .send("POST", &format!("/upload?id={id}"), &[7; 500])
+        .await
+        .1;
+    assert_eq!(
+        super::http3::read(&mut answer).await.unwrap(),
+        br#"{"bytes":500}"#
+    );
+    let beside = settled(&h3.server.budget).await - idle;
+    assert!(
+        beside >= CONNECTION_CREDIT,
+        "{beside} bytes once the HTTP upload ended"
+    );
+    session.close(0, "").await;
+    drop(feed);
+    let returned = settled(&h3.server.budget).await - idle;
+    assert!(
+        returned < CONNECTION_CREDIT / 4 && connection.quic.close_reason().is_none(),
+        "{returned} bytes once the session ended, on a connection still open"
+    );
+}

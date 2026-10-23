@@ -424,7 +424,7 @@ async function verifySession(
   let url = `${target.origin}${ROUTES.wtDownload}?bytes=${SESSION_CHECK_BYTES}${datagrams ? "&datagrams=1" : ""}`;
   const ticket = auth.ticket(target.origin, ROUTES.wtDownload);
   if (ticket) {
-    const response = await auth.fetch(ticket.url, { method: "POST", cache: "no-store", signal });
+    const response = await auth.fetch(ticket.url, { method: "POST", signal });
     if (!response.ok) {
       await release(response);
       throw new CheckError(`WebTransport ticket refused (HTTP ${response.status})`, "retryable");
