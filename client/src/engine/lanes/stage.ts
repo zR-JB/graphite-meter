@@ -396,14 +396,15 @@ class Stage implements StageResources {
     if (broken) void this.#signedOut().then((signedOut) => signedOut && this.#signIn("throughput"));
     await delay(delayMs, signal);
     const { auth, throughput } = this.#setup.server;
-    if (!signal.aborted && !(await answered(throughput.fetch.origin, auth, signal, ESTABLISH_MS))) {
+    const answers = await answered(throughput.fetch.origin, auth, signal, ESTABLISH_MS);
+    // Whoever closed this lane or feed meanwhile owns its ending.
+    if (signal.aborted || this.#throughputEnded) return false;
+    if (!answers)
       this.#fail(
         "connection-lost",
         `${label} failed: ${ending.detail}; the server did not answer over HTTP`,
       );
-      return false;
-    }
-    return !signal.aborted && !this.#throughputEnded;
+    return answers;
   }
 
   /** Asks whether the sign-in or grant ended. A revocation mid-outage still shows within one more check. */

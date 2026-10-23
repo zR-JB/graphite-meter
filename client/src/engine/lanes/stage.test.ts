@@ -520,6 +520,30 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
   expect(discarded.error).toBeInstanceOf(DOMException);
 });
 
+test("a feed closed by its upload's replacement while its server is asked fails nothing", async () => {
+  const UPLOAD: Activity = { stage: "upload", transfer: ["up"], loadedLatency: false };
+  const minted: string[] = [];
+  const pending = (init?: RequestInit) =>
+    new Promise<Response>((_, reject) =>
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
+    );
+  const replaced = stage(UPLOAD, {
+    fetch: async (url, init) => {
+      if (url.endsWith("/upload/session"))
+        return Response.json({ uploadId: `u${minted.push(url)}` });
+      if (url.includes("/upload/progress?id=u1")) throw new TypeError("network error");
+      return pending(init);
+    },
+  });
+  const prepared = outcome(replaced.resources.prepare(new AbortController().signal));
+  await elapse(400);
+  void replaced.resources.replaceUpload(new AbortController().signal);
+  await elapse(100);
+  expect(minted).toHaveLength(2);
+  expect(prepared.error).toBeUndefined();
+  replaced.resources.discard();
+});
+
 test("a fetch upload's feed reaches only its own origin: over a WebSocket offered there for proven HTTP/1.1, else over HTTP", async () => {
   const BUS = "https://bus.example";
   const socket = (origin: string): LatencyTarget => ({
