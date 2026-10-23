@@ -608,10 +608,18 @@ type TestOptions = {
   monitorDisplay?: boolean;
   timeout?: number;
   chrome?: boolean;
+  /** Why today's client or server fails it, naming the step that fixes it; the test must fail until then. */
+  failing?: string;
 };
 function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) {
-  bunTest.skipIf(!!options.chrome && browser !== "chrome")(
-    name,
+  const register =
+    options.chrome && browser !== "chrome"
+      ? bunTest.skip
+      : options.failing
+        ? bunTest.failing
+        : bunTest;
+  register(
+    options.failing ? `${name} [fails ${options.failing}]` : name,
     async () => {
       const page = new Page(options);
       try {

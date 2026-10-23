@@ -207,7 +207,7 @@ fn transfers(message: &str) -> usize {
 
 #[cfg(unix)]
 #[test]
-fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
+fn a_verbose_server_logs_requests_and_throughput_and_sigterm_ends_its_running_download() {
     use std::io::Read;
     let (child, address, next) = listening(&[("GM_VERBOSE", "true")]);
     let mut download = std::net::TcpStream::connect(address).unwrap();
@@ -215,6 +215,8 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
         .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: test\r\n\r\n")
         .unwrap();
     download.read_exact(&mut [0; 1 << 16]).unwrap();
+    // The browser suite's network group reads these lines.
+    assert_eq!(next(), "GET /download from 127.0.0.1 on H1: 200");
     assert_eq!(transfers(&next()), 1, "the running download");
     let stopping = std::time::Instant::now();
     let reading = std::thread::spawn(move || download.read_to_end(&mut Vec::new()).is_ok());

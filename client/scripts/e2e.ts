@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, host, launch, logs } from "../e2e/servers";
+import { describe, host, launch, logs, NETWORK_FLEET } from "../e2e/servers";
 
 // Paths resolve from the client folder, which the suite runs in.
 const bin = process.env.GM_E2E_SERVER_BIN ?? resolve("../rust/target/ci/graphite-meter-server");
@@ -27,6 +27,8 @@ for (const [path, expected, name] of [
   if (actual !== `${name} ${expected}`) throw new Error(`${actual} is not ${name} ${expected}`);
 }
 
+// The network group's servers have fixed addresses, which it owns in its network namespace or on a CI runner.
+const network = process.env.GM_E2E_NETWORK === "1";
 const dir = await mkdtemp(join(tmpdir(), "gm-e2e-"));
 // Everything the suite starts inherits it: servers, workers, browsers and their profiles, and port reservations.
 process.env.TMPDIR = dir;
@@ -74,15 +76,38 @@ for (const [signal, code] of [
 
 let status = 1;
 try {
-  const cert = join(dir, "cert.pem");
-  const key = join(dir, "key.pem");
-  const openssl = Bun.spawnSync(
-    ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1"]
-      .concat(["-keyout", key, "-out", cert, "-subj", `/CN=${host}`])
-      .concat(["-addext", `subjectAltName=IP:${host},DNS:localhost`]),
-    { stderr: "ignore" },
-  );
-  if (openssl.exitCode !== 0) throw new Error("openssl could not create a cert");
+  const [ca, caKey, cert, key] = [
+    join(dir, "ca.pem"),
+    join(dir, "ca-key.pem"),
+    join(dir, "cert.pem"),
+    join(dir, "key.pem"),
+  ] as const;
+  // A CA of the run's own signs the servers' certificate, so a profile that trusts it can speak QUIC.
+  for (const args of [
+    [
+      "-keyout",
+      caKey,
+      "-out",
+      ca,
+      "-subj",
+      "/CN=Graphite Meter E2E",
+      "-addext",
+      "keyUsage=keyCertSign",
+    ],
+    ["-CA", ca, "-CAkey", caKey, "-keyout", key, "-out", cert, "-subj", `/CN=${host}`].concat([
+      "-addext",
+      `subjectAltName=IP:${host},${NETWORK_FLEET.map((s) => `IP:${new URL(s.url).hostname}`)},DNS:localhost`,
+      // Firefox refuses a leaf that says it is a CA, which openssl's defaults make it.
+      "-addext",
+      "basicConstraints=critical,CA:FALSE",
+    ]),
+  ]) {
+    const openssl = Bun.spawnSync(
+      ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", ...args],
+      { stderr: "ignore" },
+    );
+    if (openssl.exitCode !== 0) throw new Error("openssl could not create a cert");
+  }
   const spki = createHash("sha256")
     .update(
       new X509Certificate(await Bun.file(cert).text()).publicKey.export({
@@ -137,10 +162,11 @@ try {
         ...process.env,
         GM_E2E: JSON.stringify({ fleet, password, passwordHash }),
         GM_E2E_LAUNCH: JSON.stringify(launched),
+        ...(network && { GM_E2E_CA: ca }),
         BUN_CHROME_ARGS: [
           process.env.BUN_CHROME_ARGS ?? "",
           `--ignore-certificate-errors-spki-list=${spki}`,
-          `--origin-to-force-quic-on=${fleet.map((s) => new URL(s.h3).host)}`,
+          `--origin-to-force-quic-on=${[...fleet, ...(network ? NETWORK_FLEET : [])].map((s) => new URL(s.h3).host)}`,
           "--test-third-party-cookie-phaseout",
         ].join(" "),
       },

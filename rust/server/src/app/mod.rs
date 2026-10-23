@@ -17,6 +17,7 @@ use crate::{
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
     limits::{Budget, Hold, Pressure, Quotas, Refusal},
+    lock, log,
     peer::{ClientKeys, Peer},
     transport::{
         body::Body,
@@ -33,9 +34,11 @@ use graphite_meter_proto::{
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Authority};
 use std::{
+    collections::HashMap,
     future::poll_fn,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     pin::{Pin, pin},
+    sync::{Arc, Mutex},
     task::{Context, Poll},
     time::Duration,
 };
@@ -54,7 +57,38 @@ pub struct App {
     generation: String,
     /// What every answer on the HTTP/3 port's TCP side names, errors too, so a browser that forgot it relearns it.
     alt_svc: Option<HeaderValue>,
+    /// Under `GM_VERBOSE` only.
+    connection_log: Option<Arc<ConnectionLog>>,
     shutdown: CancellationToken,
+}
+
+/// The verbose connection log, which the browser suite reads: requests, and QUIC connections per client address.
+#[derive(Default)]
+pub struct ConnectionLog(Mutex<HashMap<IpAddr, usize>>);
+
+impl ConnectionLog {
+    fn line(&self, peer: SocketAddr, change: isize, what: &str) {
+        let held = {
+            let mut held = lock(&self.0);
+            let count = held.entry(peer.ip()).or_default();
+            *count = count.saturating_add_signed(change);
+            let count = *count;
+            if count == 0 {
+                held.remove(&peer.ip());
+            }
+            count
+        };
+        log!(Debug, "quic", "connection from {peer} {what}: {held} held");
+    }
+}
+
+/// The log's record of an accepted QUIC connection, which logs its end when dropped.
+pub struct LoggedQuic(Arc<ConnectionLog>, SocketAddr);
+
+impl Drop for LoggedQuic {
+    fn drop(&mut self) {
+        self.0.line(self.1, -1, "ended");
+    }
 }
 
 /// What the accepting transport knows of a request's connection, never anything the request claims.
@@ -116,6 +150,7 @@ impl App {
             block,
             generation,
             alt_svc,
+            connection_log: config.verbose.then(Arc::default),
             shutdown,
             config,
         })
@@ -170,6 +205,13 @@ impl App {
         self.quotas.connection(peer, &keys)
     }
 
+    /// Under `GM_VERBOSE`, logs an accepted QUIC connection from `peer`, and its end once the guard drops.
+    pub fn quic_accepted(&self, peer: SocketAddr) -> Option<LoggedQuic> {
+        let log = self.connection_log.clone()?;
+        log.line(peer, 1, "accepted");
+        Some(LoggedQuic(log, peer))
+    }
+
     /// A QUIC handshake from `peer`, held until it completes; `None` if it needs Retry first, as one does when
     /// unvalidated with a quarter of connections or budget used, or while another from its source is in progress.
     pub fn quic_handshake(&self, peer: IpAddr, validated: bool) -> Option<Hold> {
@@ -186,6 +228,32 @@ impl App {
     }
 
     pub async fn handle<B: http_body::Body>(
+        &self,
+        request: Request<B>,
+        connection: &Connection,
+        exchange: Exchange,
+    ) -> Outcome {
+        if self.connection_log.is_none() {
+            return self.answer(request, connection, exchange).await;
+        }
+        let (method, path) = (request.method().clone(), request.uri().path().to_owned());
+        let outcome = self.answer(request, connection, exchange).await;
+        let status = match &outcome {
+            Outcome::Response(response)
+            | Outcome::WebSocket(response, ..)
+            | Outcome::WebTransport(response, ..) => response.status().as_u16(),
+            Outcome::Abort => 0,
+        };
+        let (peer, endpoint) = (connection.peer, connection.endpoint);
+        log!(
+            Debug,
+            "request",
+            "{method} {path} from {peer} on {endpoint:?}: {status}"
+        );
+        outcome
+    }
+
+    async fn answer<B: http_body::Body>(
         &self,
         request: Request<B>,
         connection: &Connection,

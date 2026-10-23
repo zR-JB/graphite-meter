@@ -211,7 +211,15 @@ impl Server {
                         let (runtime, http3) = (listener.runtime(), quic.http3.clone());
                         let (app, stopping, next) =
                             (app.clone(), shutdown.clone(), runtime.clone());
-                        let serve = move |incoming, peer| http3.connection(incoming, peer);
+                        let logged = app.clone();
+                        let serve = move |incoming, peer: SocketAddr| {
+                            let accepted = logged.quic_accepted(peer);
+                            let serving = http3.connection(incoming, peer);
+                            async move {
+                                let _accepted = accepted;
+                                serving.await;
+                            }
+                        };
                         let serving = runtime.spawn(async move {
                             let next = move || next.clone();
                             listen(app, listener, next, &stopping, role, serve).await
