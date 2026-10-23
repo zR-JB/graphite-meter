@@ -12,8 +12,9 @@ import {
   type StageState,
 } from "./words";
 
-test("a known failure reads as its label, and any other reason as a measurement issue", () => {
+test("a known failure reads as its label, a renamed one as its new label, and any other reason as a measurement issue", () => {
   expect(reasonLabel("timeout")).toBe(FAILURE_REASONS.timeout);
+  expect(reasonLabel("preparation-failed")).toBe(FAILURE_REASONS["path-failed"]);
   for (const reason of ["", "dns-failure", "toString", "__proto__"])
     expect(reasonLabel(reason)).toBe("Measurement issue");
 });

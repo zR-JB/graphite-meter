@@ -588,8 +588,8 @@ impl Engine {
             }
             let refused = sample.and_then(|sample| sample.missed.clone());
             let refused = refused.filter(|refused| refused.reason == FailureReason::SignInRequired);
-            let failure = refused
-                .unwrap_or_else(|| Failure::new(FailureReason::PreparationFailed, UNCHECKPOINTED));
+            let failure =
+                refused.unwrap_or_else(|| Failure::new(FailureReason::PathFailed, UNCHECKPOINTED));
             self.fail(
                 index,
                 Scope::Throughput,

@@ -5,6 +5,7 @@ use crate::{
     lock,
     peer::{ClientKey, ClientKeys},
 };
+use graphite_meter_proto::refusal::Refusal;
 use std::{
     collections::HashMap,
     fmt,
@@ -40,13 +41,18 @@ struct State {
     refused_client: u64,
 }
 
-graphite_meter_proto::table! {
-    pub enum Refusal {
-        /// `429` for a full client share, `503` for a full total; either answer carries `Retry-After: 1`.
-        status.0: http::StatusCode,
-    } {
-        Client => (http::StatusCode::TOO_MANY_REQUESTS,),
-        Total => (http::StatusCode::SERVICE_UNAVAILABLE,),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Full {
+    Client,
+    Total,
+}
+
+impl From<Full> for Refusal {
+    fn from(full: Full) -> Self {
+        match full {
+            Full::Client => Self::ClientLimit,
+            Full::Total => Self::ServerBusy,
+        }
     }
 }
 
@@ -79,7 +85,7 @@ impl Quota {
     }
 
     /// Charges `weight` to the total and to every key at once, or refuses without charging.
-    pub fn acquire(&self, keys: &ClientKeys, weight: usize) -> Result<Hold, Refusal> {
+    pub fn acquire(&self, keys: &ClientKeys, weight: usize) -> Result<Hold, Full> {
         self.acquire_within(keys, weight, None)
     }
 
@@ -89,7 +95,7 @@ impl Quota {
         keys: &ClientKeys,
         weight: usize,
         outer: Option<&Quota>,
-    ) -> Result<Hold, Refusal> {
+    ) -> Result<Hold, Full> {
         let total = self.0.total();
         let mut state = lock(&self.0.state);
         if self.0.keys(keys).enumerate().any(|(index, key)| {
@@ -97,7 +103,7 @@ impl Quota {
             held.saturating_add(weight) > self.0.share.saturating_mul(1 << index)
         }) {
             state.refused_client += 1;
-            return Err(Refusal::Client);
+            return Err(Full::Client);
         }
         // The outer quota is only ever locked after this one.
         let outer = outer
@@ -105,7 +111,7 @@ impl Quota {
             .transpose()?;
         if state.used.saturating_add(weight) > total {
             state.refused_total += 1;
-            return Err(Refusal::Total);
+            return Err(Full::Total);
         }
         state.used += weight;
         state.peak = state.peak.max(state.used);
@@ -223,20 +229,20 @@ mod tests {
         let first = quota.acquire(&v6("2001:db8:1:1::1"), 1).unwrap();
         assert_eq!(
             quota.acquire(&v6("2001:db8:1:1::2"), 1).err(),
-            Some(Refusal::Client),
+            Some(Full::Client),
             "its /64 is full"
         );
         let mut held = vec![quota.acquire(&v6("2001:db8:1:2::1"), 1).unwrap()];
         assert_eq!(
             quota.acquire(&v6("2001:db8:1:3::1"), 1).err(),
-            Some(Refusal::Client),
+            Some(Full::Client),
             "its /56 holds two"
         );
         held.push(quota.acquire(&v6("2001:db8:1:100::1"), 1).unwrap());
         held.push(quota.acquire(&v6("2001:db8:1:101::1"), 1).unwrap());
         assert_eq!(
             quota.acquire(&v6("2001:db8:1:200::1"), 1).err(),
-            Some(Refusal::Client),
+            Some(Full::Client),
             "its /48 holds four"
         );
         assert!(quota.acquire(&v6("2001:db8:2::1"), 1).is_ok());
@@ -256,7 +262,7 @@ mod tests {
         ];
         assert_eq!(
             quota.acquire(&login("c", Principal::oidc("p")), 1).err(),
-            Some(Refusal::Client)
+            Some(Full::Client)
         );
         drop(held);
         let operator = ClientKey::Principal(Principal::operator());
@@ -270,7 +276,7 @@ mod tests {
             .into();
         assert_eq!(
             credit.acquire(&login("a", Principal::operator()), 1).err(),
-            Some(Refusal::Client),
+            Some(Full::Client),
             "each login alone"
         );
         drop(logins);

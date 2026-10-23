@@ -1,7 +1,7 @@
 use graphite_meter_proto::{
     lane::LaneEnding,
     reason::FailureReason,
-    refusal::UploadRefusal,
+    refusal::Refusal,
     route::{AuthRoute, Route},
 };
 
@@ -65,14 +65,14 @@ fn lane_endings_equal_their_list() {
 }
 
 #[test]
-fn an_upload_ending_idle_or_revoked_is_refused_with_the_same_name_and_text() {
+fn an_upload_ending_idle_or_revoked_is_refused_with_the_same_code_and_text() {
     for ending in LaneEnding::ALL {
-        let refusal = ending.upload_refusal();
+        let refusal = ending.refusal();
         let expected = matches!(ending, LaneEnding::Idle | LaneEnding::Revoked);
         assert_eq!(refusal.is_some(), expected, "{ending:?}");
         if let Some(refusal) = refusal {
             assert_eq!(
-                (refusal.name(), refusal.message()),
+                (refusal.code(), refusal.message()),
                 (ending.name(), ending.reason())
             );
         }
@@ -80,33 +80,16 @@ fn an_upload_ending_idle_or_revoked_is_refused_with_the_same_name_and_text() {
 }
 
 #[test]
-fn upload_refusals_equal_their_list() {
-    let refusals = table(UploadRefusal::ALL, |refusal| {
+fn refusals_equal_their_list() {
+    let refusals = table(Refusal::ALL, |refusal| {
         vec![
-            refusal.name().into(),
+            refusal.code().into(),
             refusal.message().into(),
             refusal.status().as_u16().to_string(),
+            refusal.failure_reason().key().into(),
         ]
     });
-    assert_eq!(
-        refusals,
-        rows(include_str!("../../../api/uploadrefusals.txt"))
-    );
-}
-
-#[test]
-fn each_upload_refusal_maps_by_name_to_one_failure_reason() {
-    let rows = rows(include_str!("../../../api/uploadrefusalreasons.txt"));
-    for refusal in UploadRefusal::ALL {
-        let matching: Vec<_> = rows.iter().filter(|row| row[0] == refusal.name()).collect();
-        assert_eq!(matching.len(), 1, "{refusal:?}");
-        assert_eq!(
-            refusal.failure_reason().key(),
-            matching[0][1],
-            "{refusal:?}"
-        );
-    }
-    assert_eq!(rows.len(), UploadRefusal::ALL.len());
+    assert_eq!(refusals, rows(include_str!("../../../api/refusals.txt")));
 }
 
 #[test]
@@ -183,6 +166,6 @@ fn every_looked_up_column_is_unique() {
     unique(LaneEnding::ALL, LaneEnding::websocket_code);
     unique(LaneEnding::ALL, LaneEnding::webtransport_code);
     unique(LaneEnding::ALL, LaneEnding::name);
-    unique(UploadRefusal::ALL, UploadRefusal::name);
+    unique(Refusal::ALL, Refusal::code);
     unique(FailureReason::ALL, FailureReason::key);
 }

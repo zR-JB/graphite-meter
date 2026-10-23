@@ -8,10 +8,11 @@
 #
 # Read by rust/proto/tests/codes.rs, client/src/protocol/pins.test.ts and client/src/view/words.test.ts.
 
-preparation-failed | Could not prepare the connection
+path-failed | Path failed
 connection-lost | Connection lost
 timeout | Stopped delivering data
 sign-in-required | Sign-in required
+client-limit | Client limit reached
 server-busy | Server at capacity
 protocol-error | Unexpected server response
 insufficient-evidence | Too little measured time

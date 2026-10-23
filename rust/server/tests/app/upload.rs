@@ -55,7 +55,7 @@ async fn an_upload_counts_every_byte_into_its_aggregate_and_answers_its_own_tota
     )
     .await;
     assert_eq!(
-        header(&unread, "x-graphite-upload-refusal"),
+        header(&unread, "graphite-meter-refusal"),
         Some("invalid"),
         "a checkpoint creates nothing"
     );

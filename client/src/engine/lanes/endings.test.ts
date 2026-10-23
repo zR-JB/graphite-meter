@@ -1,25 +1,28 @@
 import { expect, test } from "bun:test";
 import { rows } from "../../protocol/pins.testutil";
-import type { Ending } from "../types";
-import { Backoff, REVOKED, refusal, sessionClosed } from "./endings";
+import type { Ending, FailureReason } from "../types";
+import { downloadRefused, REVOKED, refusal, restartMs, sessionClosed } from "./endings";
 
-test("every pinned upload refusal ends with its pinned reason, by code over HTTP and on a stream", async () => {
-  const reasons = Object.fromEntries(await rows("uploadrefusalreasons.txt"));
-  const refusals = await rows("uploadrefusals.txt");
-  expect(refusals.map(([name]) => name).toSorted()).toEqual(Object.keys(reasons).toSorted());
-  for (const [name, detail, status] of refusals as [string, string, string][]) {
-    const reason = reasons[name];
+test("every pinned refusal ends with its pinned reason, by code over HTTP and on a stream", async () => {
+  const refusals = (await rows("refusals.txt")) as [string, string, string, FailureReason][];
+  for (const [code, message, status, reason] of refusals) {
+    const retry = ["client-limit", "server-busy", "timeout"].includes(reason);
     const expected = {
       reason,
-      retry: reason === "server-busy" || reason === "timeout",
+      retry,
       // Only an id the server no longer knows may be replaced.
-      rotate: name === "invalid" || undefined,
+      rotate: code === "invalid" || undefined,
       // The idle bound is the server's own, so its reopen spends none of the stage's.
-      bound: name === "idle" || undefined,
-      detail,
+      bound: code === "idle" || undefined,
+      detail: message,
     };
-    expect(refusal(Number(status), name, detail), name).toEqual(expected);
-    expect(refusal(null, name, detail), name).toEqual(expected);
+    expect(refusal(Number(status), code, message), code).toEqual(expected);
+    expect(refusal(null, code, message), code).toEqual(expected);
+    const answer = new Response(message, {
+      status: Number(status),
+      headers: { "Graphite-Meter-Refusal": code },
+    });
+    expect(downloadRefused(answer).reason, code).toBe(reason);
   }
 });
 
@@ -28,7 +31,7 @@ test("without a known code the status decides, and a stream refusal without one 
   // A bare 401 is a proxy's, never this server's ended login.
   expect([401, 429, 503, 0, 408, 500, 502, 400, 403, 409].map((status) => reason(status))).toEqual([
     "protocol-error",
-    "server-busy",
+    "client-limit",
     "server-busy",
     "connection-lost",
     "connection-lost",
@@ -40,6 +43,7 @@ test("without a known code the status decides, and a stream refusal without one 
   ]);
   expect(reason(null)).toBe("protocol-error");
   expect(reason(503, "constructor")).toBe("server-busy");
+  expect(downloadRefused(new Response(null, { status: 502 })).reason).toBe("protocol-error");
 });
 
 test("the session endings the browser acts on match the lane ending pin", async () => {
@@ -57,16 +61,9 @@ test("the session endings the browser acts on match the lane ending pin", async 
     expect(sessionClosed(other.session)).toBeNull();
 });
 
-test("a restart pauses 300 ms, a Retry-After raises it within 1.2 s, and a busy refusal holds until delivery", () => {
-  const busy: Ending = { reason: "server-busy", retry: true, detail: "" };
-  const lost: Ending = { reason: "connection-lost", retry: true, detail: "" };
-  const backoff = new Backoff();
-  expect([busy, busy].map((ending) => backoff.after(ending))).toEqual([300, 300]);
-  expect(backoff.busy).toBe(true);
-  backoff.reset();
-  expect(backoff.busy).toBe(false);
-  expect(backoff.after(lost)).toBe(300);
-  expect(backoff.busy).toBe(false);
-  expect(backoff.after({ ...busy, retryAfterMs: 1_000 })).toBe(1_000);
-  expect(backoff.after({ ...busy, retryAfterMs: 5_000 })).toBe(1_200);
+test("a restart pauses 300 ms, and a Retry-After raises it within 1.2 s", () => {
+  const limited: Ending = { reason: "client-limit", retry: true, detail: "" };
+  expect(restartMs(limited)).toBe(300);
+  expect(restartMs({ ...limited, retryAfterMs: 1_000 })).toBe(1_000);
+  expect(restartMs({ ...limited, retryAfterMs: 5_000 })).toBe(1_200);
 });

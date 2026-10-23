@@ -123,7 +123,7 @@ async fn the_probe_reports_the_client_the_transport_and_the_handler_load() {
 }
 
 #[tokio::test]
-async fn full_handler_pools_and_client_shares_ask_for_a_retry() {
+async fn full_handler_pools_and_client_shares_name_their_refusal_and_ask_for_a_retry() {
     let limits = [
         ("GM_MAX_ACTIVE_MEASUREMENTS", "2"),
         ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"),
@@ -142,20 +142,38 @@ async fn full_handler_pools_and_client_shares_ask_for_a_retry() {
     };
     let held = download("192.0.2.1").await;
     let response = download("192.0.2.1").await;
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         (
+            response.status(),
+            header(&response, "graphite-meter-refusal"),
             header(&response, "retry-after"),
             header(&response, "access-control-allow-origin")
         ),
-        (Some("1"), Some("*"))
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Some("client-limit"),
+            Some("1"),
+            Some("*")
+        )
+    );
+    assert_eq!(
+        text(response).await,
+        "measurement limit for this client reached\n"
     );
     let other = download("192.0.2.2").await;
     assert_eq!(other.status(), StatusCode::OK);
     let response = download("192.0.2.3").await;
     assert_eq!(
-        (response.status(), header(&response, "retry-after")),
-        (StatusCode::SERVICE_UNAVAILABLE, Some("1"))
+        (
+            response.status(),
+            header(&response, "graphite-meter-refusal"),
+            header(&response, "retry-after")
+        ),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("server-busy"),
+            Some("1")
+        )
     );
     let response = download("10.0.0.1").await;
     assert_eq!(

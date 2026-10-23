@@ -5,7 +5,6 @@ import { ROUTES } from "../../protocol/routes";
 import { feedSocket, needsPings } from "../net/streams";
 import {
   CADENCE_MS,
-  ServerBusyError,
   SignInRequired,
   StageFailure,
   type Checkpoint,
@@ -21,7 +20,7 @@ import {
   type Stall,
 } from "../types";
 import { Carrier, type CarrierHost, type CarrierPlan } from "./carrier";
-import { answered, ESTABLISH_MS, refused } from "./endings";
+import { answered, ESTABLISH_MS } from "./endings";
 import { handshakes, THROTTLED } from "../net/webtransport";
 import { openProbeChannel } from "./probes";
 import { Receiver, type ReceiverHost } from "./receiver";
@@ -131,7 +130,7 @@ class Stage implements StageResources {
     } catch (error) {
       if (signal.aborted || this.#released.signal.aborted) return;
       if (error instanceof SignInRequired) this.#signIn("throughput");
-      else this.#fail("preparation-failed", error instanceof Error ? error.message : String(error));
+      else this.#fail("path-failed", error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -157,13 +156,14 @@ class Stage implements StageResources {
     this.#releaseThroughput();
   }
 
-  /** Why the stage is not ready: an abort as such, a failure as reported, a lapsed budget as busy while refused as busy. */
+  /** Why the stage is not ready: an abort as such, a failure as reported, a lapsed budget as a path that failed. */
   #unready(error: unknown, signal: AbortSignal): unknown {
     if (signal.aborted) return signal.reason;
     if (!(error instanceof DOMException && error.name === "TimeoutError")) return error;
-    return this.#down?.busy || this.#up?.busy || this.#receiver?.busy
-      ? new ServerBusyError("Server refused the connections as busy", { cause: error })
-      : new Error("Primed measurement connections did not become ready", { cause: error });
+    return new StageFailure(
+      "path-failed",
+      `Connections did not become ready within ${READY_MS / 1000} s`,
+    );
   }
 
   async #until(test: () => boolean, signal: AbortSignal): Promise<void> {
@@ -204,7 +204,7 @@ class Stage implements StageResources {
     if (bus.current?.adopt(own)) bus.current.pace(intervalMs, maxInFlight);
     else if (server.latency.target.transport !== "websocket" && handshakes.throttled.peek()) {
       // Loaded latency never holds throughput back.
-      if (activity.stage === "latency") throw new StageFailure("preparation-failed", THROTTLED);
+      if (activity.stage === "latency") throw new StageFailure("path-failed", THROTTLED);
       return events.latencyStalled(THROTTLED);
     } else
       bus.current = openProbeChannel(
@@ -250,8 +250,6 @@ class Stage implements StageResources {
     }
     if (!response.ok) {
       release(response);
-      if (refused(response).reason === "server-busy")
-        throw new ServerBusyError("Server refused the upload as busy");
       throw new Error(`upload session returned HTTP ${response.status}`);
     }
     const { uploadId } = uploadSession(await readJSON(response));
@@ -327,7 +325,7 @@ class Stage implements StageResources {
       return build();
     } catch (error) {
       if (error instanceof SignInRequired) this.#signIn("throughput");
-      else this.#fail("preparation-failed", error instanceof Error ? error.message : String(error));
+      else this.#fail("path-failed", error instanceof Error ? error.message : String(error));
       return null;
     }
   }

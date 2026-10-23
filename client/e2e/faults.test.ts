@@ -229,7 +229,7 @@ for (const fault of faults.filter(
     }
   });
 
-test("a peer at capacity while its upload prepares leaves as busy", async (page) => {
+test("a peer at its client limit while its upload prepares leaves with that limit", async (page) => {
   const busy = await spawnPeer("Oslo", {
     GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT: "2",
     GM_MAX_SESSIONS_PER_CLIENT: "2",
@@ -266,7 +266,7 @@ test("a peer at capacity while its upload prepares leaves as busy", async (page)
     ).toContainEqual({
       serverId: "oslo",
       stage: "upload",
-      reason: "server-busy",
+      reason: "client-limit",
     });
   } finally {
     held.abort();

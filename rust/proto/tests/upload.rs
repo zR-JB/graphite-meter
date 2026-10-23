@@ -1,6 +1,6 @@
 use graphite_meter_proto::{
     json,
-    refusal::UploadRefusal,
+    refusal::Refusal,
     upload::{Counters, HEARTBEAT, MAX_COUNTER, Record},
 };
 use serde::Deserialize;
@@ -53,8 +53,8 @@ fn records_encode_as_one_object_and_a_newline() {
         clamped,
         format!(r#"{{"type":"complete","bytes":{MAX_COUNTER},"nanos":5}}"#) + "\n"
     );
-    let refused = Record::from(UploadRefusal::OwnerMismatch).line();
-    let message = r#"{"type":"error","message":"upload id belongs to another client","code":"ownerMismatch"}"#;
+    let refused = Record::from(Refusal::OwnerMismatch).line();
+    let message = r#"{"type":"error","message":"upload id belongs to another client","code":"owner-mismatch"}"#;
     assert_eq!(refused, message.to_owned() + "\n");
     let bare = Record::Error {
         code: String::new(),

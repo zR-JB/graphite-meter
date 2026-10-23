@@ -163,7 +163,7 @@ impl App {
         let id = query::get(request.uri().query(), "id").unwrap_or_default();
         match self.uploads.checkpoint(&id, peer.keys().as_ref()) {
             Ok(counters) => response::json_of(&counters),
-            Err(refusal) => response::upload_refusal(refusal),
+            Err(refusal) => response::refusal(refusal),
         }
     }
 
@@ -183,14 +183,14 @@ impl App {
             Method::HEAD => {
                 self.uploads
                     .watchable(&id, owner.as_ref())
-                    .map_err(response::upload_refusal)?;
+                    .map_err(response::refusal)?;
                 Body::empty()
             }
             Method::DELETE => {
                 let _lane = self.admit(peer, connection, exchange, false)?;
                 self.uploads
                     .finish(&id, owner.as_ref())
-                    .map_err(response::upload_refusal)?;
+                    .map_err(response::refusal)?;
                 return Ok(response::empty(StatusCode::NO_CONTENT));
             }
             _ => {
@@ -198,7 +198,7 @@ impl App {
                 let feed = self
                     .uploads
                     .subscribe(&id, owner.as_ref())
-                    .map_err(response::upload_refusal)?;
+                    .map_err(response::refusal)?;
                 Body::feed(feed).with_lane(lane)
             }
         };

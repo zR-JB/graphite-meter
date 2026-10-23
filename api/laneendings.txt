@@ -4,7 +4,7 @@
 #   <name> | <WebSocket close code> | <WebTransport session error code> | <reason>
 #
 #   name   = the key every implementation uses for the ending; an HTTP upload lane that ends as idle or
-#            revoked names it in X-Graphite-Upload-Refusal
+#            revoked names it in Graphite-Meter-Refusal (refusals.txt)
 #   reason = the exact close reason text, also the text of an HTTP refusal for the same ending
 #
 # Read by rust/proto/tests/codes.rs (proto::lane) and client/src/engine/lanes/endings.test.ts.

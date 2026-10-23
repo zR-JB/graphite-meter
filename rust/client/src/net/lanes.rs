@@ -11,7 +11,7 @@ use bytes::Bytes;
 use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
     origin::Origin,
-    refusal::UploadRefusal,
+    refusal::Refusal,
     route::Route,
 };
 use http::Method;
@@ -205,7 +205,7 @@ impl Lanes {
         }
     }
 
-    pub fn refusal(&self) -> Option<UploadRefusal> {
+    pub fn refusal(&self) -> Option<Refusal> {
         if let Some(Fault::Refused(refusal)) = self.failed {
             Some(refusal)
         } else {

@@ -1,6 +1,6 @@
 //! Says how a server tells its peer why a lane ended (`api/laneendings.txt`).
 
-use crate::refusal::UploadRefusal;
+use crate::refusal::Refusal;
 use std::time::Duration;
 
 /// Every lane ends after this long without traffic from its peer.
@@ -24,10 +24,10 @@ table! {
 }
 
 impl LaneEnding {
-    pub const fn upload_refusal(self) -> Option<UploadRefusal> {
+    pub const fn refusal(self) -> Option<Refusal> {
         match self {
-            Self::Idle => Some(UploadRefusal::Idle),
-            Self::Revoked => Some(UploadRefusal::Revoked),
+            Self::Idle => Some(Refusal::Idle),
+            Self::Revoked => Some(Refusal::Revoked),
             Self::Finished | Self::Lifetime | Self::Shutdown => None,
         }
     }

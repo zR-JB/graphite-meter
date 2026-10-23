@@ -294,7 +294,7 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
         "no server prepared yet is no failure"
     );
     let failure = Failure::new(
-        FailureReason::PreparationFailed,
+        FailureReason::PathFailed,
         graphite_meter_client::net::UNREACHABLE,
     );
     app.event(&Event::Checking(Kind::Check), now);

@@ -489,7 +489,11 @@ test("a session's refused dial spends its ticket, one that lapsed unanswered reu
     { type: "handshake", opened: false },
     {
       type: "ended",
-      ending: { reason: "timeout", retry: true, detail: "webtransport session did not establish" },
+      ending: {
+        reason: "path-failed",
+        retry: true,
+        detail: "webtransport session did not establish",
+      },
     },
   ]);
 });

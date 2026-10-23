@@ -16,7 +16,7 @@ use crate::{
     engine::{Block, Meter, Uploads},
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
-    limits::{Budget, Hold, Pressure, Quotas, Refusal},
+    limits::{Budget, Full, Hold, Pressure, Quotas},
     lock, log,
     peer::{ClientKeys, Peer},
     transport::{
@@ -29,7 +29,7 @@ use bytes::Buf;
 use graphite_meter_legal::Notices;
 use graphite_meter_proto::{
     lane::LaneEnding,
-    refusal::UploadRefusal,
+    refusal::Refusal,
     route::{Kind, Route},
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Authority};
@@ -315,6 +315,9 @@ impl App {
             return Ok(Outcome::Response(response::empty(StatusCode::NO_CONTENT)));
         }
         let response = match route {
+            Route::Download | Route::Upload if connection.endpoint.bootstrap() => {
+                response::refusal(Refusal::WrongProtocol)
+            }
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
             Route::Ping | Route::WsProgress => {
                 return self.websocket(&request, route, peer, connection, exchange);
@@ -351,7 +354,7 @@ impl App {
     ) -> Result<Lane, Response<Body>> {
         let keys = peer.keys().ok_or_else(response::ambiguous)?;
         self.admit_as(keys, peer, connection, exchange, session)
-            .map_err(response::busy)
+            .map_err(response::refusal)
     }
 
     fn admit_as(
@@ -361,7 +364,7 @@ impl App {
         connection: &Connection,
         exchange: Exchange,
         session: bool,
-    ) -> Result<Lane, Refusal> {
+    ) -> Result<Lane, Full> {
         let lifetimes = &self.config.lifetimes;
         let (hold, lifetime) = match session {
             true => (self.quotas.session(&keys), lifetimes.session),
@@ -425,8 +428,8 @@ impl App {
         let lane = match self.admit_as(keys, peer, connection, exchange, false) {
             Ok(lane) => Ok(lane),
             // A feed at capacity still upgrades, so the browser reads why from its record as it would from a status.
-            Err(refusal) if route == Route::WsProgress => Err(UploadRefusal::from(refusal)),
-            Err(refusal) => return Err(response::busy(refusal)),
+            Err(refusal) if route == Route::WsProgress => Err(Refusal::from(refusal)),
+            Err(refusal) => return Err(response::refusal(refusal)),
         };
         let accepted = match websocket::handshake(request) {
             Ok(accepted) => accepted,
@@ -487,7 +490,7 @@ impl App {
             .begin(&id, peer.keys().as_ref(), lane.clone(), transfer)
         {
             Ok(sink) => sink,
-            Err(refusal) => return Err(response::upload_refusal(refusal)),
+            Err(refusal) => return Err(response::refusal(refusal)),
         };
         let (mut body, mut ended) = (pin!(request.into_body()), pin!(lane.ended()));
         let ending = loop {
@@ -504,9 +507,9 @@ impl App {
                 Some(End::Lane(ending)) => break ending,
             }
         };
-        let answer = match (ending, ending.upload_refusal()) {
+        let answer = match (ending, ending.refusal()) {
             (LaneEnding::Finished, _) => response::json(format!("{{\"bytes\":{}}}", sink.bytes())),
-            (_, Some(refusal)) => response::upload_refusal(refusal),
+            (_, Some(refusal)) => response::refusal(refusal),
             (_, None) => return Ok(Outcome::Abort),
         };
         let deadline = Instant::now() + EXCHANGE_BOUND;
@@ -598,20 +601,21 @@ impl Endpoint {
         Self::Quic,
     ];
 
-    /// Whether this endpoint serves `route`: the only mount decision.
+    /// Whether this endpoint serves `route`: the only mount decision. The companion mounts transfers to refuse them.
     pub const fn mounts(self, route: Route) -> bool {
         match route {
             Route::Probe
             | Route::UploadSession
             | Route::UploadCheckpoint
             | Route::UploadProgress
-            | Route::WtSession => true,
+            | Route::WtSession
+            | Route::Download
+            | Route::Upload => true,
             Route::Preflight
             | Route::Servers
             | Route::WsSession
             | Route::Ping
             | Route::WsProgress => self.ui(),
-            Route::Download | Route::Upload => !matches!(self, Self::H3Companion),
             Route::WtDownload | Route::WtUpload | Route::WtPing => matches!(self, Self::Quic),
         }
     }

@@ -180,7 +180,7 @@ pub(super) async fn pass(mut duration: Duration) {
 const CANCELLED: Error = Error::Reset(Code::H3_REQUEST_CANCELLED);
 
 #[tokio::test]
-async fn the_companion_points_every_answer_at_http3_and_serves_no_transfer() {
+async fn the_companion_points_every_answer_at_http3_and_refuses_transfers_readably() {
     let h3 = H3::start(&[]).await;
     let (companion, port) = (h3.server.companion.unwrap(), h3.server.quic.unwrap().port());
     assert_eq!(
@@ -201,9 +201,24 @@ async fn the_companion_points_every_answer_at_http3_and_serves_no_transfer() {
         Some(format!("h3=\":{port}\"").as_str())
     );
     assert_eq!(probe.header("connection"), Some("close"));
-    let download = connect().await.request("GET /download?bytes=1", "").await;
-    assert_eq!(download.status, 404);
-    assert_eq!(download.header("alt-svc"), probe.header("alt-svc"));
+    let preflight = connect().await.request("OPTIONS /upload", "").await;
+    assert_eq!(preflight.status, 204);
+    for line in ["GET /download?bytes=1", "POST /upload?id=gmu_x"] {
+        let refused = connect().await.request(line, "").await;
+        assert_eq!(
+            (refused.status, refused.header("graphite-meter-refusal")),
+            (409, Some("wrong-protocol")),
+            "{line}"
+        );
+        assert_eq!(refused.header("alt-svc"), probe.header("alt-svc"));
+        assert_eq!(refused.header("access-control-allow-origin"), Some("*"));
+        let exposed = refused.header("access-control-expose-headers");
+        assert!(exposed.is_some_and(|names| names.contains("Graphite-Meter-Refusal")));
+        assert_eq!(
+            refused.body,
+            b"this port serves transfers over HTTP/3, not TCP\n"
+        );
+    }
 }
 
 #[tokio::test]

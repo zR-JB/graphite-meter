@@ -349,7 +349,7 @@ async fn transfers_and_feeds_the_peer_leaves_idle_end_after_thirty_seconds() {
     );
     let answer = answer.await.unwrap();
     assert_eq!(answer.status(), 408);
-    assert_eq!(answer.headers()["x-graphite-upload-refusal"], "idle");
+    assert_eq!(answer.headers()["graphite-meter-refusal"], "idle");
     h2.server.until_active(0).await;
 }
 

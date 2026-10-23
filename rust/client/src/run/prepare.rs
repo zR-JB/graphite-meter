@@ -162,7 +162,7 @@ async fn check(
         Ok((path.protocol, check_throughput(client, &path).await?))
     };
     let throughput = first(&candidates.throughput, checked);
-    let joined = tokio::try_join!(throughput, latency).map_err(|fault| fault.failure())?;
+    let joined = tokio::try_join!(throughput, latency).map_err(unproven)?;
     let ((control, (throughput, ip_family)), latency) = joined;
     let (latency, idle_rtt) = latency.unzip();
     Ok(Paths {
@@ -246,7 +246,16 @@ async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, 
 }
 
 fn refused(text: impl Into<String>) -> Failure {
-    Failure::new(FailureReason::PreparationFailed, text)
+    Failure::new(FailureReason::PathFailed, text)
+}
+
+/// A check that lapsed proved no channel, so it never stopped delivering.
+fn unproven(fault: Fault) -> Failure {
+    let failure = fault.failure();
+    match failure.reason {
+        FailureReason::Timeout => refused(failure.text),
+        _ => failure,
+    }
 }
 
 fn late() -> Failure {
@@ -254,5 +263,5 @@ fn late() -> Failure {
         "the path check did not finish within {}",
         format::stage_time(PREPARATION_TIMEOUT)
     );
-    Failure::new(FailureReason::Timeout, text)
+    refused(text)
 }

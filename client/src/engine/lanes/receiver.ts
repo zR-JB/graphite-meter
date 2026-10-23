@@ -6,7 +6,7 @@ import { checkpoint as counters } from "../../protocol/progress";
 import { ROUTES } from "../../protocol/routes";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
 import { Tickets, withToken } from "./dial";
-import { Backoff, lost, refusal, refused, REVOKED, socketBound } from "./endings";
+import { lost, refusal, refused, restartMs, REVOKED, socketBound } from "./endings";
 import { FINAL_GRACE_MS, parse, readRecords } from "./records";
 import { abortable, delay } from "../run/clock";
 
@@ -55,8 +55,7 @@ export class Receiver {
   readonly #origin: string;
   readonly #feed: string;
   readonly #checkpoint: string;
-  /** Null when a session carries the feed. */
-  readonly #backoff: Backoff | null;
+  readonly #carried: boolean;
   readonly #tickets = new Tickets();
   readonly #closed = new AbortController();
   readonly #opened = Promise.withResolvers<void>();
@@ -80,18 +79,13 @@ export class Receiver {
     const query = `?id=${encodeURIComponent(id)}`;
     this.#feed = `${origin}${ROUTES.uploadProgress}${query}`;
     this.#checkpoint = `${origin}${ROUTES.uploadCheckpoint}${query}`;
-    this.#backoff = route === "session" ? null : new Backoff();
-    if (route !== "session") void this.#follow(route === "websocket");
+    this.#carried = route === "session";
+    if (!this.#carried) void this.#follow(route === "websocket");
   }
 
   /** The feed's DELETE, for a session that carries it. */
   get feed(): string {
     return this.#feed;
-  }
-
-  /** Refused as busy since the feed last opened. */
-  get busy(): boolean {
-    return !!this.#backoff?.busy;
   }
 
   /** Resolves once the feed is attached or the receiver observed. */
@@ -101,10 +95,7 @@ export class Receiver {
 
   record(record: FeedRecord): void {
     if (this.#closed.signal.aborted) return;
-    if (record.type === "ready") {
-      this.#backoff?.reset();
-      return this.#opened.resolve();
-    }
+    if (record.type === "ready") return this.#opened.resolve();
     const observed = this.#observe({
       id: this.id,
       bytes: record.bytes,
@@ -131,7 +122,7 @@ export class Receiver {
 
   /** While measuring without a session, a quiet feed is backed by same-receiver checkpoints; a failed one proves nothing. */
   measure(): void {
-    if (!this.#backoff) return;
+    if (this.#carried) return;
     const check = () => {
       if (!this.#advanced)
         this.checkpoint(this.#closed.signal).catch(
@@ -153,7 +144,7 @@ export class Receiver {
   /** Without a session, finalizes the id and waits a grace for its terminal record; a session's unfinalized id is backed up at once. */
   async finish(): Promise<void> {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
-      if (!this.#backoff)
+      if (this.#carried)
         // The browser bounds a keepalive request; a deadline here could end it before a slow path even connects.
         void this.#auth.fetch(this.#feed, { method: "DELETE", keepalive: true }).then(
           (response) => release(response),
@@ -204,7 +195,7 @@ export class Receiver {
       if (!end) return;
       if (end.ending.reason === "sign-in-required") return this.#host.signIn();
       const { ending, broken } = end;
-      if (!(await this.#host.ended(ending, broken, this.#backoff!.after(ending), signal))) return;
+      if (!(await this.#host.ended(ending, broken, restartMs(ending), signal))) return;
     }
   }
 

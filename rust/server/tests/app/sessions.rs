@@ -226,8 +226,8 @@ async fn an_upload_belongs_to_the_login_or_grant_that_started_it() {
     ] {
         let refused = tls(&app, empty(refused)).await;
         assert_eq!(
-            header(&refused, "x-graphite-upload-refusal"),
-            Some("ownerMismatch")
+            header(&refused, "graphite-meter-refusal"),
+            Some("owner-mismatch")
         );
     }
     assert_eq!(
