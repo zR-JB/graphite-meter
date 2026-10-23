@@ -381,14 +381,13 @@ fn latency_failures_are_announced_as_they_happen_and_only_once() {
 #[test]
 fn a_member_whose_participant_cannot_open_leaves() {
     let mut script = Script::new(plan(Stage::Download, &["a", "b"], false));
-    script.departed.push((
-        id("b"),
-        Failure::new(FailureReason::PreparationFailed, "no lanes"),
-    ));
+    script
+        .departed
+        .push((id("b"), Failure::new(FailureReason::PathFailed, "no lanes")));
     script.run(|at| vec![down("a", moved(at, STAGE))]);
     assert_eq!(
         script.removed(),
-        [(Duration::ZERO, "b", FailureReason::PreparationFailed)]
+        [(Duration::ZERO, "b", FailureReason::PathFailed)]
     );
     let result = script.engine.result();
     assert_eq!(result.failures[0].scope, Scope::Server);
@@ -477,7 +476,7 @@ fn outcomes_follow_stage_results() {
     let unprepared = ServerFailure {
         server: id("b"),
         scope: Scope::Server,
-        failure: Failure::new(FailureReason::PreparationFailed, "no path"),
+        failure: Failure::new(FailureReason::PathFailed, "no path"),
         at: Instant::now(),
     };
     assert_eq!(Outcome::of(&results, &plan), Outcome::Complete);

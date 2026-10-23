@@ -157,11 +157,16 @@ export function stageState({ planned, settled, phase, stalled, ended }: StageFac
   return stalled ? "recovering" : phase === "warmup" ? "warmup" : "running";
 }
 
+/** Reasons earlier builds saved under the name they had then. */
+const RENAMED = new Map<string, FailureReason>([["preparation-failed", "path-failed"]]);
+
 /** A reason this build does not know, as a newer build may save, reads as a measurement issue. */
-export const reasonLabel = (reason: string): string =>
-  Object.hasOwn(FAILURE_REASONS, reason)
+export function reasonLabel(saved: string): string {
+  const reason = RENAMED.get(saved) ?? saved;
+  return Object.hasOwn(FAILURE_REASONS, reason)
     ? FAILURE_REASONS[reason as FailureReason]
     : "Measurement issue";
+}
 
 /** Idle latency is probed in the latency stage, loaded latency during the transfers. */
 export const LATENCY = {

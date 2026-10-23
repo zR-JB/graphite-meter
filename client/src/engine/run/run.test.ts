@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { ServerBusyError, SignInRequired, StageFailure, type StageEvents } from "../types";
+import { SignInRequired, StageFailure, type StageEvents } from "../types";
 import { incoherence, type RunResult } from "./result";
 import { Run, type RunEvent, type RunPlan } from "./run";
 import type { Activity, Stage } from "./schedule";
@@ -351,16 +351,26 @@ test("a server lost in the latency stage is not prepared for the later stages", 
     measure: (events, { stage }) => void (stage === "latency" && how(events)),
   });
   const h = setup(
-    [...two(lose(fail(100))), { id: "c", ...lose((events) => events.latencyStalled("fixture")) }],
+    [
+      ...two(lose(fail(100))),
+      { id: "c", ...lose((events) => events.latencyStalled("fixture")) },
+      {
+        id: "d",
+        prepare: ({ stage }) =>
+          stage === "latency"
+            ? Promise.reject(new StageFailure("path-failed", "lapsed"))
+            : undefined,
+      },
+    ],
     { latency: true, download: true },
     { latencyMs: 400, downloadMs: 1_000 },
   );
   h.start();
   const { multiServer, stages } = await h.result();
-  expect(h.calls).not.toContain("begin:a:download");
-  expect(h.calls).not.toContain("begin:c:download");
+  for (const id of ["a", "c", "d"]) expect(h.calls).not.toContain(`begin:${id}:download`);
   expect(multiServer.participants).toEqual(["b"]);
   expect(multiServer.failures).toMatchObject([
+    { serverId: "d", stage: "latency", scope: "latency", reason: "path-failed" },
     { serverId: "a", stage: "latency", scope: "latency" },
     { serverId: "c", stage: "latency", scope: "latency" },
   ]);
@@ -476,22 +486,20 @@ test("a server that cannot prepare is dropped; the run fails only when none surv
   near(survived.download?.reportedBytesPerSec, 3_000);
   expect(survived.outcome).toBe("partial");
   expect(survived.multiServer.failures).toMatchObject([
-    { serverId: "a", stage: "download", reason: "preparation-failed" },
+    { serverId: "a", stage: "download", reason: "path-failed" },
   ]);
 
   const none = setup(two(refuse, refuse), { download: true }, { downloadMs: 1_000 });
   none.start();
   await expect(none.result()).rejects.toMatchObject({
-    reason: "preparation-failed",
+    reason: "path-failed",
     message: expect.stringMatching(/^All selected test servers failed/),
   });
   for (const [cause, reason] of [
     [new TypeError("Failed to fetch"), "connection-lost"],
-    [new DOMException("late", "TimeoutError"), "timeout"],
-    [
-      new ServerBusyError("busy", { cause: new DOMException("late", "TimeoutError") }),
-      "server-busy",
-    ],
+    // A lapse is not a channel that stopped delivering.
+    [new DOMException("late", "TimeoutError"), "path-failed"],
+    [new StageFailure("client-limit", "refused"), "client-limit"],
   ] as const) {
     const reject = { prepare: () => Promise.reject(new Error("no", { cause })) };
     const refused = setup(two(reject, reject), { download: true }, { downloadMs: 1_000 });
@@ -512,7 +520,7 @@ test("a server that cannot prepare is dropped; the run fails only when none surv
   near(result.download?.reportedBytesPerSec, 4_000);
   near(result.upload?.reportedBytesPerSec, 3_000);
   expect(result.multiServer.failures).toMatchObject([
-    { serverId: "a", stage: "upload", reason: "preparation-failed" },
+    { serverId: "a", stage: "upload", reason: "path-failed" },
   ]);
 });
 
@@ -791,7 +799,9 @@ test("removing one server keeps the outcomes the others report in the same prepa
       { prepare: (_, events) => events.failed("sign-in-required", "fixture") },
       {
         prepare: () =>
-          new Promise((_, reject) => later(10, () => reject(new ServerBusyError("busy")))),
+          new Promise((_, reject) =>
+            later(10, () => reject(new StageFailure("server-busy", "busy"))),
+          ),
       },
     ),
     { download: true },

@@ -15,7 +15,7 @@ use futures_util::{
     stream::FuturesUnordered,
 };
 use graphite_meter_http3::webtransport::{RecvStream, Session};
-use graphite_meter_proto::{lane::IDLE_BOUND, refusal::UploadRefusal, upload::Record};
+use graphite_meter_proto::{lane::IDLE_BOUND, refusal::Refusal, upload::Record};
 use std::{mem, pin::pin, time::Duration};
 use tokio::time::{sleep, timeout};
 
@@ -125,7 +125,7 @@ async fn progress(session: &Session, mut feed: ProgressFeed) {
     let _ = stream.finish();
 }
 
-async fn refuse(session: &Session, refusal: UploadRefusal) {
+async fn refuse(session: &Session, refusal: Refusal) {
     let Ok(mut stream) = session.open_uni().await else {
         return;
     };

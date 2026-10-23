@@ -6,10 +6,11 @@ table! {
         key.0: &'static str,
         label.1: &'static str,
     } {
-        PreparationFailed => ("preparation-failed", "Could not prepare the connection"),
+        PathFailed => ("path-failed", "Path unavailable"),
         ConnectionLost => ("connection-lost", "Connection lost"),
         Timeout => ("timeout", "Stopped delivering data"),
         SignInRequired => ("sign-in-required", "Sign-in required"),
+        ClientLimit => ("client-limit", "Limit reached for your address or sign-in"),
         ServerBusy => ("server-busy", "Server at capacity"),
         ProtocolError => ("protocol-error", "Unexpected server response"),
         InsufficientEvidence => ("insufficient-evidence", "Too little measured time"),

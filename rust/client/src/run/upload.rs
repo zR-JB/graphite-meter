@@ -13,7 +13,7 @@ use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
     json,
     origin::Origin,
-    refusal::UploadRefusal,
+    refusal::Refusal,
     route::Route,
     upload::{Counters, MAX_RECORD_BYTES, Record, Session as Minted},
 };
@@ -178,8 +178,8 @@ impl UploadSession {
         let lanes = self.upload.lanes.health();
         let progress = self.upload.progress.borrow();
         let feed = progress.ended.as_ref();
-        let invalid = matches!(feed, Some(Fault::Refused(UploadRefusal::Invalid)));
-        let invalid = invalid || self.upload.lanes.refusal() == Some(UploadRefusal::Invalid);
+        let invalid = matches!(feed, Some(Fault::Refused(Refusal::Invalid)));
+        let invalid = invalid || self.upload.lanes.refusal() == Some(Refusal::Invalid);
         if invalid && !self.replaced.swap(true, Ordering::Relaxed) {
             drop(progress);
             self.replace();

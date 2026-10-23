@@ -16,10 +16,10 @@ pub enum Access {
 impl Access {
     /// The headers of any answer, replacing those of a broader access.
     pub fn apply(&self, headers: &mut HeaderMap) {
-        const PUBLIC: &str = "X-Graphite-Upload-Refusal, Retry-After";
+        const PUBLIC: &str = "Graphite-Meter-Refusal, Retry-After";
         const AUTH: &str =
-            "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, X-Graphite-Upload-Refusal, Retry-After";
-        const BEARER: &str = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, X-Graphite-Upload-Refusal, Retry-After, \
+            "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, Graphite-Meter-Refusal, Retry-After";
+        const BEARER: &str = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, Graphite-Meter-Refusal, Retry-After, \
                               Graphite-Meter-Browser-Auth";
         let (origin, exposed) = match self {
             Self::Public => (HeaderValue::from_static("*"), PUBLIC),

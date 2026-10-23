@@ -102,7 +102,7 @@ clients. See [socket credentials](#socket-credentials).
 The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
 over HTTP; only the measured bytes ride the session. The HTTP/3 origin's TCP side also answers these
 control routes, `/upload/checkpoint` and `/wt/session`, since a browser may fetch them there before it
-uses QUIC; it serves no transfer. The progress feed carries the same NDJSON
+uses QUIC; it serves no transfer, and refuses one with `409 wrong-protocol` ([refusals](discovery.md#refusals)). The progress feed carries the same NDJSON
 records as `GET /upload/progress`; see the [upload contract](upload.md).
 
 ### Lane endings

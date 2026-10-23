@@ -126,7 +126,7 @@ test("Start runs on what its checks verified however long they take, and never f
     dropped: [
       {
         server: { id: "self", url: page.origin, name: "Meter" },
-        reason: "preparation-failed",
+        reason: "path-failed",
         message: "Could not check the connection",
       },
     ],

@@ -20,7 +20,6 @@ import {
   MAX_SELECTED,
   SELECTION_REFUSED,
   isNetworkFailure,
-  ServerBusyError,
   SignInRequired,
   StageFailure,
   type Checkpoint,
@@ -240,15 +239,16 @@ function recovering(stage: StageRun, seat: Seat, at: number): boolean {
   return !!seat.recovery && at - seat.progressAt[dir] >= QUIET_MS;
 }
 
-/** A busy server wins over a nested timeout; offline or a network failure is a lost connection. */
+/** The server did not answer, which a withdrawn sign-in also looks like. */
+const unreached = (reason: FailureReason) =>
+  reason === "connection-lost" || reason === "timeout" || reason === "path-failed";
+
+/** A reported failure names itself; offline or a network failure is a lost connection, and a lapse is never busy. */
 function classify(cause: unknown, fallback: FailureReason): FailureReason {
   const chain = [...causes(cause)];
   const known = chain.find((error) => error instanceof StageFailure);
   if (known) return known.reason;
-  if (chain.some((error) => error instanceof ServerBusyError)) return "server-busy";
   if (navigator.onLine === false || isNetworkFailure(cause)) return "connection-lost";
-  if (chain.some((error) => error instanceof DOMException && error.name === "TimeoutError"))
-    return "timeout";
   return fallback;
 }
 
@@ -620,7 +620,7 @@ export class Run {
         const error = signIn ?? result.reason;
         this.#remove(
           servers[index]!,
-          signIn ? "sign-in-required" : classify(result.reason, "preparation-failed"),
+          signIn ? "sign-in-required" : classify(result.reason, "path-failed"),
           error instanceof Error ? error.message : "Could not prepare the stage",
         );
       });
@@ -1079,10 +1079,7 @@ export class Run {
       if (seat) seat.latencyStall = null;
       this.#failure(server, "latency", reason, message);
       // An unreachable server would hold each later stage's preparation until it timed out.
-      if (
-        (reason === "connection-lost" || reason === "timeout") &&
-        this.#participants().length > 1
-      ) {
+      if (unreached(reason) && this.#participants().length > 1) {
         server.removed = true;
         seat?.resources.discard(true);
       }
@@ -1099,8 +1096,7 @@ export class Run {
     }
     this.#live.drop(server.id);
     this.#failure(server, "throughput", reason, message);
-    if (reason === "connection-lost" || reason === "timeout")
-      void this.#signedOut(server, stage.activity.stage);
+    if (unreached(reason)) void this.#signedOut(server, stage.activity.stage);
     this.#updateStalled();
     const survivors = this.#participants();
     if (!survivors.length) {
@@ -1129,7 +1125,7 @@ export class Run {
     const failure = this.#failures.find(
       (f) => f.serverId === server.id && f.stage === stage && f.scope === "throughput",
     );
-    if (failure?.reason !== "connection-lost" && failure?.reason !== "timeout") return;
+    if (!failure || !unreached(failure.reason)) return;
     Object.assign(failure, {
       reason: "sign-in-required",
       message: `Sign in to ${server.prepared.server.name}`,

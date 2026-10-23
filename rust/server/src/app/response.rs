@@ -1,6 +1,6 @@
-use crate::{limits::Refusal, transport::body::Body};
+use crate::transport::body::Body;
 use bytes::Bytes;
-use graphite_meter_proto::refusal::{SIGN_IN_HEADER, UPLOAD_REFUSAL_HEADER, UploadRefusal};
+use graphite_meter_proto::refusal::{REFUSAL_HEADER, Refusal, SIGN_IN_HEADER};
 use http::{HeaderValue, Method, Response, StatusCode, header};
 use serde::Serialize;
 
@@ -101,15 +101,6 @@ pub fn method_not_allowed(allow: &str) -> Response<Body> {
     response
 }
 
-/// A full handler pool or client share: 503 or 429, asking for a retry after a second.
-pub fn busy(refusal: Refusal) -> Response<Body> {
-    let mut response = status(refusal.status());
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-    response
-}
-
 /// A metered request whose trusted proxy named no single client.
 pub fn ambiguous() -> Response<Body> {
     text(
@@ -119,22 +110,20 @@ pub fn ambiguous() -> Response<Body> {
     )
 }
 
-/// An upload refusal's message, status and name (`api/uploadrefusals.txt`).
-pub fn upload_refusal(refusal: UploadRefusal) -> Response<Body> {
+/// A refusal's message, status and code (`api/refusals.txt`).
+pub fn refusal(refusal: impl Into<Refusal>) -> Response<Body> {
+    let refusal = refusal.into();
     let mut response = text(refusal.status(), refusal.message());
     let headers = response.headers_mut();
-    headers.insert(
-        UPLOAD_REFUSAL_HEADER,
-        HeaderValue::from_static(refusal.name()),
-    );
+    headers.insert(REFUSAL_HEADER, HeaderValue::from_static(refusal.code()));
     match refusal {
-        UploadRefusal::GlobalFull | UploadRefusal::ClientFull => {
+        Refusal::ClientLimit | Refusal::ServerBusy => {
             headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
         }
-        UploadRefusal::Revoked => {
+        Refusal::Revoked => {
             headers.insert(SIGN_IN_HEADER, HeaderValue::from_static("required"));
         }
-        UploadRefusal::Invalid | UploadRefusal::OwnerMismatch | UploadRefusal::Idle => {}
+        Refusal::Invalid | Refusal::OwnerMismatch | Refusal::Idle | Refusal::WrongProtocol => {}
     }
     response
 }

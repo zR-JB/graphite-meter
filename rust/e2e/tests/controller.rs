@@ -56,7 +56,7 @@ async fn a_protected_server_refuses_sign_in_over_http_with_insecure_tls_and_with
         ("GM_ADVERTISED_NATIVE_ENDPOINTS", "http2,http3"),
     ])
     .await;
-    let refused = |text| Failure::new(FailureReason::PreparationFailed, text);
+    let refused = |text| Failure::new(FailureReason::SignInRequired, text);
     let checks = [
         (
             &server.http1,

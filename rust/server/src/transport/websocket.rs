@@ -7,7 +7,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use graphite_meter_proto::{lane::LaneEnding, refusal::UploadRefusal, upload::Record};
+use graphite_meter_proto::{lane::LaneEnding, refusal::Refusal, upload::Record};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -99,7 +99,7 @@ pub enum Socket {
     Bus(Lane),
     Feed(Lane, ProgressFeed),
     /// A feed refused before it attached: its `error` record is the only message.
-    Refused(UploadRefusal),
+    Refused(Refusal),
 }
 
 impl Socket {

@@ -27,6 +27,23 @@ Duplicate object member names are ambiguous: the terminal client rejects them at
 including inside unknown fields, in these responses and in [upload progress records](upload.md#progress-records). The
 browser client's `JSON.parse` keeps the last duplicate.
 
+## Refusals
+
+A server that refuses a measurement request says why: the answer carries `Graphite-Meter-Refusal: <code>`, which
+CORS exposes, and a one-line text body. [refusals.txt](refusals.txt) pins each code's text, status and the failure
+reason a client records when the refusal ends a server's stage; an upload's progress feed carries the same code in its
+`error` record ([upload contract](upload.md)).
+
+| Code | Answer | When |
+| --- | --- | --- |
+| `client-limit` | `429`, `Retry-After: 1` | The client's address or sign-in already holds its share: `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` measurements, `GM_MAX_SESSIONS_PER_CLIENT` WebTransport sessions, or its upload ids. |
+| `server-busy` | `503`, `Retry-After: 1` | The server holds `GM_MAX_ACTIVE_MEASUREMENTS` measurements, `GM_MAX_ACTIVE_SESSIONS` sessions, or all the upload ids it keeps. |
+| `wrong-protocol` | `409` with `Alt-Svc` | `/download` or `/upload` reached the HTTP/3 port over TCP, which serves no transfer. The client fails the path at once instead of asking again; `Alt-Svc` brings the browser back to HTTP/3 for later requests. Not `421`, which makes Firefox forget the origin's HTTP/3. |
+| `invalid`, `owner-mismatch`, `idle`, `revoked` | `400`, `403`, `408`, `403` | An upload id or lane; see the [upload contract](upload.md). |
+
+Browsers hide the status of a refused WebSocket upgrade or WebTransport CONNECT, so a page sees those refusals only as
+a dial that failed.
+
 ## Originating server catalog
 
 `GET /servers` publishes [servers.schema.json](servers.schema.json): at most 32 entries including the synthesized

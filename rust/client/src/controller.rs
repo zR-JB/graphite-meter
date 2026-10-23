@@ -33,7 +33,7 @@ const INTERNAL: &str = "Internal error";
 
 /// A failure from a panic; `connection-lost` would send a server away for the client's own bug.
 pub fn internal() -> Failure {
-    Failure::new(FailureReason::PreparationFailed, INTERNAL)
+    Failure::new(FailureReason::PathFailed, INTERNAL)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,7 +257,7 @@ impl Work {
                 _ if !self.interactive => {
                     Some(Failure::new(FailureReason::SignInRequired, SIGN_IN))
                 }
-                Some(text) => Some(Failure::new(FailureReason::PreparationFailed, text)),
+                Some(text) => Some(Failure::new(FailureReason::SignInRequired, text)),
                 None if approved.contains(&origin) => {
                     Some(Failure::new(FailureReason::SignInRequired, REJECTED))
                 }

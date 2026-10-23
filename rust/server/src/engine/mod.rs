@@ -10,7 +10,7 @@ use crate::lane::Lane;
 use bytes::Bytes;
 use graphite_meter_proto::{
     bus::Ping,
-    refusal::UploadRefusal,
+    refusal::Refusal,
     upload::{HEARTBEAT, Record},
 };
 use std::{
@@ -230,7 +230,7 @@ impl ProgressFeed {
             return Step::Superseded;
         }
         if life.phase == Phase::Expired {
-            return Step::Last(UploadRefusal::Invalid.into());
+            return Step::Last(Refusal::Invalid.into());
         }
         if !self.ready {
             self.ready = true;

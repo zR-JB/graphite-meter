@@ -46,17 +46,17 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
     for refused in [forged.as_str(), "gmu_", "", &id[..78]] {
         assert_eq!(
             uploads.begin(refused, Some(&owner), lane(), None).err(),
-            Some(UploadRefusal::Invalid)
+            Some(Refusal::Invalid)
         );
     }
     let elsewhere = Uploads::new([8; 32], Meter::default());
     assert_eq!(
         elsewhere.subscribe(&id, Some(&owner)).err(),
-        Some(UploadRefusal::Invalid)
+        Some(Refusal::Invalid)
     );
     assert_eq!(
         uploads.checkpoint(&id, Some(&owner)).err(),
-        Some(UploadRefusal::Invalid),
+        Some(Refusal::Invalid),
         "reads create nothing"
     );
 
@@ -66,7 +66,7 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
     advance(Duration::from_secs(61)).await;
     assert_eq!(
         uploads.begin(&unused, Some(&owner), lane(), None).err(),
-        Some(UploadRefusal::Invalid)
+        Some(Refusal::Invalid)
     );
     assert!(
         uploads.begin(&id, Some(&owner), lane(), None).is_ok(),
@@ -96,7 +96,7 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
         uploads.checkpoint(&id, other.as_ref()).err(),
         uploads.finish(&id, other.as_ref()).err(),
     ];
-    assert_eq!(refusals, [Some(UploadRefusal::OwnerMismatch); 4]);
+    assert_eq!(refusals, [Some(Refusal::OwnerMismatch); 4]);
 
     let grant = ClientKeys::Auth(Holder::Grant("g".into()), Principal::oidc("alice"));
     let login = ClientKeys::Auth(Holder::Login("s".into()), Principal::oidc("alice"));
@@ -104,25 +104,25 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
     drop(uploads.subscribe(&delegated, Some(&grant)).unwrap());
     assert_eq!(
         uploads.checkpoint(&delegated, Some(&login)).err(),
-        Some(UploadRefusal::OwnerMismatch)
+        Some(Refusal::OwnerMismatch)
     );
 
     let fresh = uploads.mint();
     assert_eq!(
         uploads.begin(&fresh, None, lane(), None).err(),
-        Some(UploadRefusal::OwnerMismatch)
+        Some(Refusal::OwnerMismatch)
     );
     assert_eq!(
         uploads.subscribe(&fresh, None).err(),
-        Some(UploadRefusal::OwnerMismatch)
+        Some(Refusal::OwnerMismatch)
     );
     assert_eq!(
         uploads.checkpoint(&fresh, None).err(),
-        Some(UploadRefusal::Invalid)
+        Some(Refusal::Invalid)
     );
     assert_eq!(
         uploads.finish(&id, None).err(),
-        Some(UploadRefusal::OwnerMismatch)
+        Some(Refusal::OwnerMismatch)
     );
     assert_eq!(live(&uploads), 2);
 }

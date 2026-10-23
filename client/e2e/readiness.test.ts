@@ -30,9 +30,7 @@ test("a verified peer that dies fails its idle recheck, and Start leaves it out"
     await closeSettings(page);
     const { multiServer } = (await run(page)).result;
     expect(multiServer.participants).toEqual(["self"]);
-    expect(multiServer.failures).toMatchObject([
-      { serverId: "oslo", reason: "preparation-failed" },
-    ]);
+    expect(multiServer.failures).toMatchObject([{ serverId: "oslo", reason: "path-failed" }]);
   } finally {
     oslo.kill();
     bergen.kill();
