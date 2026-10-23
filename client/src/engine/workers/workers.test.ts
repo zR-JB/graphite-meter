@@ -143,6 +143,7 @@ test("a download counts bytes into the epoch they were read in, from the time it
     request: RECIPE,
     epoch: 0,
     streams: 1,
+    timed: true,
     until: 0,
   });
   await elapse(0);
@@ -167,7 +168,7 @@ test("a download counts bytes into the epoch they were read in, from the time it
 });
 
 test("a download's bodies end on the server's clock at the lane's latest end; a stop waits only for one ending soon", async () => {
-  const bodies = [source(), source(), source(), source()];
+  const bodies = [source(), source(), source(), source(), source()];
   const asked: string[] = [];
   const bootLane = () =>
     boot<LaneCommand>("./lane.ts", {
@@ -183,6 +184,7 @@ test("a download's bodies end on the server's clock at the lane's latest end; a 
     request: RECIPE,
     epoch: 0,
     streams: 1,
+    timed: true,
     until: until === null ? null : at(until),
   });
   const lane = await bootLane();
@@ -224,6 +226,13 @@ test("a download's bodies end on the server's clock at the lane's latest end; a 
       ending: { reason: "connection-lost", retry: true, detail: "the download ended early" },
     },
   ]);
+  // An HTTP/1.1 body keeps its length, which no proxy re-chunks, and a stop cuts it.
+  const sized = await bootLane();
+  sized.send({ ...download(5_000), timed: false } as LaneCommand);
+  await elapse(0);
+  expect(asked.at(-1)).toBe("https://peer.example/download?bytes=1");
+  sized.send({ type: "stop" });
+  expect(sized.types()).toEqual(["stopped"]);
 });
 
 test("a flush reports the bytes counted so far before it answers", async () => {
@@ -237,6 +246,7 @@ test("a flush reports the bytes counted so far before it answers", async () => {
     request: RECIPE,
     epoch: 1,
     streams: 1,
+    timed: true,
     until: 0,
   });
   await elapse(0);
@@ -260,6 +270,7 @@ test("a download whose answer ends short ends the lane, so its owner paces the r
     request: RECIPE,
     epoch: 0,
     streams: 1,
+    timed: true,
     until: 0,
   });
   await elapse(0);

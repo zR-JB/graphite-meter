@@ -59,6 +59,8 @@ export type LaneCommand =
       request: RequestRecipe;
       epoch: number;
       streams: number;
+      /** Bodies end on the server's clock (`ms=`); HTTP/1.1 sends a length instead, as a proxy re-chunks a body without. */
+      timed: boolean;
       /** Epoch ms by which the server's clock ends each body (`ms=`), or null while the stage's end is not yet known. */
       until: number | null;
     }

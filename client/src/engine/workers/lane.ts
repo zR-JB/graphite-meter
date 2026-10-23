@@ -63,12 +63,14 @@ async function download(command: Extract<LaneCommand, { type: "download" }>): Pr
   }
 }
 
-/** Bodies the server's clock ends at `until`, fetched again until the lane stops, which takes the current one's end. */
+/** Bodies fetched again until the lane stops: timed ones end on the server's clock at `until`, and a stop takes the
+ *  current one's end; an untimed one is cut. */
 async function bodies({
   url,
   request,
   epoch,
   streams,
+  timed,
 }: Extract<LaneCommand, { type: "download" }>): Promise<LaneReport> {
   reports.measure(epoch);
   reports.share(streams);
@@ -76,12 +78,13 @@ async function bodies({
   for (;;) {
     try {
       const sentAt = performance.now();
-      const ms =
-        until === null
+      const ms = !timed
+        ? Infinity
+        : until === null
           ? PROVISIONAL_MS
           : Math.ceil(Math.max(MIN_BODY_MS, until - performance.timeOrigin - sentAt));
-      bodyEnd = sentAt + ms;
-      const response = await fetch(`${url}&ms=${ms}`, init);
+      bodyEnd = timed ? sentAt + ms : null;
+      const response = await fetch(timed ? `${url}&ms=${ms}` : url, init);
       if (!response.ok || !response.body) {
         release(response);
         reports.flush();

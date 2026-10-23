@@ -534,7 +534,9 @@ test("a stage's download lanes end on the server's clock just past its planned e
   await elapse(150);
   const opened = lanes.lanes();
   // While the clock holds for the stage to prepare, its end is not known yet.
-  expect(opened.map(({ commands }) => commands[0]!.until)).toEqual([null, null, null]);
+  expect(opened.map(({ commands }) => [commands[0]!.until, commands[0]!.timed])).toEqual(
+    Array(3).fill([null, true]),
+  );
   for (const lane of opened) bytes(lane, 0);
   await elapse(0);
   lanes.resources.replanned();
@@ -551,8 +553,11 @@ test("a stage's download lanes end on the server's clock just past its planned e
   opened[2]!.report({ type: "stopped" });
   await elapse(0);
   expect([finished.at, opened.every(({ terminated }) => terminated)]).toEqual([500, true]);
-  const late = stage(DOWNLOAD);
+  // HTTP/1.1 bodies keep a length, as a proxy would re-chunk one without.
+  const late = stage(DOWNLOAD, {}, { ...FETCH, protocol: "http1" });
   void late.resources.prepare(new AbortController().signal);
+  await elapse(150);
+  expect(late.lanes().map(({ commands }) => commands[0]!.timed)).toEqual([false, false, false]);
   for (const lane of late.lanes()) bytes(lane, 0);
   await elapse(0);
   const cut = outcome(late.resources.finish());

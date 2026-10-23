@@ -29,7 +29,7 @@ import { abortable, delay } from "../run/clock";
 
 /** Readiness gets a dial's budget and a margin for the workers to report within it. */
 const READY_MS = ESTABLISH_MS + 500;
-/** Large enough that only the server's clock ends a download. */
+/** Large enough that only the server's clock or a stop ends a download. */
 const DOWNLOAD_BYTES = 64 * 1024 ** 3;
 /** Download bodies end this long after the stage's planned end, so its last window still sees bytes flow. */
 const END_MARGIN_MS = 250;
@@ -314,6 +314,7 @@ class Stage implements StageResources {
               request: auth.request(url, "GET"),
               epoch,
               streams: count,
+              timed: fetch.protocol === "http2" || fetch.protocol === "http3",
               until: this.#bodiesEnd(),
             };
           }),
