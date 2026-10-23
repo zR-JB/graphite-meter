@@ -14,6 +14,8 @@ test("every pinned upload refusal ends with its pinned reason, by code over HTTP
       retry: reason === "server-busy" || reason === "timeout",
       // Only an id the server no longer knows may be replaced.
       rotate: name === "invalid" || undefined,
+      // The idle bound is the server's own, so its reopen spends none of the stage's.
+      bound: name === "idle" || undefined,
       detail,
     };
     expect(refusal(Number(status), name, detail), name).toEqual(expected);
@@ -55,16 +57,15 @@ test("the session endings the browser acts on match the lane ending pin", async 
     expect(sessionClosed(other.session)).toBeNull();
 });
 
-test("a restart pauses 300 ms; busy refusals double it within 1.2 s, a Retry-After raises it, delivery resets", () => {
+test("a restart pauses 300 ms, a Retry-After raises it within 1.2 s, and a busy refusal holds until delivery", () => {
   const busy: Ending = { reason: "server-busy", retry: true, detail: "" };
   const lost: Ending = { reason: "connection-lost", retry: true, detail: "" };
   const backoff = new Backoff();
-  expect([busy, busy, busy, busy].map((ending) => backoff.after(ending))).toEqual([
-    300, 600, 1_200, 1_200,
-  ]);
+  expect([busy, busy].map((ending) => backoff.after(ending))).toEqual([300, 300]);
   expect(backoff.busy).toBe(true);
-  expect([lost, busy].map((ending) => backoff.after(ending))).toEqual([300, 300]);
   backoff.reset();
+  expect(backoff.busy).toBe(false);
+  expect(backoff.after(lost)).toBe(300);
   expect(backoff.busy).toBe(false);
   expect(backoff.after({ ...busy, retryAfterMs: 1_000 })).toBe(1_000);
   expect(backoff.after({ ...busy, retryAfterMs: 5_000 })).toBe(1_200);

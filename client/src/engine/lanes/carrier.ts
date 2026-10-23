@@ -11,6 +11,7 @@ import { workerScript } from "../../lib/trusted";
 import type { Ending } from "../types";
 import { delay, fromEpoch } from "../run/clock";
 import { Backoff, lost } from "./endings";
+import { handshakes } from "../net/webtransport";
 
 /** A stopping session gets this long to finalize and acknowledge. */
 const STOP_GRACE_MS = 2_500;
@@ -59,6 +60,8 @@ interface Lane {
   asked: ((answer: Flushed) => void)[];
   /** The lane answered the final flush, so what it counts later lies past the boundary. */
   cut: boolean;
+  /** A session's WebTransport dial is out, so ending the worker now abandons it, which Chrome counts as a failure. */
+  dialing: boolean;
 }
 
 export class Carrier {
@@ -85,6 +88,7 @@ export class Carrier {
         held: null,
         asked: [],
         cut: false,
+        dialing: false,
       };
       lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) =>
         this.#report(lane, data);
@@ -189,7 +193,8 @@ export class Carrier {
   release(): void {
     this.#done.abort();
     this.#acknowledged.abort();
-    for (const { worker } of this.#lanes.splice(0)) {
+    for (const { worker, dialing } of this.#lanes.splice(0)) {
+      if (dialing) handshakes.failed();
       worker.onmessage = worker.onerror = null;
       worker.terminate();
     }
@@ -198,7 +203,9 @@ export class Carrier {
   #open(lane: Lane): void {
     if (this.#done.signal.aborted) return;
     const command = this.#plan.open(lane.index, this.#epoch);
-    if (command) lane.worker.postMessage(command);
+    if (!command) return;
+    lane.dialing = this.#plan.session;
+    lane.worker.postMessage(command);
   }
 
   #report(lane: Lane, report: LaneReport | SessionReport): void {
@@ -217,6 +224,9 @@ export class Carrier {
         return this.#host.record(report.record);
       case "stopped":
         return this.#acknowledged.abort();
+      case "handshake":
+        lane.dialing = false;
+        return void (report.opened || handshakes.failed());
       case "flushed":
         return lane.asked.shift()?.(report);
       case "ended":
@@ -232,6 +242,8 @@ export class Carrier {
   }
 
   #delivered(lane: Lane): void {
+    // A session that delivers has opened, whether or not its report came first.
+    lane.dialing = false;
     lane.backoff.reset();
     if (lane.delivered) return;
     lane.delivered = true;

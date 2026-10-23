@@ -220,7 +220,7 @@ test("a new pace can turn a fixed cadence into a reply-driven chain within a sma
   expect(b.sent).toEqual([0, 250, 300, 310, 320, 330, 430, 530]);
 });
 
-test("a disconnect keeps passed deadlines as timeouts, interrupts the rest, stalls once per outage and backs off", () => {
+test("a disconnect keeps passed deadlines as timeouts, interrupts the rest, stalls once per outage and never redials itself", () => {
   const b = opened(bus(100, 16, (id) => (id < 3 ? "lost" : 5)));
   b.run(249);
   b.clock.now = 250;
@@ -228,30 +228,21 @@ test("a disconnect keeps passed deadlines as timeouts, interrupts the rest, stal
   expect(b.reports.map(({ type }) => type)).toEqual(["outcomes", "interrupted", "stalled"]);
   expect(b.outcomes()).toEqual([{ rttMs: 250, timedOut: true, observedAt: 250, inWindow: true }]);
   expect(b.of("interrupted")).toEqual([{ type: "interrupted", count: 2, reason: "unresolved" }]);
-  const dialAt = (at: number) => {
-    const dials = b.clock.dials;
-    b.run(at - 1);
-    expect(b.clock.dials, `${at}`).toBe(dials);
-    b.run(at);
-    expect(b.clock.dials, `${at}`).toBe(dials + 1);
-  };
-  for (const at of [350, 550, 950, 1_750, 3_350, 5_350]) {
-    dialAt(at);
-    b.prober.closed("refused");
-  }
-  dialAt(7_350);
+  const dials = b.clock.dials;
+  b.run(60_000);
+  expect(b.clock.dials).toBe(dials);
+  // The owner's dial answers.
   b.prober.opened();
   // Malformed and unknown replies establish nothing.
-  b.prober.frame("PONG,99,0", 7_350);
-  b.prober.frame("ready", 7_350);
+  b.prober.frame("PONG,99,0", 60_000);
+  b.prober.frame("ready", 60_000);
   expect(b.of("ready")).toHaveLength(0);
-  b.run(7_360);
+  b.run(60_010);
   expect(b.reports.slice(-2).map(({ type }) => type)).toEqual(["ready", "resumed"]);
   expect(b.of("stalled")).toHaveLength(1);
-  // An opened connection resets the backoff, and its loss is a new outage.
+  // Its loss is a new outage.
   b.prober.closed("websocket closed");
   expect(b.of("stalled")).toHaveLength(2);
-  dialAt(7_460);
 });
 
 test("a freeze leaves the probes in flight across it unresolved, whether its late timer or a reply runs first", () => {

@@ -197,13 +197,16 @@ export function roleLine(
   const [first] = considered;
   if (!first) return null;
   if (!several) {
-    const { state, message } = first[role];
+    const { state, message, path } = first[role];
     if (state === "failed" && message)
       return { state, status: { label: message, tone: "err" }, summary: null };
+    const summary = pathSummary(first.discovery, role, shownTarget(first, role, page));
+    const fallback = path?.verifiedFor.fallback;
     return {
       state,
       status: READINESS[state],
-      summary: message ?? pathSummary(first.discovery, role, shownTarget(first, role, page)),
+      summary:
+        message ?? (fallback ? `Automatic used ${summary} for ${role}: ${fallback}` : summary),
     };
   }
   const states = considered.map((view) => view[role].state);

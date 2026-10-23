@@ -44,6 +44,7 @@ import {
   unresolvedReason,
   type Selection,
 } from "./paths";
+import { handshakes, THROTTLED } from "./webtransport";
 
 export type Retry = "retryable" | "needs-user" | "impossible";
 
@@ -301,11 +302,24 @@ function targetsFor<R extends Role>(
   return selection.kind === "auto" ? candidates(discovery, role, context.page) : [requested];
 }
 
-/** The first target that verifies; Automatic stops at a sign-in refusal, and the preferred target's failure says the most. */
+/** Why Automatic passes over the target it prefers before trying any: the page's WebTransport throttle. */
+function passedOver(
+  context: CheckContext,
+  discovery: Discovery,
+  role: Role,
+  selection: Selection,
+): string | undefined {
+  if (selection.kind !== "auto" || context.page.webTransport !== "throttled") return undefined;
+  const head = resolve(discovery, role, selection, { ...context.page, webTransport: "available" });
+  return head?.transport.startsWith("webtransport") ? THROTTLED : undefined;
+}
+
+/** The first target that verifies, told why any before it did not; Automatic stops at a sign-in refusal, and the preferred target's failure says the most. */
 async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   targets: readonly T[],
   signal: AbortSignal,
-  verify: (target: T, signal: AbortSignal) => Promise<P>,
+  passed: string | undefined,
+  verify: (target: T, signal: AbortSignal, fallback: string | undefined) => Promise<P>,
 ): Promise<P> {
   let failure: unknown;
   let retryable = false;
@@ -313,8 +327,14 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
     // Sockets add their establishment to the HTTP/3 bootstrap's wall time; each inner bound keeps its margin.
     const sockets = target.transport === "fetch-stream" ? 0 : ESTABLISH_MS + ESTABLISH_MARGIN_MS;
     const budgetMs = H3_DEADLINE_MS + ESTABLISH_MARGIN_MS + sockets;
+    const fallback =
+      failure === undefined
+        ? passed
+        : failure instanceof CheckError
+          ? failure.message
+          : CHECK_FAILED;
     try {
-      return await withinBudget(signal, budgetMs, (bounded) => verify(target, bounded));
+      return await withinBudget(signal, budgetMs, (bounded) => verify(target, bounded, fallback));
     } catch (error) {
       signal.throwIfAborted();
       if (signsIn(error)) throw error;
@@ -337,11 +357,12 @@ export async function checkThroughput(
 ): Promise<ThroughputPath> {
   const targets = targetsFor(context, discovery, "throughput", selection);
   const verifiedFor = { selection: selectionText(selection), head: targets[0]!.id };
-  return firstVerified(targets, signal, async (target, bounded) => ({
+  const passed = passedOver(context, discovery, "throughput", selection);
+  return firstVerified(targets, signal, passed, async (target, bounded, fallback) => ({
     ...(await verifyThroughput(context, discovery, target, bounded)),
     generation: discovery.generation,
     verifiedAt: context.now(),
-    verifiedFor,
+    verifiedFor: { ...verifiedFor, fallback },
   }));
 }
 
@@ -433,6 +454,8 @@ async function verifySession(
     const chunk = await carrier?.getReader().read();
     if (!chunk?.value?.byteLength) throw new Error("the carrier delivered no bytes");
   } catch (cause) {
+    // Chrome counts a dial abandoned before it opened, and so does the page.
+    if (session && !established) handshakes.failed();
     signal.throwIfAborted();
     const message = established
       ? "WebTransport session carried no bytes"
@@ -461,7 +484,8 @@ export async function checkLatency(
 ): Promise<{ path: LatencyPath; bus: CheckedBus }> {
   const targets = targetsFor(context, discovery, "latency", selection);
   const verifiedFor = { selection: selectionText(selection), head: targets[0]!.id };
-  return firstVerified(targets, signal, async (target, bounded) => {
+  const passed = passedOver(context, discovery, "latency", selection);
+  return firstVerified(targets, signal, passed, async (target, bounded, fallback) => {
     // Either failing ends the other at once.
     const both = new AbortController();
     const linked = AbortSignal.any([bounded, both.signal]);
@@ -492,7 +516,7 @@ export async function checkLatency(
         rttMs,
         generation: discovery.generation,
         verifiedAt: context.now(),
-        verifiedFor,
+        verifiedFor: { ...verifiedFor, fallback },
       };
       return { path, bus };
     } catch (error) {

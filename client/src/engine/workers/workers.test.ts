@@ -317,15 +317,15 @@ test("a session's stop finalizes its upload id, then acknowledges on the termina
     expect(deletes).toEqual([
       [feed, { ...RECIPE, method: "DELETE", cache: "no-store", signal: expect.any(AbortSignal) }],
     ]);
-    expect(session.types()).toEqual(["record", "record"]);
+    expect(session.types()).toEqual(["handshake", "record", "record"]);
     if (terminal) records.push('{"type":"complete","bytes":12,"nanos":6}\n');
     else {
       await elapse(995);
-      expect(session.types()).toEqual(["record", "record"]);
+      expect(session.types()).toEqual(["handshake", "record", "record"]);
       await elapse(5);
     }
     await elapse(0);
-    expect(session.types().slice(2)).toEqual(terminal ? ["record", "stopped"] : ["stopped"]);
+    expect(session.types().slice(3)).toEqual(terminal ? ["record", "stopped"] : ["stopped"]);
   }
 });
 
@@ -444,18 +444,20 @@ test("a session whose streams broke waits for its close: a revocation asks for s
   await elapse(0);
   FakeWebTransport.dialed.at(-1)!.reset();
   await elapse(245);
-  expect(session.posted).toHaveLength(1);
+  expect(session.posted).toHaveLength(3);
   await elapse(5);
   expect(session.posted).toEqual([
+    { type: "handshake", opened: true },
     {
       type: "ended",
       ending: { reason: "sign-in-required", retry: false, detail: "webtransport session revoked" },
     },
+    { type: "handshake", opened: true },
     { type: "broken", detail: "Error: stream reset" },
   ]);
 });
 
-test("a session's refused dial spends its ticket, and one that lapsed unanswered reuses it", async () => {
+test("a session's refused dial spends its ticket, one that lapsed unanswered reuses it, and both report a failed handshake", async () => {
   let minted = 0;
   const session = await boot<SessionCommand>("./session.ts", {
     WebTransport: FakeWebTransport,
@@ -482,7 +484,9 @@ test("a session's refused dial spends its ticket, and one that lapsed unanswered
     "t2",
   ]);
   expect(session.posted).toEqual([
+    { type: "handshake", opened: false },
     { type: "broken", detail: "webtransport session closed" },
+    { type: "handshake", opened: false },
     {
       type: "ended",
       ending: { reason: "timeout", retry: true, detail: "webtransport session did not establish" },
@@ -521,7 +525,7 @@ const bus = (transport: "websocket" | "webtransport", ticket: boolean): ProbeCom
   maxInFlight: 2,
 });
 
-test("a WebSocket dial past its budget stays, reported as an outage until it answers; a refused one spends its ticket", async () => {
+test("a WebSocket dial past its budget stays, reported as an outage until it answers; a refused one spends its ticket and waits for the owner", async () => {
   let minted = 0;
   const probe = await boot<ProbeCommand>("./probe.ts", {
     WebSocket: FakeWebSocket,
@@ -535,15 +539,31 @@ test("a WebSocket dial past its budget stays, reported as an outage until it ans
   FakeWebSocket.opened.at(-1)!.onopen!();
   await elapse(0);
   expect(probe.types()).toEqual(["stalled", "ready", "resumed"]);
-  // A refused upgrade presented its ticket, so the server spent it whatever it answered.
+  // A refused upgrade presented its ticket, so the server spent it whatever it answered; only the owner redials.
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1006, reason: "" });
-  await elapse(100);
+  await elapse(5_000);
+  expect(FakeWebSocket.opened).toHaveLength(1);
+  probe.send({ type: "dial" });
+  await elapse(0);
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1008, reason: "authentication required" });
   expect(FakeWebSocket.opened.map(({ url }) => new URL(url).searchParams.get("token"))).toEqual([
     "t1",
     "t2",
   ]);
   expect(probe.types().slice(3)).toEqual(["stalled", "sign-in"]);
+});
+
+test("an owner's dial during a lapsed WebSocket dial follows that dial's end", async () => {
+  const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
+  probe.send(bus("websocket", false));
+  await elapse(3_500);
+  expect(probe.types()).toEqual(["stalled"]);
+  probe.send({ type: "dial" });
+  await elapse(0);
+  expect(FakeWebSocket.opened).toHaveLength(1);
+  FakeWebSocket.opened.at(-1)!.onclose!({ code: 1006, reason: "" });
+  await elapse(0);
+  expect(FakeWebSocket.opened).toHaveLength(2);
 });
 
 test("a WebTransport bus whose datagrams failed waits for its close: a revocation asks for sign-in", async () => {
@@ -557,5 +577,5 @@ test("a WebTransport bus whose datagrams failed waits for its close: a revocatio
   await elapse(20);
   transport.end(REVOKED);
   await elapse(0);
-  expect(probe.types()).toEqual(["sign-in"]);
+  expect(probe.types()).toEqual(["handshake", "sign-in"]);
 });

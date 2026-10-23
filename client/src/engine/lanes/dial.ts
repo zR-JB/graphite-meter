@@ -3,9 +3,10 @@ import { DecodeError } from "../../lib/decode";
 import { readJSON, release, socketTicket } from "../../protocol/documents";
 import type { EndReport } from "../../protocol/messages";
 import type { TicketRecipe } from "../types";
-import { ESTABLISH_MS, refused, RESTART_MS } from "./endings";
+import { ESTABLISH_MS, refused, RESTART_CAP_MS } from "./endings";
 
-const REUSE_MS = 2 * ESTABLISH_MS + RESTART_MS;
+/** A lapsed dial, the pause and the HTTP proof before its redial. */
+const REUSE_MS = 3 * ESTABLISH_MS + RESTART_CAP_MS;
 
 type Ticket = { type: "token"; token: string } | EndReport;
 

@@ -16,16 +16,24 @@ const decoder = new TextDecoder();
 let prober: Prober;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let connection: AbortController | null = null;
+/** The owner asked to dial while a lapsed dial still waits for the browser's verdict, so the dial follows its end. */
+let queued = false;
 let send: Send | null = null;
+
+let command: Start;
 
 self.onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
   if (data.type === "start") start(data);
-  else if (data.type === "measure") prober.measure();
+  else if (data.type === "dial") {
+    if (connection) queued = true;
+    else void dial(command);
+  } else if (data.type === "measure") prober.measure();
   else if (data.type === "pace") prober.pace(data.intervalMs, data.maxInFlight);
   else prober.stop();
 };
 
-function start(command: Start): void {
+function start(started: Start): void {
+  command = started;
   const clock = {
     origin: performance.timeOrigin,
     now: () => performance.now(),
@@ -59,8 +67,12 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
     if (transport === "websocket" || !expired.aborted) tickets.spent(token);
     own.abort();
     if (connection === own) connection = send = null;
-    if (detail === null) prober.signIn();
-    else prober.closed(detail);
+    if (detail === null) return prober.signIn();
+    prober.closed(detail);
+    if (queued && !connection) {
+      queued = false;
+      void dial(command);
+    }
   };
   if (ticket) {
     const minted = await tickets.take(ticket, budget);
@@ -78,6 +90,7 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
   }
   const opened = (write: Send) => {
     if (own.signal.aborted) return;
+    queued = false;
     tickets.spent(token);
     send = write;
     prober.opened();
@@ -124,6 +137,15 @@ function session(
   opened: (write: Send) => void,
 ): void {
   const wt = new WebTransport(url, { congestionControl: "low-latency" });
+  let established = false;
+  let settled = false;
+  // A dial that ends before it opened failed its handshake, at its budget or hung up too, as Chrome counts it.
+  const ended: End = (detail) => {
+    if (!established && !settled)
+      postMessage({ type: "handshake", opened: false } satisfies ProbeReport);
+    settled = true;
+    end(detail);
+  };
   let grace: ReturnType<typeof setTimeout> | undefined;
   closed.addEventListener("abort", () => {
     clearTimeout(grace);
@@ -132,17 +154,17 @@ function session(
     } catch {}
   });
   wt.closed.then(
-    ({ closeCode }) => end(closeCode === REVOKED.session ? null : "webtransport closed"),
-    (error) => end(String(error)),
+    ({ closeCode }) => ended(closeCode === REVOKED.session ? null : "webtransport closed"),
+    (error) => ended(String(error)),
   );
   // Failing datagrams may be the session closing, whose code then names the ending.
   const broke = (detail: string) => void (grace ??= setTimeout(() => end(detail), CLOSE_GRACE_MS));
-  let established = false;
   void (async () => {
     // A black-holed handshake can leave `ready` and `closed` pending, so the budget ends the dial.
     await abortable(wt.ready, budget);
     if (closed.aborted) return;
     established = true;
+    postMessage({ type: "handshake", opened: true } satisfies ProbeReport);
     const writer = wt.datagrams.writable.getWriter();
     opened((text) => writer.write(encoder.encode(text)));
     const reader = wt.datagrams.readable.getReader();
@@ -154,6 +176,6 @@ function session(
       prober.frame(decoder.decode(value), at);
     }
   })().catch((error) =>
-    established ? broke(String(error)) : end("webtransport did not establish"),
+    established ? broke(String(error)) : ended("webtransport did not establish"),
   );
 }

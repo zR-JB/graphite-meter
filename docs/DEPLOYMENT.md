@@ -394,6 +394,7 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 | ------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | Another device cannot open the page        | Use the server IP, not `localhost`; publish and allow TCP 7246.                             |
 | WebTransport is unavailable                | Check for an HTTPS page, a trusted certificate, browser support, an advertised HTTP/3 origin and TCP and UDP reachability. |
+| WebTransport failed 4 times on this page   | Its handshakes failed or timed out, often UDP that a firewall drops; fix that, then reload the page. |
 | An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.          |
 | A local peer fails only from a hosted page | Check local-network permission and HTTPS; see the [server catalog](#server-catalog).        |
 | A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the terminal client accepts literals.     |

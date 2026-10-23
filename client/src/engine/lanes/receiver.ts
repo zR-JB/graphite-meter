@@ -6,7 +6,7 @@ import { checkpoint as counters } from "../../protocol/progress";
 import { ROUTES } from "../../protocol/routes";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
 import { Tickets, withToken } from "./dial";
-import { Backoff, lost, refusal, refused, REVOKED } from "./endings";
+import { Backoff, lost, refusal, refused, REVOKED, socketBound } from "./endings";
 import { FINAL_GRACE_MS, parse, readRecords } from "./records";
 import { abortable, delay } from "../run/clock";
 
@@ -294,14 +294,20 @@ export class Receiver {
         this.record(record);
         if (record.type === "complete") done(null);
       };
-      socket.onclose = ({ code, reason }) =>
-        done({
-          ending:
-            code === REVOKED.socket && reason === REVOKED.reason
-              ? SIGNED_OUT
-              : lost("progress socket closed"),
-          broken: true,
-        });
+      socket.onclose = ({ code, reason }) => {
+        const bound = socketBound(code, "progress socket");
+        done(
+          bound
+            ? { ending: bound, broken: false }
+            : {
+                ending:
+                  code === REVOKED.socket && reason === REVOKED.reason
+                    ? SIGNED_OUT
+                    : lost("progress socket closed"),
+                broken: true,
+              },
+        );
+      };
     });
   }
 

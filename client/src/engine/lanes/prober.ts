@@ -7,8 +7,6 @@ import type { ProbeOutcome } from "../types";
 
 const FLUSH_MS = 50;
 const BATCH_MAX = 128;
-const RECONNECT_MIN_MS = 100;
-const RECONNECT_MAX_MS = 2_000;
 /** Evicted probes a late reply may still name: the only way the estimator learns a jump from fast to slow. */
 const GRAVEYARD_MAX = 64;
 const BACKUP_FLOOR_MS = 8;
@@ -23,7 +21,7 @@ interface ProberClock {
   disarm(): void;
 }
 
-/** The connection side: a dial is answered by opened(), closed() or signIn(), and may lapse() first. */
+/** The connection side: a dial is answered by opened(), closed() or signIn(), and may lapse() first; only the owner dials again. */
 interface ProberIO {
   dial(): void;
   /** Sends on the open connection; throws or rejects when the browser could not send. */
@@ -58,8 +56,6 @@ export class Prober {
   #backupAt = Infinity;
   #outbox: ProbeOutcome[] = [];
   #flushAt = Infinity;
-  #reconnectAt = Infinity;
-  #backoff = 0;
   #stalled = false;
   #replied = false;
   #measuring = false;
@@ -82,7 +78,6 @@ export class Prober {
   opened(): void {
     if (this.#state !== "connecting") return;
     this.#state = "open";
-    this.#backoff = 0;
     this.#replied = false;
     // Every connection probes at once.
     this.#sentAt = -Infinity;
@@ -101,8 +96,6 @@ export class Prober {
     // Once per outage, until replies flow again.
     if (!this.#stalled) this.io.post({ type: "stalled", detail });
     this.#stalled = true;
-    this.#backoff = Math.min(RECONNECT_MAX_MS, this.#backoff * 2 || RECONNECT_MIN_MS);
-    this.#reconnectAt = now + this.#backoff;
     this.#settle(now);
   }
 
@@ -191,10 +184,6 @@ export class Prober {
     const now = this.clock.now();
     // Probes in flight across a freeze get no verdict: their replies may wait unread, and their RTTs carry the freeze.
     if (now - due > GAP_MS) this.#interrupt();
-    if (now >= this.#reconnectAt) {
-      this.#reconnectAt = Infinity;
-      this.io.dial();
-    }
     this.#sweep(now);
     if (now >= this.#flushAt) this.#flush();
     if (this.#pace.intervalMs !== null) this.#step(now, false);
@@ -347,7 +336,7 @@ export class Prober {
         drainAt = Infinity;
       }
     }
-    let at = Math.min(this.#flushAt, this.#reconnectAt, drainAt);
+    let at = Math.min(this.#flushAt, drainAt);
     for (const probe of this.#pending.values()) at = Math.min(at, probe.deadline);
     const { intervalMs, maxInFlight } = this.#pace;
     // A backup due while the window is full puts the chain to sleep; a full cadence waits for a free slot.

@@ -77,7 +77,7 @@ const RAMP_MS = 100;
 const SILENCE_MS = 1_500;
 /** A receiver that sends no record at all is given longer, as its feed may lag. */
 const RECEIVER_SILENCE_MS = 4_000;
-/** Two failed reconnects (3 s establishment and 0.5 s margin each) and their 300 ms backoff. */
+/** The one redial after a stall: its HTTP proof and its establishment, 3 s each, and their margins. */
 const LATENCY_RECOVERY_MS = 7_300;
 
 /** The test settings a run follows, with the warmup already adapted to the measured RTT. */
