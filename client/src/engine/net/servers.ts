@@ -530,7 +530,7 @@ export function createServers(env: ServersEnv): Servers {
         continue;
       }
       const view = connection.view.peek();
-      const reason = view.readiness === "sign-in" ? "sign-in-required" : "preparation-failed";
+      const reason = view.readiness === "sign-in" ? "sign-in-required" : "path-failed";
       // Evidence lost while the checks ran, as to a network change, leaves no message of its own.
       dropped.push({ server: view.server, reason, message: view.message ?? CHECK_FAILED });
     }

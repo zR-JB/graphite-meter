@@ -17,7 +17,8 @@ fn each_endpoint_mounts_the_routes_of_its_listener() {
               /ws/progress /servers /upload/checkpoint";
     let h2 =
         "/probe /download /upload /upload/session /upload/progress /wt/session /upload/checkpoint";
-    let companion = "/probe /upload/session /upload/progress /wt/session /upload/checkpoint";
+    let companion =
+        "/probe /download /upload /upload/session /upload/progress /wt/session /upload/checkpoint";
     let quic = "/probe /download /upload /upload/session /upload/progress /wt/session /wt/download /wt/upload \
                 /wt/ping /upload/checkpoint";
     let expected = [ui, ui, h2, companion, quic];
@@ -148,7 +149,7 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
             ("timing-allow-origin", "*"),
             (
                 "access-control-expose-headers",
-                "X-Graphite-Upload-Refusal, Retry-After",
+                "Graphite-Meter-Refusal, Retry-After",
             ),
             ("access-control-allow-methods", "GET, POST, DELETE, OPTIONS"),
             ("access-control-allow-headers", "*"),
@@ -208,7 +209,7 @@ async fn head_answers_an_upload_feed_s_head_alike_on_every_listener() {
         )
         .await;
         assert_eq!(
-            header(&unknown, "x-graphite-upload-refusal"),
+            header(&unknown, "graphite-meter-refusal"),
             Some("invalid"),
             "{endpoint:?}"
         );

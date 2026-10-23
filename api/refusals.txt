@@ -1,0 +1,30 @@
+# Graphite Meter refusal pin, shared by the Rust workspace and the browser client.
+#
+# Format (one refusal per non-comment, non-blank line):
+#   <code> | <message> | <http status> | <failure reason>
+#
+#   code    = the key every implementation uses for the refusal
+#   message = the exact one-line text the server sends, byte for byte
+#   status  = the HTTP status the message is sent with
+#   reason  = the failurereasons.txt reason a client records when the refusal ends a server's stage
+#             (`invalid` first replaces the upload's receiver once per server and run)
+#
+# These strings are a wire contract, not internal diagnostics. Each refusal here says why in two shapes that
+# stay in step:
+#   HTTP: the message is the text body and the code is in Graphite-Meter-Refusal, which CORS exposes.
+#   WT:   an upload's progress stream has no status line, so it carries {"type":"error","code":"...",
+#         "message":"..."}, and so does an upload feed's WebSocket.
+# A refused WebSocket upgrade or WebTransport CONNECT carries the same answer, though browsers hide it from pages.
+# Every refusal test loads THIS file as its fixture:
+#   Rust: rust/proto/tests/codes.rs (proto::refusal: code, text, status and reason)
+#   TS:   client/src/engine/lanes/endings.test.ts (the ending each refusal gives a lane or feed)
+#
+# An accepted request is not a refusal and carries no code, so it has no row.
+
+invalid | unknown upload id | 400 | protocol-error
+owner-mismatch | upload id belongs to another client | 403 | protocol-error
+idle | idle | 408 | timeout
+revoked | authentication required | 403 | sign-in-required
+client-limit | measurement limit for this client reached | 429 | client-limit
+server-busy | measurement capacity reached | 503 | server-busy
+wrong-protocol | this port serves transfers over HTTP/3, not TCP | 409 | path-failed

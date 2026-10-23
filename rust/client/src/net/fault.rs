@@ -5,7 +5,7 @@ use graphite_meter_proto::{
     lane::LaneEnding,
     origin::Origin,
     reason::FailureReason,
-    refusal::{SIGN_IN_HEADER, UPLOAD_REFUSAL_HEADER, UploadRefusal},
+    refusal::{REFUSAL_HEADER, Refusal, SIGN_IN_HEADER},
     route::Route,
     text,
 };
@@ -25,8 +25,8 @@ pub enum Fault {
         from: Route,
         retry_after: Option<Duration>,
     },
-    /// The server refused an upload ID for good.
-    Refused(UploadRefusal),
+    /// The server refused an upload ID or a route for good.
+    Refused(Refusal),
     Ended(LaneEnding),
     SignIn(Origin),
     /// The peer broke the protocol or answered what this client refuses.
@@ -44,7 +44,7 @@ impl Fault {
     pub fn reason(&self) -> FailureReason {
         match self {
             Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_)) => {
-                FailureReason::PreparationFailed
+                FailureReason::PathFailed
             }
             Self::Connect(_)
             | Self::Lost
@@ -53,6 +53,9 @@ impl Fault {
             }
             Self::SignIn(_) | Self::Ended(LaneEnding::Revoked) => FailureReason::SignInRequired,
             Self::TimedOut(_) | Self::Ended(_) => FailureReason::Timeout,
+            Self::Status { status, .. } if *status == StatusCode::TOO_MANY_REQUESTS => {
+                FailureReason::ClientLimit
+            }
             Self::Status { status, .. } if busy(*status) => FailureReason::ServerBusy,
             Self::Status { .. } | Self::Malformed(_) => FailureReason::ProtocolError,
             Self::Refused(refusal) => refusal.failure_reason(),
@@ -106,9 +109,7 @@ impl Fault {
             .and_then(|value| value.parse().ok())
             .map(|seconds: u32| Duration::from_secs(seconds.into()));
         Some(
-            match header(UPLOAD_REFUSAL_HEADER)
-                .and_then(|name| UploadRefusal::find_by(UploadRefusal::name, name))
-            {
+            match header(REFUSAL_HEADER).and_then(|name| Refusal::find_by(Refusal::code, name)) {
                 Some(refusal) => Self::refusal(refusal, from, retry_after, issuer),
                 None => Self::Status {
                     status,
@@ -119,23 +120,21 @@ impl Fault {
         )
     }
 
-    /// The fault an upload refusal in an answer to `from` or a progress record means; sign-in is for `issuer`'s server.
+    /// The fault a refusal in an answer to `from` or a progress record means; sign-in is for `issuer`'s server.
     pub(super) fn refusal(
-        refusal: UploadRefusal,
+        refusal: Refusal,
         from: Route,
         retry_after: Option<Duration>,
         issuer: impl FnOnce() -> Origin,
     ) -> Self {
-        let busy = |status| Self::Status {
-            status,
-            from,
-            retry_after,
-        };
         match refusal {
-            UploadRefusal::Idle => Self::Ended(LaneEnding::Idle),
-            UploadRefusal::Revoked => Self::SignIn(issuer()),
-            UploadRefusal::GlobalFull => busy(StatusCode::SERVICE_UNAVAILABLE),
-            UploadRefusal::ClientFull => busy(StatusCode::TOO_MANY_REQUESTS),
+            Refusal::Idle => Self::Ended(LaneEnding::Idle),
+            Refusal::Revoked => Self::SignIn(issuer()),
+            Refusal::ServerBusy | Refusal::ClientLimit => Self::Status {
+                status: refusal.status(),
+                from,
+                retry_after,
+            },
             refusal => Self::Refused(refusal),
         }
     }
@@ -260,7 +259,7 @@ mod tests {
     fn answers_map_to_faults_with_their_reason_class_and_text() {
         use FailureReason::*;
         let busy = |seconds| Class::Busy(Duration::from_secs(seconds));
-        const REFUSAL: &str = "x-graphite-upload-refusal";
+        const REFUSAL: &str = "graphite-meter-refusal";
         type Row = (
             u16,
             &'static [(&'static str, &'static str)],
@@ -270,7 +269,7 @@ mod tests {
         );
         const DATE: [(&str, &str); 1] = [("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")];
         const AUTH: [(&str, &str); 1] = [("graphite-meter-auth", "required")];
-        const FULL: [(&str, &str); 2] = [(REFUSAL, "clientFull"), ("retry-after", "1")];
+        const FULL: [(&str, &str); 2] = [(REFUSAL, "client-limit"), ("retry-after", "1")];
         let mismatch = "upload id belongs to another client (HTTP 403)";
         let rows: &[Row] = &[
             (
@@ -283,14 +282,14 @@ mod tests {
             (
                 429,
                 &[("retry-after", "3")],
-                ServerBusy,
+                ClientLimit,
                 busy(3),
                 "HTTP 429 from upload session",
             ),
             (
                 429,
                 &DATE,
-                ServerBusy,
+                ClientLimit,
                 busy(0),
                 "HTTP 429 from upload session",
             ),
@@ -332,7 +331,7 @@ mod tests {
             ),
             (
                 503,
-                &[(REFUSAL, "globalFull")],
+                &[(REFUSAL, "server-busy")],
                 ServerBusy,
                 busy(0),
                 "HTTP 503 from upload session",
@@ -340,7 +339,7 @@ mod tests {
             (
                 400,
                 &FULL,
-                ServerBusy,
+                ClientLimit,
                 busy(1),
                 "HTTP 429 from upload session",
             ),
@@ -353,10 +352,17 @@ mod tests {
             ),
             (
                 403,
-                &[(REFUSAL, "ownerMismatch")],
+                &[(REFUSAL, "owner-mismatch")],
                 ProtocolError,
                 Class::Final,
                 mismatch,
+            ),
+            (
+                409,
+                &[(REFUSAL, "wrong-protocol")],
+                PathFailed,
+                Class::Final,
+                "this port serves transfers over HTTP/3, not TCP (HTTP 409)",
             ),
         ];
         for (status, headers, reason, class, text) in rows {

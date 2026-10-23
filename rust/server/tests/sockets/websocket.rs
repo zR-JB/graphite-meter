@@ -125,7 +125,7 @@ async fn a_progress_socket_at_capacity_still_upgrades_to_say_so() {
     server.until_active(1).await;
     let mut socket = feed(&server, &id).await;
     assert!(
-        matches!(record(&mut socket).await, Record::Error { code, .. } if code == "clientFull")
+        matches!(record(&mut socket).await, Record::Error { code, .. } if code == "client-limit")
     );
     assert_eq!(closed(&mut socket).await.0, u16::from(CloseCode::Normal));
 }

@@ -150,6 +150,6 @@ async fn an_upload_session_needs_a_grant_and_the_upload_s_owner() {
     let foreign = session(&elsewhere, &path, Some(&other)).await.unwrap();
     assert_eq!(
         refused(Feed::of(&foreign).await.next().await),
-        "ownerMismatch"
+        "owner-mismatch"
     );
 }

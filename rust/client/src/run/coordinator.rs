@@ -179,7 +179,7 @@ fn refusal(
     unprepared: &[ServerFailure],
     plan: &[(Stage, Duration)],
 ) -> Option<Failure> {
-    let refused = |text: String| Failure::new(FailureReason::PreparationFailed, text);
+    let refused = |text: String| Failure::new(FailureReason::PathFailed, text);
     match unprepared.first() {
         _ if servers.iter().any(|server| server.path.is_ok()) => {
             select::fit(plan, servers).err().map(refused)

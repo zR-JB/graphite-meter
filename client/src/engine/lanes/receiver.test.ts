@@ -163,19 +163,19 @@ test("only advancing receiver observations pass, across a replacement feed socke
   feed.receiver.close();
 });
 
-test("feed refusals count as busy until the feed opens, an unknown id rotates, and a revoked socket asks for sign-in", async () => {
+test("feed refusals name their cause, an unknown id rotates, and a revoked socket asks for sign-in", async () => {
   const refused = (code: string, message: string) => (socket: FakeSocket) => {
     socket.open();
     socket.send(`{"type":"error","code":"${code}","message":"${message}"}`);
   };
   const feed = follow([
     (socket) => socket.end(),
-    refused("globalFull", "server full"),
-    refused("clientFull", "client full"),
+    refused("server-busy", "server full"),
+    refused("client-limit", "client full"),
     (socket) => {
       socket.open();
       socket.send('{"type":"ready"}');
-      refused("globalFull", "server full")(socket);
+      refused("server-busy", "server full")(socket);
     },
     refused("invalid", "unknown upload id"),
   ]);
@@ -191,12 +191,11 @@ test("feed refusals count as busy until the feed opens, an unknown id rotates, a
   ).toEqual([
     ["connection-lost", undefined, "progress socket closed", true, 300],
     ["server-busy", undefined, "server full", false, 300],
-    ["server-busy", undefined, "client full", false, 300],
+    ["client-limit", undefined, "client full", false, 300],
     // The run decides the one replacement.
     ["server-busy", undefined, "server full", false, 300],
     ["protocol-error", true, "unknown upload id", false, 300],
   ]);
-  expect(feed.receiver.busy).toBe(false);
   expect(FakeSocket.dialed.map(({ url }) => url)).toEqual(
     Array(5).fill("wss://peer.example/ws/progress?id=u1"),
   );
@@ -254,7 +253,7 @@ test("a feed socket silent for 1.5 s reconnects, while heartbeats keep a quiet o
   }
 });
 
-test("an HTTP feed reads split records until its terminal one, backs off refusals as busy, reopens a closed or broken feed, and asks for sign-in", async () => {
+test("an HTTP feed reads split records until its terminal one, backs off refusals, reopens a closed or broken feed, and asks for sign-in", async () => {
   const feed = follow([], {
     route: "http",
     answers: [
@@ -264,7 +263,7 @@ test("an HTTP feed reads split records until its terminal one, backs off refusal
       () =>
         new Response("refused", {
           status: 503,
-          headers: { "X-Graphite-Upload-Refusal": "globalFull", "Retry-After": "1" },
+          headers: { "Graphite-Meter-Refusal": "server-busy", "Retry-After": "1" },
         }),
       ({ headers }) => {
         expect(headers).toEqual({ accept: "application/x-ndjson" });

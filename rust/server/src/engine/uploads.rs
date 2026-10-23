@@ -3,12 +3,12 @@
 use super::{Meter, ProgressFeed, Transfer, UploadSink};
 use crate::{
     lane::Lane,
-    limits::{Hold, Quota, Refusal},
+    limits::{Full, Hold, Quota},
     lock,
     peer::{ClientKey, ClientKeys},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use graphite_meter_proto::{refusal::UploadRefusal, upload::Counters};
+use graphite_meter_proto::{refusal::Refusal, upload::Counters};
 use ring::hmac;
 use std::{
     collections::HashMap,
@@ -159,10 +159,10 @@ impl Aggregate {
         self.changed.notify_waiters();
     }
 
-    fn join(&self) -> Result<(), UploadRefusal> {
+    fn join(&self) -> Result<(), Refusal> {
         let mut life = self.life();
         if life.phase != Phase::Open {
-            return Err(UploadRefusal::Invalid);
+            return Err(Refusal::Invalid);
         }
         life.lanes += 1;
         life.touched = Instant::now();
@@ -259,7 +259,7 @@ impl Uploads {
         owner: Option<&ClientKeys>,
         lane: Lane,
         transfer: Option<Arc<Transfer>>,
-    ) -> Result<UploadSink, UploadRefusal> {
+    ) -> Result<UploadSink, Refusal> {
         let aggregate = self.reach(id, owner, Reach::Join)?;
         Ok(UploadSink::new(aggregate, lane, transfer))
     }
@@ -268,11 +268,7 @@ impl Uploads {
         &self.0.meter
     }
 
-    pub fn subscribe(
-        &self,
-        id: &str,
-        owner: Option<&ClientKeys>,
-    ) -> Result<ProgressFeed, UploadRefusal> {
+    pub fn subscribe(&self, id: &str, owner: Option<&ClientKeys>) -> Result<ProgressFeed, Refusal> {
         let aggregate = self.reach(id, owner, Reach::Watch)?;
         let reader = {
             let mut life = aggregate.life();
@@ -284,33 +280,29 @@ impl Uploads {
     }
 
     /// Whether `subscribe` would attach the feed, creating and replacing nothing.
-    pub fn watchable(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), UploadRefusal> {
+    pub fn watchable(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), Refusal> {
         let narrowest = owner
             .and_then(ClientKeys::narrowest)
-            .ok_or(UploadRefusal::OwnerMismatch)?;
-        let id = UploadId::parse(id).ok_or(UploadRefusal::Invalid)?;
+            .ok_or(Refusal::OwnerMismatch)?;
+        let id = UploadId::parse(id).ok_or(Refusal::Invalid)?;
         let entries = self.entries();
         match entries.live.get(&id) {
-            Some(entry) if entry.aggregate.owner != narrowest => Err(UploadRefusal::OwnerMismatch),
+            Some(entry) if entry.aggregate.owner != narrowest => Err(Refusal::OwnerMismatch),
             Some(_) => Ok(()),
             None if entries.tombstones.contains_key(&id) || !self.valid(&id) => {
-                Err(UploadRefusal::Invalid)
+                Err(Refusal::Invalid)
             }
             None => Ok(()),
         }
     }
 
     /// An existing aggregate's counters, without refreshing its retention.
-    pub fn checkpoint(
-        &self,
-        id: &str,
-        owner: Option<&ClientKeys>,
-    ) -> Result<Counters, UploadRefusal> {
+    pub fn checkpoint(&self, id: &str, owner: Option<&ClientKeys>) -> Result<Counters, Refusal> {
         Ok(self.reach(id, owner, Reach::Read)?.counters())
     }
 
     /// Finalizes an aggregate: it takes no new lane, and its feed completes once its lanes drain.
-    pub fn finish(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), UploadRefusal> {
+    pub fn finish(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), Refusal> {
         let aggregate = self.reach(id, owner, Reach::Read)?;
         let mut life = aggregate.life();
         if life.phase == Phase::Open {
@@ -333,16 +325,16 @@ impl Uploads {
         id: &str,
         owner: Option<&ClientKeys>,
         reach: Reach,
-    ) -> Result<Arc<Aggregate>, UploadRefusal> {
+    ) -> Result<Arc<Aggregate>, Refusal> {
         let narrowest = owner.and_then(ClientKeys::narrowest);
         if reach != Reach::Read && narrowest.is_none() {
-            return Err(UploadRefusal::OwnerMismatch);
+            return Err(Refusal::OwnerMismatch);
         }
-        let id = UploadId::parse(id).ok_or(UploadRefusal::Invalid)?;
+        let id = UploadId::parse(id).ok_or(Refusal::Invalid)?;
         let mut entries = self.entries();
         if let Some(entry) = entries.live.get(&id) {
             if narrowest.as_ref() != Some(&entry.aggregate.owner) {
-                return Err(UploadRefusal::OwnerMismatch);
+                return Err(Refusal::OwnerMismatch);
             }
             if reach == Reach::Join {
                 entry.aggregate.join()?;
@@ -350,10 +342,10 @@ impl Uploads {
             return Ok(entry.aggregate.clone());
         }
         let (Some(keys), Some(owner)) = (owner, narrowest) else {
-            return Err(UploadRefusal::Invalid);
+            return Err(Refusal::Invalid);
         };
         if reach == Reach::Read || entries.tombstones.contains_key(&id) || !self.valid(&id) {
-            return Err(UploadRefusal::Invalid);
+            return Err(Refusal::Invalid);
         }
         let capacity = self.capacity(&mut entries, keys)?;
         let aggregate = Arc::new(Aggregate {
@@ -379,14 +371,12 @@ impl Uploads {
     }
 
     /// A share of the capacity; at the limit an empty aggregate makes room.
-    fn capacity(&self, entries: &mut Entries, keys: &ClientKeys) -> Result<Hold, UploadRefusal> {
+    fn capacity(&self, entries: &mut Entries, keys: &ClientKeys) -> Result<Hold, Refusal> {
         match self.0.capacity.acquire(keys, 1) {
-            Err(Refusal::Total) if entries.displace(Instant::now()) => self
-                .0
-                .capacity
-                .acquire(keys, 1)
-                .map_err(UploadRefusal::from),
-            result => result.map_err(UploadRefusal::from),
+            Err(Full::Total) if entries.displace(Instant::now()) => {
+                self.0.capacity.acquire(keys, 1).map_err(Refusal::from)
+            }
+            result => result.map_err(Refusal::from),
         }
     }
 
@@ -416,12 +406,3 @@ impl Uploads {
 #[cfg(test)]
 #[path = "uploads_tests.rs"]
 mod tests;
-
-impl From<Refusal> for UploadRefusal {
-    fn from(refusal: Refusal) -> Self {
-        match refusal {
-            Refusal::Client => Self::ClientFull,
-            Refusal::Total => Self::GlobalFull,
-        }
-    }
-}

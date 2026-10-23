@@ -1,6 +1,6 @@
 //! Upload progress records and receiver counters (`api/upload.md`).
 
-use crate::{json, refusal::UploadRefusal, text, token};
+use crate::{json, refusal::Refusal, text, token};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 /// The largest counter both clients represent exactly.
@@ -136,10 +136,10 @@ fn some_counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64
     counter(deserializer).map(Some)
 }
 
-impl From<UploadRefusal> for Record {
-    fn from(refusal: UploadRefusal) -> Self {
+impl From<Refusal> for Record {
+    fn from(refusal: Refusal) -> Self {
         Self::Error {
-            code: refusal.name().into(),
+            code: refusal.code().into(),
             message: refusal.message().into(),
         }
     }

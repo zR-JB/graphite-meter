@@ -155,29 +155,44 @@ test("readiness waits for the gating lanes; a lane's failure keeps its reason; o
   await elapse(7_000);
   expect(lapsed.at).toBe(3_500);
   expect(lapsed.error).toMatchObject({
-    message: "Primed measurement connections did not become ready",
+    reason: "path-failed",
+    message: "Connections did not become ready within 3.5 s",
   });
 });
 
-test("a lane refused as busy is asked again once, after 300 ms, and its second refusal fails the stage busy", async () => {
-  const busy = stage(DOWNLOAD);
-  const prepared = outcome(busy.resources.prepare(new AbortController().signal));
-  const [lane] = busy.lanes();
+test("a lane refused at its client limit is asked again once, after 300 ms, and its second refusal fails the stage so", async () => {
+  const limited = stage(DOWNLOAD);
+  const prepared = outcome(limited.resources.prepare(new AbortController().signal));
+  const [lane] = limited.lanes();
   const opened: number[] = [];
   for (let at = 0; at < 3_500; at += 5) {
     if (lane!.commands.length > opened.length) {
       opened.push(at);
       lane!.report({
         type: "ended",
-        ending: { reason: "server-busy", retry: true, detail: "HTTP 503" },
+        ending: { reason: "client-limit", retry: true, detail: "HTTP 429" },
       });
     }
     await elapse(5);
   }
   expect(opened).toEqual([0, 300]);
   expect(prepared.error).toMatchObject({
-    reason: "server-busy",
-    message: "down stream 0 failed: HTTP 503",
+    reason: "client-limit",
+    message: "down stream 0 failed: HTTP 429",
+  });
+});
+
+test("a lane that reached the HTTP/3 port over TCP fails the stage at once, without its reopen", async () => {
+  const fallen = stage(DOWNLOAD);
+  const prepared = outcome(fallen.resources.prepare(new AbortController().signal));
+  const [lane] = fallen.lanes();
+  const detail = "this port serves transfers over HTTP/3, not TCP";
+  lane!.report({ type: "ended", ending: { reason: "path-failed", retry: false, detail } });
+  await elapse(400);
+  expect(lane!.commands.filter(({ type }) => type === "download")).toHaveLength(1);
+  expect(prepared.error).toMatchObject({
+    reason: "path-failed",
+    message: `down stream 0 failed: ${detail}`,
   });
 });
 
@@ -359,7 +374,7 @@ test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", a
   }
 });
 
-test("a broken session redials once its server answered over HTTP; one that does not answer within 3 s fails the stage", async () => {
+test("a broken session redials once its server answered over HTTP; one that does not answer within 3 s, or whose redial does not open, fails the stage", async () => {
   for (const answering of [true, false]) {
     const session = stage(
       DOWNLOAD,
@@ -386,8 +401,47 @@ test("a broken session redials once its server answered over HTTP; one that does
             ],
           ],
     );
+    if (answering) {
+      worker.report({
+        type: "ended",
+        ending: {
+          reason: "path-failed",
+          retry: true,
+          detail: "webtransport session did not establish",
+        },
+      });
+      expect(session.events.filter(([type]) => type === "failed")).toEqual([
+        [
+          "failed",
+          "connection-lost",
+          "down stream 0 failed: webtransport session did not establish",
+        ],
+      ]);
+    }
     session.resources.discard();
   }
+});
+
+test("a session whose dial and redial do not open fails the stage's preparation as its path", async () => {
+  const session = stage(DOWNLOAD, {}, SESSION);
+  const prepared = outcome(session.resources.prepare(new AbortController().signal));
+  const worker = session.session();
+  const unopened = {
+    type: "ended",
+    ending: {
+      reason: "path-failed",
+      retry: true,
+      detail: "webtransport session did not establish",
+    },
+  } as const;
+  worker.report(unopened);
+  await elapse(300);
+  worker.report(unopened);
+  await elapse(0);
+  expect(prepared.error).toMatchObject({
+    reason: "path-failed",
+    message: "down stream 0 failed: webtransport session did not establish",
+  });
 });
 
 test("a session's fourth failed handshake in the page throttles WebTransport: its redial and a new bus fail with why, loaded latency alone", async () => {
@@ -402,7 +456,7 @@ test("a session's fourth failed handshake in the page throttles WebTransport: it
     await elapse(300);
     expect(worker.commands.filter(({ type }) => type === "download")).toHaveLength(1);
     expect(session.events.filter(([type]) => type === "failed")).toEqual([
-      ["failed", "preparation-failed", THROTTLED],
+      ["failed", "path-failed", THROTTLED],
     ]);
     const latency = { target: { ...SESSION, transport: "webtransport" } } as unknown as LatencyPath;
     const loaded = stage(
@@ -426,7 +480,7 @@ test("a session's fourth failed handshake in the page throttles WebTransport: it
     );
     const prepared = outcome(idle.resources.prepare(new AbortController().signal));
     await elapse(0);
-    expect(prepared.error).toMatchObject({ reason: "preparation-failed", message: THROTTLED });
+    expect(prepared.error).toMatchObject({ reason: "path-failed", message: THROTTLED });
     for (const each of [session, loaded, idle]) each.resources.discard();
   } finally {
     // The page's ledger lifts with time, for the tests after this one.

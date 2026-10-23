@@ -18,7 +18,7 @@ const CLOCK_EVERY = 16;
 const RECORD_MS = 50;
 const UNESTABLISHED: EndReport = {
   type: "ended",
-  ending: { reason: "timeout", retry: true, detail: "webtransport session did not establish" },
+  ending: { reason: "path-failed", retry: true, detail: "webtransport session did not establish" },
 };
 
 const post = (report: SessionReport) => postMessage(report);

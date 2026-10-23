@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn busy_answers_wait_300_ms_doubling_to_1200_or_retry_after_then_stand_as_server_busy() {
+    fn refused_answers_wait_300_ms_doubling_to_1200_or_retry_after_then_stand_as_a_client_limit() {
         let (start, mut retry) = (Instant::now(), Retry::default());
         let failed = |at| Attempt {
             started: at,
@@ -114,7 +114,7 @@ mod tests {
             at += ms(expected);
         }
         let standing = retry.after(busy(None), failed(at), at).unwrap_err();
-        assert_eq!(standing.reason(), FailureReason::ServerBusy);
+        assert_eq!(standing.reason(), FailureReason::ClientLimit);
         let mut retry = Retry::default();
         assert_eq!(
             retry.after(busy(Some(1)), failed(start), start).unwrap(),

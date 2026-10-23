@@ -223,8 +223,6 @@ export interface StageResources {
 
 export type OpenStage = (setup: StageSetup) => StageResources;
 
-export class ServerBusyError extends Error {}
-
 export function* causes(error: unknown): Generator<Error> {
   for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++)
     yield error;

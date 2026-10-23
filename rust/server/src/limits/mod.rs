@@ -4,7 +4,7 @@ mod budget;
 mod quota;
 
 pub use budget::{Budget, Lease, Pressure, Usage};
-pub use quota::{Hold, Quota, QuotaUsage, Refusal};
+pub use quota::{Full, Hold, Quota, QuotaUsage};
 
 use crate::{
     config::Limits,
@@ -63,8 +63,8 @@ impl Quotas {
     pub fn connection(&self, peer: IpAddr, keys: &ClientKeys) -> Option<Hold> {
         match self.connections.acquire(keys, 1) {
             Ok(hold) => return Some(hold),
-            Err(Refusal::Client) => {}
-            Err(Refusal::Total) => {
+            Err(Full::Client) => {}
+            Err(Full::Total) => {
                 TOTAL_REFUSALS.write(format_args!(
                     "connection from {peer} refused: GM_MAX_CONNECTIONS={} reached; raise it within \
                      GM_MAX_BUFFER_BYTES",
@@ -98,12 +98,12 @@ impl Quotas {
         self.connections.usage().active >= self.limits.connections.get() / 4
     }
 
-    pub fn operation(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
+    pub fn operation(&self, keys: &ClientKeys) -> Result<Hold, Full> {
         self.operations.acquire(keys, 1)
     }
 
     /// A WebTransport transfer session, which also takes a handler from the shared pool.
-    pub fn session(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
+    pub fn session(&self, keys: &ClientKeys) -> Result<Hold, Full> {
         self.sessions
             .acquire_within(keys, 1, Some(&self.operations))
     }

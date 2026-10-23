@@ -68,7 +68,7 @@ fn departed(b_measured: bool) -> (View, [ServerFailure; 2]) {
     let unprepared = ServerFailure {
         server: id("c"),
         scope: Scope::Server,
-        failure: Failure::new(FailureReason::PreparationFailed, "no path"),
+        failure: Failure::new(FailureReason::PathFailed, "no path"),
         at,
     };
     let events = [

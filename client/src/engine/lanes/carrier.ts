@@ -10,7 +10,7 @@ import type {
 import { workerScript } from "../../lib/trusted";
 import type { Ending } from "../types";
 import { delay, fromEpoch } from "../run/clock";
-import { Backoff, lost } from "./endings";
+import { lost, restartMs } from "./endings";
 import { handshakes } from "../net/webtransport";
 
 /** A stopping session gets this long to finalize and acknowledge. */
@@ -51,7 +51,8 @@ interface Lane {
   index: number;
   worker: Worker;
   delivered: boolean;
-  backoff: Backoff;
+  /** It delivered since the carrier opened, so a redial that does not open lost it rather than failing its path. */
+  proven: boolean;
   /** Download bytes of the current epoch passed on to the host. */
   counted: number;
   /** Bytes reported while the final flush awaits this lane's answer, which counts them itself. Null when none awaits. */
@@ -83,7 +84,7 @@ export class Carrier {
         index,
         worker: new Worker(workerScript(plan.worker), { type: "module" }),
         delivered: false,
-        backoff: new Backoff(),
+        proven: false,
         counted: 0,
         held: null,
         asked: [],
@@ -109,11 +110,6 @@ export class Carrier {
     let delivered = 0;
     for (const lane of this.#lanes) if (lane.delivered) delivered++;
     return delivered >= this.#plan.gating;
-  }
-
-  /** A lane refused as busy that has not delivered since explains why the carrier may not be ready. */
-  get busy(): boolean {
-    return this.#lanes.some((lane) => !lane.delivered && lane.backoff.busy);
   }
 
   /** Starts a new epoch at page time `at`: download bytes counted before it no longer count. */
@@ -244,23 +240,16 @@ export class Carrier {
   #delivered(lane: Lane): void {
     // A session that delivers has opened, whether or not its report came first.
     lane.dialing = false;
-    lane.backoff.reset();
     if (lane.delivered) return;
-    lane.delivered = true;
+    lane.delivered = lane.proven = true;
     this.#host.delivered();
   }
 
   async #ended(lane: Lane, ending: Ending, broken = false): Promise<void> {
     lane.delivered = false;
-    if (
-      await this.#host.ended(
-        lane.index,
-        ending,
-        broken,
-        lane.backoff.after(ending),
-        this.#done.signal,
-      )
-    )
+    if (lane.proven && ending.reason === "path-failed" && ending.retry)
+      ending = { ...ending, reason: "connection-lost" };
+    if (await this.#host.ended(lane.index, ending, broken, restartMs(ending), this.#done.signal))
       this.#open(lane);
   }
 }
