@@ -124,7 +124,6 @@ async function upload({
       const response = await fetch(url, {
         ...request,
         method: "POST",
-        cache: "no-store",
         body: body.slice(0, bytes),
       });
       // An unread echo pins the keep-alive connection the next POST needs; it is counted, never kept.

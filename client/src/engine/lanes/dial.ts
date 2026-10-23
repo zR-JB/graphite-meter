@@ -18,7 +18,7 @@ export class Tickets {
     if (held?.url === url && Date.now() < held.until) return { type: "token", token: held.token };
     this.#held = null;
     try {
-      const response = await fetch(url, { ...request, method: "POST", cache: "no-store", signal });
+      const response = await fetch(url, { ...request, method: "POST", signal });
       if (!response.ok) {
         release(response);
         return {
