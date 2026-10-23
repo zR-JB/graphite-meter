@@ -422,7 +422,9 @@ export class Run {
       this.#shown = now;
       for (const server of this.#servers) server.buckets.widen(now.end - now.start);
       if (stage) {
-        for (const seat of active(stage)) seat.resources.replanned();
+        // A preparing stage's clock holds, so its plan starts when it resumes.
+        if (stage.phase !== "preparing")
+          for (const seat of active(stage)) seat.resources.replanned();
         this.#evaluate(stage);
       }
     }

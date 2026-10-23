@@ -1345,6 +1345,34 @@ test("turning adaptive off mid-stage runs the stage to its planned end", async (
   expect((await h.result()).durationMs).toBeGreaterThanOrEqual(6_000);
 });
 
+test("a live change while a stage prepares replans it only once its clock runs", async () => {
+  let ready!: () => void;
+  const replans: number[] = [];
+  const h = setup(
+    [
+      {
+        id: "self",
+        prepare: () => new Promise<void>((resolve) => (ready = resolve)),
+        replanned: () => replans.push(h.clock.t),
+      },
+    ],
+    { download: true },
+    { downloadMs: 6_000 },
+  );
+  h.start();
+  await h.elapse(500);
+  h.run.reconfigure({
+    stages: h.plan.stages,
+    duration: { ...h.plan.duration, downloadMs: 8_000 },
+    adaptive: false,
+  });
+  await h.elapse(500);
+  expect(replans).toEqual([]);
+  ready();
+  await h.elapse(0);
+  expect(replans).toEqual([1_000]);
+});
+
 test("a page gap while measuring starts a new interval and forbids an early finish", async () => {
   const h = setup([{ id: "self" }], { download: true }, { downloadMs: 12_000 }, { adaptive: true });
   h.start();
