@@ -131,6 +131,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
+      - id: image
+        name: Name the runner image the package cache belongs to
+        run: printf 'version=%s-%s\n' "${ImageOS:?}" "${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+      - name: Restore the cross compilers' packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # A stalled cache download falls back to the mirror in a minute instead of ten.
+        env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
+        with:
+          path: ${{ runner.temp }}/apt-cross
+          key: apt-cross-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
       # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers, which install while
       # Rust sets up. A stalled mirror fails the step in minutes instead of holding the job to its limit.
       - id: cross-compilers
@@ -138,9 +148,7 @@ jobs:
         background: true
         timeout-minutes: 5
         run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev \
-            musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          scripts/ci/apt-cached.sh cross "$RUNNER_TEMP/apt-cross"
           read -r url sha256 < <(python3 scripts/ci/toolchains.py llvm-mingw)
           archive="$RUNNER_TEMP/llvm-mingw.tar.xz"
           curl -fsSL --retry 3 -o "$archive" "$url"
@@ -446,14 +454,22 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/browser.py --server image
+      - id: image
+        if: startsWith(matrix.group, 'network') && matrix.browser == 'firefox'
+        name: Name the runner image the package cache belongs to
+        run: printf 'version=%s-%s\n' "${ImageOS:?}" "${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+      - name: Restore certutil's packages
+        if: startsWith(matrix.group, 'network') && matrix.browser == 'firefox'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # A stalled cache download falls back to the mirror in a minute instead of ten.
+        env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
+        with:
+          path: ${{ runner.temp }}/apt-certutil
+          key: apt-certutil-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
       # The network group's Firefox trusts the run's CA through certutil.
       - name: Install certutil
         if: startsWith(matrix.group, 'network') && matrix.browser == 'firefox'
-        run: |
-          if ! command -v certutil; then
-            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
-            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends libnss3-tools
-          fi
+        run: command -v certutil || scripts/ci/apt-cached.sh certutil "$RUNNER_TEMP/apt-certutil"
       - name: Run the browser against one local fleet of the image's server
         env:
           GM_E2E_BROWSER: ${{ matrix.browser }}
