@@ -139,7 +139,12 @@ class Stage implements StageResources {
 
   replanned(): void {
     this.#planned = true;
-    this.#down?.ends(this.#bodiesEnd()!);
+    if (this.#timed) this.#down?.ends(this.#bodiesEnd()!);
+  }
+
+  get #timed(): boolean {
+    const { protocol } = this.#setup.server.throughput.fetch;
+    return protocol === "http2" || protocol === "http3";
   }
 
   /** Epoch ms download bodies end by, just past the planned end so the window's last bytes flow; null while the
@@ -315,8 +320,8 @@ class Stage implements StageResources {
               request: auth.request(url, "GET"),
               epoch,
               streams: count,
-              timed: fetch.protocol === "http2" || fetch.protocol === "http3",
-              until: this.#bodiesEnd(),
+              timed: this.#timed,
+              until: this.#timed ? this.#bodiesEnd() : null,
             };
           }),
       };
