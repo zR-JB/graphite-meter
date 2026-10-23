@@ -608,9 +608,17 @@ type TestOptions = {
   monitorDisplay?: boolean;
   timeout?: number;
   chrome?: boolean;
+  /** Why today's client or server fails it, naming the step that fixes it; the test must fail until then. */
+  failing?: string;
 };
 function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) {
-  bunTest.skipIf(!!options.chrome && browser !== "chrome")(
+  const register =
+    options.chrome && browser !== "chrome"
+      ? bunTest.skip
+      : options.failing && !process.env.GM_TEMP_SHOW
+        ? bunTest.failing
+        : bunTest;
+  register(
     name,
     async () => {
       const page = new Page(options);

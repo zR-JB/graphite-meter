@@ -133,11 +133,9 @@ export async function closeSettings(page: Page) {
   await page.evaluate(settled);
 }
 
-export async function ready(page: Page) {
+export async function ready(page: Page, timeout = 15_000) {
   const settings = await openSettings(page);
-  await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({ timeout });
   await closeSettings(page);
 }
 
@@ -188,7 +186,7 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
   return record!;
 }
 
-async function readLatest(schema: typeof HISTORY_DB) {
+export async function readLatest(schema: typeof HISTORY_DB) {
   const names = (await indexedDB.databases()).map((db) => db.name);
   if (!names.includes(schema.name)) return undefined;
   return new Promise<HistoryRecord | undefined>((resolve, reject) => {

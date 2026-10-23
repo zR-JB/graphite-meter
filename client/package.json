@@ -19,7 +19,7 @@
     "check": "bun check && bun test ./auth",
     "format": "biome format --write .",
     "lint": "biome ci --error-on-warnings . && bun auth/build.ts --check",
-    "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
+    "test:e2e": "bun test ./e2e --no-orphans --timeout=60000 --path-ignore-patterns=**/network/**",
     "e2e": "bun run scripts/e2e.ts"
   }
 }

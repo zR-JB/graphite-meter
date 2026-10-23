@@ -160,9 +160,19 @@ interface Bidi {
 
 // One Firefox per test process; each page is a user context of its own, with its own storage and cookies.
 let firefox: Promise<Bidi> | undefined;
+let stopFirefox: (() => Promise<void>) | undefined;
+
+/** Ends this process's browser, so the next page gets a new one without the old one's network state. */
+export async function freshBrowser() {
+  if (browser === "chrome") return removeProfiles();
+  const stopping = stopFirefox;
+  [firefox, stopFirefox] = [undefined, undefined];
+  await stopping?.();
+}
 function launchFirefox(): Promise<Bidi> {
   return (firefox ??= (async () => {
     const profile = mkdtempSync(join(tmpdir(), "gm-firefox-"));
+    const ca = process.env.GM_E2E_CA;
     // JSON loads as a plain document of its origin, as in Chrome, so a test can work on that origin from it.
     writeFileSync(
       join(profile, "user.js"),
@@ -177,9 +187,21 @@ function launchFirefox(): Promise<Bidi> {
         'user_pref("network.proxy.http_port", 9);',
         'user_pref("network.proxy.ssl", "127.0.0.1");',
         'user_pref("network.proxy.ssl_port", 9);',
+        ...(ca
+          ? ['user_pref("network.http.http3.disable_when_third_party_roots_found", false);']
+          : []),
         "",
       ].join("\n"),
     );
+    // Firefox speaks QUIC only to a root it trusts, so the network group's profile trusts the run's CA.
+    if (ca)
+      for (const args of [
+        ["-N", "--empty-password"],
+        ["-A", "-n", "graphite-meter-e2e", "-t", "C,,", "-i", ca],
+      ]) {
+        const certutil = Bun.spawnSync(["certutil", "-d", `sql:${profile}`, ...args]);
+        if (certutil.exitCode !== 0) throw new Error(`certutil ${args[0]}: ${certutil.stderr}`);
+      }
     const child = Bun.spawn(
       [
         process.env.GM_FIREFOX_PATH ?? "firefox",
@@ -191,12 +213,19 @@ function launchFirefox(): Promise<Bidi> {
       ],
       { stdout: "ignore", stderr: "pipe" },
     );
-    process.on("exit", () => {
+    const stop = () => {
       child.kill();
       try {
         rmSync(profile, { recursive: true, force: true });
       } catch {}
-    });
+    };
+    process.on("exit", stop);
+    stopFirefox = async () => {
+      process.off("exit", stop);
+      child.kill();
+      await child.exited;
+      stop();
+    };
     const reader = child.stderr.getReader();
     let banner = "";
     let endpoint: string | undefined;

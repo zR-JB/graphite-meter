@@ -382,7 +382,7 @@ jobs:
     needs: [plan, server]
     if: needs.plan.outputs.code == 'true'
     # The surface-reversal file runs its widths serially under CPU throttling, so it takes a Chrome runner of its own;
-    # tests that need the DevTools Protocol run in Chrome only.
+    # tests that need the DevTools Protocol run in Chrome only. The network group runs one test at a time.
     strategy:
       fail-fast: false
       matrix:
@@ -394,6 +394,12 @@ jobs:
           - {browser: firefox, group: heavy}
           - {browser: firefox, group: rest-1}
           - {browser: firefox, group: rest-2}
+          - {browser: chrome, group: network-1}
+          - {browser: chrome, group: network-2}
+          - {browser: chrome, group: network-3}
+          - {browser: firefox, group: network-1}
+          - {browser: firefox, group: network-2}
+          - {browser: firefox, group: network-3}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -440,6 +446,15 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/browser.py --server image
+      # A network namespace cannot load queueing modules itself; Firefox trusts the run's CA through certutil.
+      - name: Load the network group's queueing modules and certutil
+        if: startsWith(matrix.group, 'network')
+        run: |
+          sudo modprobe -a sch_netem sch_prio sch_ingress cls_u32 act_gact
+          if ! command -v certutil; then
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends libnss3-tools
+          fi
       - name: Run the browser against one local fleet of the image's server
         env:
           GM_E2E_BROWSER: ${{ matrix.browser }}
