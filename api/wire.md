@@ -5,8 +5,8 @@ This spec governs the message-based channels: the WebSocket latency bus (`/ws/pi
 datagram bus (`/wt/ping`), plus the WebTransport session routes, defined by their CONNECT URL (see [WebTransport
 routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also open a
 receiver-progress stream. The plain request/response HTTP endpoints (`/servers`, `/preflight`, `/probe`,
-`/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here:
-they use normal HTTP (query params, status codes, streaming bodies).
+`/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here, except
+where `/download` shares a query rule below: they use normal HTTP (query params, status codes, streaming bodies).
 
 The Rust server and terminal client and the TypeScript browser client share the conformance corpus
 `api/wire.testvectors.txt`.
@@ -89,6 +89,11 @@ is read as 1 and one above 16 as 16; a missing, non-numeric or negative `bytes` 
 enforces the stream ceiling from the receiving side: the server stops reading the 17th concurrent
 client stream with `STOP_SENDING` code 0, without an error frame, since a byte stream carries no
 channel to report one on.
+
+The plain `GET /download` also takes `ms=`, a positive whole number of milliseconds. Its body then ends at whichever
+comes first, `bytes` or that long after the server began it, without a `Content-Length` (HTTP/1.1 frames it chunked),
+so a lane ends on the server's clock and its connection stays reusable. HEAD and `bytes=0` answer no body either way.
+The browser client sends it over HTTP/2 and HTTP/3 only, as a proxy may re-chunk an HTTP/1.1 body without a length.
 
 `datagrams=` is presence-based: the bare `datagrams=` spelled above is the request, and so is
 any value the server cannot read. A spelling of zero or false (`0`, `false`, `off`, `no`, matched

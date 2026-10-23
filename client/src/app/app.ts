@@ -3,7 +3,7 @@ import { planStreams } from "../engine/net/streams";
 import { readPageConfig, createPageSession } from "../engine/net/page";
 import { createServers, stageLimit } from "../engine/net/servers";
 import { openProbeChannel } from "../engine/lanes/probes";
-import { openStage } from "../engine/lanes/stage";
+import { mintUpload, openStage } from "../engine/lanes/stage";
 import type { LatencyBucket } from "../engine/measure/buckets";
 import { adaptWarmup, totalMs } from "../engine/run/schedule";
 import { pageMs } from "../lib/frame";
@@ -109,6 +109,7 @@ export function createApp() {
     recheck: servers.recheck,
     finished: (finished) => (finished ? saver.offer(historyRecord(finished)) : saver.withdraw()),
     open: openStage,
+    mint: mintUpload,
     streams: (prepared, activity) =>
       new Map(
         [...planStreams(prepared, activity, preferences.config.peek().transferStreams)].map(

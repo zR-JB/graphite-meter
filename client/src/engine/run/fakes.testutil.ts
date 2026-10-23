@@ -68,6 +68,7 @@ export interface Peer {
   latency?: boolean;
   silent?(activity: Activity, measuredMs: number, dir: "down" | "up"): boolean;
   prepare?(activity: Activity, events: StageEvents): void | Promise<void>;
+  replanned?(): void;
   measure?(events: StageEvents, activity: Activity): void;
   finish?(events: StageEvents): void | Promise<void>;
   discard?(events: StageEvents, incomplete: boolean): void;
@@ -149,6 +150,9 @@ export function resources(
     async prepare() {
       calls.push(`begin:${tag}`);
       await peer.prepare?.(activity, events);
+    },
+    replanned() {
+      peer.replanned?.();
     },
     measure() {
       measuring = true;

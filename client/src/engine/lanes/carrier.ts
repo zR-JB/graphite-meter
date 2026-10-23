@@ -15,6 +15,8 @@ import { handshakes } from "../net/webtransport";
 
 /** A stopping session gets this long to finalize and acknowledge. */
 const STOP_GRACE_MS = 2_500;
+/** A stopping download lane gets this long for its body to end on the server's clock; past it the body is cut. */
+const DRAIN_MS = 1_000;
 /** A flush waits at most this long for its lanes' answers. */
 const FLUSH_MS = 250;
 /** Lanes open at most this far apart and within this spread, so their connections do not start in one burst. */
@@ -63,6 +65,8 @@ interface Lane {
   cut: boolean;
   /** A session's WebTransport dial is out, so ending the worker now abandons it, which Chrome counts as a failure. */
   dialing: boolean;
+  /** The lane acknowledged its stop, or ended while stopping. */
+  stopped: boolean;
 }
 
 export class Carrier {
@@ -90,16 +94,20 @@ export class Carrier {
         asked: [],
         cut: false,
         dialing: false,
+        stopped: false,
       };
       lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) =>
         this.#report(lane, data);
       // Our workers report every ending they can, so an error event means one cannot run at all.
-      lane.worker.onerror = ({ message }) =>
+      lane.worker.onerror = ({ message }) => {
+        // A worker that cannot run cannot acknowledge a stop either.
+        lane.stopped = true;
         void this.#ended(lane, {
           reason: "connection-lost",
           retry: false,
           detail: `worker failed: ${message}`,
         });
+      };
       this.#lanes.push(lane);
       if (index) void delay(index * stagger, this.#done.signal).then(() => this.#open(lane));
       else this.#open(lane);
@@ -110,6 +118,12 @@ export class Carrier {
     let delivered = 0;
     for (const lane of this.#lanes) if (lane.delivered) delivered++;
     return delivered >= this.#plan.gating;
+  }
+
+  /** Download bodies requested from now on end by epoch ms `until`. */
+  ends(until: number): void {
+    if (this.#plan.session) return;
+    for (const { worker } of this.#lanes) worker.postMessage({ type: "until", until });
   }
 
   /** Starts a new epoch at page time `at`: download bytes counted before it no longer count. */
@@ -175,14 +189,11 @@ export class Carrier {
     return all;
   }
 
-  /** A session finalizes and acknowledges within its grace. Fetch lanes end at once. */
+  /** A session finalizes, and download lanes let their bodies end, each acknowledging within its grace; then the workers end. */
   async stop(): Promise<void> {
     this.#done.abort();
-    const session = this.#plan.session && this.#lanes[0];
-    if (session) {
-      session.worker.postMessage({ type: "stop" } satisfies SessionCommand);
-      await delay(STOP_GRACE_MS, this.#acknowledged.signal);
-    }
+    for (const { worker } of this.#lanes) worker.postMessage({ type: "stop" });
+    await delay(this.#plan.session ? STOP_GRACE_MS : DRAIN_MS, this.#acknowledged.signal);
     this.release();
   }
 
@@ -219,7 +230,7 @@ export class Carrier {
         this.#delivered(lane);
         return this.#host.record(report.record);
       case "stopped":
-        return this.#acknowledged.abort();
+        return this.#stopped(lane);
       case "handshake":
         lane.dialing = false;
         return void (report.opened || handshakes.failed());
@@ -245,8 +256,15 @@ export class Carrier {
     this.#host.delivered();
   }
 
+  #stopped(lane: Lane): void {
+    lane.stopped = true;
+    if (this.#lanes.every(({ stopped }) => stopped)) this.#acknowledged.abort();
+  }
+
   async #ended(lane: Lane, ending: Ending, broken = false): Promise<void> {
     lane.delivered = false;
+    // A fetch lane ending while the carrier stops has nothing left to wait for; a session still finalizes.
+    if (this.#done.signal.aborted) return this.#plan.session ? undefined : this.#stopped(lane);
     if (lane.proven && ending.reason === "path-failed" && ending.retry)
       ending = { ...ending, reason: "connection-lost" };
     if (await this.#host.ended(lane.index, ending, broken, restartMs(ending), this.#done.signal))

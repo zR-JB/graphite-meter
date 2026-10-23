@@ -30,6 +30,7 @@ function setup(
     fits: (ms) => options.fits?.(ms) ?? true,
     recheck: () => {},
     finished: (finished) => offers.push(finished ? "offer" : "withdraw"),
+    mint: async () => "u",
     open: (stage) =>
       resources(peers.find(({ id }) => id === stage.server.server.id)!, stage, calls, clock),
     streams: (servers, activity) =>
