@@ -13,8 +13,10 @@ import {
   publicAuth,
   type Answer,
   ws,
+  wt,
 } from "./fakes.testutil";
 import { parseSelection, type Selection } from "./paths";
+import { THROTTLED } from "./webtransport";
 
 const entry: CatalogEntry = { id: "self", url: page.origin, name: "Meter", additionalOrigins: [] };
 let net: ReturnType<typeof fakeNet> | undefined;
@@ -32,6 +34,7 @@ async function check<P>(
   offer: { throughput: object[]; latency?: object[] },
   probe: (url: URL, attempt: number) => Answer,
   buses = new FakeBuses(),
+  browser = page,
 ) {
   net?.restore();
   let attempt = 0;
@@ -44,7 +47,7 @@ async function check<P>(
   const context: CheckContext = {
     entry,
     auth: publicAuth(entry),
-    page,
+    page: browser,
     openProbeChannel: buses.open,
     now: fake.now,
   };
@@ -76,7 +79,7 @@ test("HTTP/3 is probed until the browser uses it; past its 2 s bound the last an
   }
 });
 
-test("Automatic gives each candidate its own budget and stops at a sign-in refusal", async () => {
+test("Automatic gives each candidate its own budget, names why it fell back, and stops at a sign-in refusal", async () => {
   const offer = { throughput: [h(".", "http1"), h("https://meter.example:8443", "http2")] };
   // An HTTP/1.1 head that never answers cannot hold Automatic past its budget.
   const fallback = await check(checkThroughput, "auto", offer, (url) =>
@@ -92,6 +95,7 @@ test("Automatic gives each candidate its own budget and stops at a sign-in refus
     at: 2_500,
     selection: "auto",
     head: page.origin,
+    fallback: "Connection check timed out",
     id: "https://meter.example:8443",
   });
   const refused = await check(checkThroughput, "auto", offer, () => ({
@@ -126,4 +130,40 @@ test("a latency path needs its probe and a bus answering within 3.5 s; five repl
     failure: { message: "Latency channel did not become ready", retry: "retryable", signIn: false },
   });
   expect(silent.opened.every(({ disposed }) => disposed)).toBe(true);
+});
+
+test("a throttled page's Automatic latency uses WebSocket and says why; a chosen WebTransport waits for the user", async () => {
+  const offer = {
+    throughput: [h(".", "http1")],
+    latency: [wt("https://meter.example:8443"), ws(".")],
+  };
+  const throttled = { ...page, webTransport: "throttled" as const };
+  const buses = new FakeBuses();
+  const automatic = await check(
+    checkLatency,
+    "auto",
+    offer,
+    () => ({ body: PROBE }),
+    buses,
+    throttled,
+  );
+  expect(
+    "value" in automatic && {
+      transport: automatic.value.path.target.transport,
+      fallback: automatic.value.path.verifiedFor.fallback,
+    },
+  ).toEqual({ transport: "websocket", fallback: THROTTLED });
+  const chosen = await check(
+    checkLatency,
+    "transport:webtransport",
+    offer,
+    () => ({ body: PROBE }),
+    buses,
+    throttled,
+  );
+  expect(chosen).toEqual({
+    at: 0,
+    failure: { message: THROTTLED, retry: "needs-user", signIn: false },
+  });
+  expect(buses.opened.map(({ options }) => options.target.transport)).toEqual(["websocket"]);
 });

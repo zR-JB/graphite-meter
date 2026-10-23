@@ -21,6 +21,8 @@ export interface Ending {
   detail: string;
   rotate?: boolean;
   retryAfterMs?: number;
+  /** A server's idle or lifetime bound ended it, so a reopen is expected to work and spends none of the stage's. */
+  bound?: boolean;
 }
 
 /** One resolved probe on the page's monotonic clock; a reply after the stage's cutoff stays out of the window (`inWindow: false`). */
@@ -94,12 +96,19 @@ export type SessionCommand =
   | { type: "flush"; at: number }
   | { type: "stop" };
 
+/** A WebTransport dial settled: it opened, or it failed, lapsed or was abandoned first, which Chrome's throttle counts. */
+export interface Handshake {
+  type: "handshake";
+  opened: boolean;
+}
+
 /** An upload session relays its feed's observations. A refusal record ends the session instead. */
 export type FeedRecord = Exclude<ProgressRecord, { type: "error" }>;
 export type SessionReport =
   | BytesReport
   | { type: "record"; record: FeedRecord }
   | EndReport
+  | Handshake
   | { type: "stopped" }
   | Flushed;
 
@@ -114,6 +123,8 @@ export type ProbeCommand =
     }
   | { type: "measure" }
   | { type: "pace"; intervalMs: number | null; maxInFlight?: number }
+  /** Dials again after the bus stalled; the worker never redials on its own. */
+  | { type: "dial" }
   /** Ends the measured window. `drained` acknowledges it once the window's probes resolved. */
   | { type: "stop" };
 
@@ -125,4 +136,5 @@ export type ProbeReport =
   | { type: "stalled"; detail: string }
   | { type: "resumed" }
   | { type: "sign-in" }
+  | Handshake
   | { type: "drained" };

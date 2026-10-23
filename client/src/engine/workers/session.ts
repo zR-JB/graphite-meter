@@ -47,6 +47,8 @@ const taskTurn = () =>
 
 class Session {
   #state: "dialing" | "open" | "stopping" | "ended" = "dialing";
+  /** The transport exists, so a dial that ends now failed its handshake. */
+  #handshaking = false;
   #stopping: Promise<void> | null = null;
   /** Aborting closes the transport and ends the dial. */
   readonly #closed = new AbortController();
@@ -66,6 +68,8 @@ class Session {
 
   async #stop(): Promise<void> {
     const open = this.#state === "open";
+    // A dial abandoned before it opened failed its handshake, as Chrome counts it.
+    if (this.#state === "dialing" && this.#handshaking) post({ type: "handshake", opened: false });
     if (open || this.#state === "dialing") this.#state = "stopping";
     reports.flush();
     if (!open) this.#closed.abort();
@@ -77,6 +81,7 @@ class Session {
   #end(report: EndReport): void {
     clearTimeout(this.#grace);
     if (this.#state !== "dialing" && this.#state !== "open") return;
+    if (this.#state === "dialing" && this.#handshaking) post({ type: "handshake", opened: false });
     this.#state = "ended";
     reports.flush();
     post(report);
@@ -109,6 +114,7 @@ class Session {
     } catch (error) {
       return this.#broken(error);
     }
+    this.#handshaking = true;
     this.#closed.signal.addEventListener("abort", () => {
       try {
         transport.close();
@@ -129,6 +135,7 @@ class Session {
     }
     if (this.#state !== "dialing") return;
     this.#state = "open";
+    post({ type: "handshake", opened: true });
     if (command.type === "upload") return this.#upload(transport, command);
     void (command.datagrams ? this.#readDatagrams(transport) : this.#acceptStreams(transport));
   }

@@ -94,6 +94,8 @@ export interface Discovery {
 export interface VerifiedFor {
   selection: string;
   head: string;
+  /** Why Automatic verified a later candidate than the head. */
+  fallback?: string;
 }
 export interface ThroughputPath {
   /** What carries the bytes: a fetch target with the protocol the browser negotiated, or a WebTransport target. */
@@ -258,7 +260,7 @@ export interface ProbeChannelEvents {
   ready(): void;
   outcomes(batch: readonly ProbeOutcome[]): void;
   interrupted(count: number, reason: "unresolved" | "send-failed"): void;
-  /** The connection was lost and is reconnecting (once per outage); `resumed` when replies flow again. */
+  /** The connection was lost, once per outage; its owner may redial it once; `resumed` when replies flow again. */
   stalled(detail: string): void;
   resumed(): void;
   signInRequired(): void;

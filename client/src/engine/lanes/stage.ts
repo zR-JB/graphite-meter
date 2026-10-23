@@ -21,7 +21,8 @@ import {
   type Stall,
 } from "../types";
 import { Carrier, type CarrierHost, type CarrierPlan } from "./carrier";
-import { ESTABLISH_MS, refused } from "./endings";
+import { answered, ESTABLISH_MS, refused } from "./endings";
+import { handshakes, THROTTLED } from "../net/webtransport";
 import { openProbeChannel } from "./probes";
 import { Receiver, type ReceiverHost } from "./receiver";
 import { abortable, delay } from "../run/clock";
@@ -54,6 +55,8 @@ class Stage implements StageResources {
   #unprepared: ((error: Error) => void) | null = null;
   #changed = Promise.withResolvers<void>();
   #signInCheck: { at: number; ended: Promise<boolean> } | null = null;
+  /** Lanes and feeds that reopened once already; a second ending other than a server bound fails the stage. */
+  readonly #reopened = new Set<string>();
 
   constructor(setup: StageSetup) {
     this.#setup = setup;
@@ -119,6 +122,8 @@ class Stage implements StageResources {
     this.#receiver.close();
     this.#up?.release();
     this.#receiver = this.#up = null;
+    // The replacement's lanes and feed start with their own reopen.
+    for (const label of this.#reopened) if (label.startsWith("up")) this.#reopened.delete(label);
     try {
       await this.#prepareUpload(
         AbortSignal.any([signal, this.#released.signal, AbortSignal.timeout(READY_MS)]),
@@ -197,7 +202,11 @@ class Stage implements StageResources {
     };
     // A handshake behind a stage's own transfers can take seconds, so each later stage adopts the bus already open.
     if (bus.current?.adopt(own)) bus.current.pace(intervalMs, maxInFlight);
-    else
+    else if (server.latency.target.transport !== "websocket" && handshakes.throttled.peek()) {
+      // Loaded latency never holds throughput back.
+      if (activity.stage === "latency") throw new StageFailure("preparation-failed", THROTTLED);
+      return events.latencyStalled(THROTTLED);
+    } else
       bus.current = openProbeChannel(
         { target: server.latency.target, auth: server.auth, intervalMs, maxInFlight },
         own,
@@ -299,6 +308,7 @@ class Stage implements StageResources {
         session: true,
         open: (_, epoch) =>
           this.#signedIn((): SessionCommand => {
+            if (handshakes.throttled.peek()) throw new Error(THROTTLED);
             const ticket = auth.ticket(target.origin, route);
             if (direction === "down") return { type: "download", url, ticket, datagrams, epoch };
             const finalize = {
@@ -358,7 +368,7 @@ class Stage implements StageResources {
     signIn: () => this.#signIn("throughput"),
   };
 
-  /** Settles a lane's or the feed's ending; checking the sign-in after a break may outlast the silence rule. */
+  /** Settles a lane's or the feed's ending: one reopen once the server answers over HTTP, within 3 s; checking the sign-in after a break may outlast the silence rule. */
   async #reopen(
     direction: Direction,
     label: string,
@@ -378,13 +388,22 @@ class Stage implements StageResources {
       this.#stall(direction, { ...stall, rotate: true });
       return false;
     }
-    if (!ending.retry) {
+    if (!ending.retry || (!ending.bound && this.#reopened.has(label))) {
       this.#fail(ending.reason, `${label} failed: ${ending.detail}`);
       return false;
     }
+    if (!ending.bound) this.#reopened.add(label);
     this.#stall(direction, stall);
     if (broken) void this.#signedOut().then((signedOut) => signedOut && this.#signIn("throughput"));
     await delay(delayMs, signal);
+    const { auth, throughput } = this.#setup.server;
+    if (!signal.aborted && !(await answered(throughput.fetch.origin, auth, signal, ESTABLISH_MS))) {
+      this.#fail(
+        "connection-lost",
+        `${label} failed: ${ending.detail}; the server did not answer over HTTP`,
+      );
+      return false;
+    }
     return !signal.aborted && !this.#throughputEnded;
   }
 

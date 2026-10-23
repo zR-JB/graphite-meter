@@ -6,14 +6,17 @@ import { openProbeChannel } from "./probes";
 
 useFakeWorkers();
 
-/** Opens a WebSocket bus whose sign-in check answers `ended`, and keeps its events in order. */
-function channel(ended: boolean) {
+/** Opens a WebSocket bus whose sign-in check answers `ended` and whose server answers `fetch`, and keeps its events in order. */
+function channel(
+  ended: boolean,
+  fetch: (url: string) => Promise<Response> = async () => new Response(null),
+) {
   const events: [keyof ProbeChannelEvents, ...unknown[]][] = [];
   const auth: ServerAuth = {
     kind: "grant",
     left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
-    fetch: async () => new Response(null),
+    fetch,
     ticket: (origin, route) => ({
       url: `${origin}/ws/session?target=${route}`,
       request: auth.request("", "POST"),
@@ -123,4 +126,29 @@ test("an adopted bus reports to its new owner, told at once whether it answers o
   bus.dispose();
   expect(bus.adopt(owner)).toBe(false);
   expect(worker.terminated).toBe(true);
+});
+
+test("a stalled bus asks over HTTP every half second until its server answers, then redials once per owner", async () => {
+  let answering = false;
+  const asked: string[] = [];
+  const { bus, worker } = channel(false, async (url) => {
+    asked.push(url);
+    if (!answering) throw new TypeError("network error");
+    return new Response(null);
+  });
+  const dials = () => worker.commands.filter(({ type }) => type === "dial").length;
+  worker.report({ type: "stalled", detail: "websocket closed" });
+  await elapse(1_000);
+  expect([asked.length, dials()]).toEqual([3, 0]);
+  answering = true;
+  await elapse(500);
+  expect([asked, dials()]).toEqual([Array(4).fill("https://peer.example/probe"), 1]);
+  worker.report({ type: "resumed" });
+  worker.report({ type: "stalled", detail: "websocket closed" });
+  await elapse(1_000);
+  expect([asked.length, dials()]).toEqual([4, 1]);
+  // The next stage's owner gets its own redial.
+  bus.adopt(new Proxy({} as Required<ProbeChannelEvents>, { get: () => () => {} }));
+  await elapse(0);
+  expect([asked.length, dials()]).toEqual([5, 2]);
 });

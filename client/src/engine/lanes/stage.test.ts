@@ -1,18 +1,19 @@
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
+import { handshakes, THROTTLED } from "../net/webtransport";
 import type { Activity } from "../run/schedule";
-import {
-  ServerBusyError,
-  type Discovery,
-  type FetchTarget,
-  type LatencyPath,
-  type LatencyTarget,
-  type PreparedServer,
-  type ServerAuth,
-  type SessionTarget,
-  type StageEvents,
-  type StageSetup,
+import type {
+  Discovery,
+  FetchTarget,
+  LatencyPath,
+  LatencyTarget,
+  PreparedServer,
+  ServerAuth,
+  SessionTarget,
+  StageEvents,
+  StageSetup,
 } from "../types";
 import { elapse, FakeWorker, outcome, useFakeWorkers } from "./fakes.testutil";
+import { sessionClosed } from "./endings";
 import { openStage } from "./stage";
 
 useFakeWorkers();
@@ -53,7 +54,7 @@ function stage(
       credentials: "omit",
       redirect: "error",
     }),
-    fetch: async () => new Response(null, { status: 500 }),
+    fetch: async () => new Response(null),
     ticket: () => null,
     ended: async () => (checks++, false),
     ...auth,
@@ -158,7 +159,7 @@ test("readiness waits for the gating lanes; a lane's failure keeps its reason; o
   });
 });
 
-test("lanes refused as busy back off 300, 600, 1 200 ms, and the lapsed budget names the server busy", async () => {
+test("a lane refused as busy is asked again once, after 300 ms, and its second refusal fails the stage busy", async () => {
   const busy = stage(DOWNLOAD);
   const prepared = outcome(busy.resources.prepare(new AbortController().signal));
   const [lane] = busy.lanes();
@@ -173,12 +174,14 @@ test("lanes refused as busy back off 300, 600, 1 200 ms, and the lapsed budget n
     }
     await elapse(5);
   }
-  expect(opened).toEqual([0, 300, 900, 2_100, 3_300]);
-  await elapse(5);
-  expect(prepared.error).toBeInstanceOf(ServerBusyError);
+  expect(opened).toEqual([0, 300]);
+  expect(prepared.error).toMatchObject({
+    reason: "server-busy",
+    message: "down stream 0 failed: HTTP 503",
+  });
 });
 
-test("one download outage stalls once, checks the sign-in once, and resumes only when a reopened lane delivers", async () => {
+test("a broken lane reopens once, stalling once and checking the sign-in once; its second break fails the stage", async () => {
   const outage = stage(DOWNLOAD);
   const prepared = outcome(outage.resources.prepare(new AbortController().signal));
   await elapse(150);
@@ -197,27 +200,23 @@ test("one download outage stalls once, checks the sign-in once, and resumes only
     bytes(lane, 1);
     lane.report({ type: "broken", detail: "TypeError: network error" });
   }
-  // The outage lasts 2.5 s, so every reopening breaks again.
-  for (let round = 0; round < 8; round++) {
-    await elapse(300);
-    for (const lane of lanes) {
-      expect(lane.commands.at(-1)).toMatchObject({ type: "download", epoch: 1 });
-      lane.report({ type: "broken", detail: "TypeError: network error" });
-    }
-  }
   await elapse(300);
+  for (const lane of lanes)
+    expect(lane.commands.at(-1)).toMatchObject({ type: "download", epoch: 1 });
   bytes(lanes[1]!, 1);
-  const transitions = outage.events.filter(([type]) => type === "stalled" || type === "resumed");
-  expect(transitions).toEqual([
+  expect(outage.events.filter(([type]) => type === "stalled" || type === "resumed")).toEqual([
     [
       "stalled",
       { reason: "connection-lost", detail: "TypeError: network error", direction: "down" },
     ],
     ["resumed"],
   ]);
-  expect(outage.events.filter(([type]) => type === "download")).toHaveLength(4);
   expect(outage.checks()).toBe(1);
-  outage.resources.discard();
+  lanes[0]!.report({ type: "broken", detail: "TypeError: network error" });
+  expect(outage.events.filter(([type]) => type === "failed")).toEqual([
+    ["failed", "connection-lost", "down stream 0 failed: TypeError: network error"],
+  ]);
+  expect(outage.events.filter(([type]) => type === "download")).toHaveLength(4);
   expect(lanes.every(({ terminated }) => terminated)).toBe(true);
 });
 
@@ -358,6 +357,118 @@ test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", a
     expect(finished.at).toBe(acknowledged ? 0 : 2_500);
     expect(worker.terminated).toBe(true);
   }
+});
+
+test("a broken session redials once its server answered over HTTP; one that does not answer within 3 s fails the stage", async () => {
+  for (const answering of [true, false]) {
+    const session = stage(
+      DOWNLOAD,
+      { fetch: async () => new Response(null, { status: answering ? 200 : 503 }) },
+      SESSION,
+    );
+    void session.resources.prepare(new AbortController().signal);
+    const worker = session.session();
+    bytes(worker, 0);
+    await elapse(0);
+    worker.report({ type: "broken", detail: "webtransport session closed" });
+    await elapse(3_500);
+    expect(worker.commands.filter(({ type }) => type === "download")).toHaveLength(
+      answering ? 2 : 1,
+    );
+    expect(session.events.filter(([type]) => type === "failed")).toEqual(
+      answering
+        ? []
+        : [
+            [
+              "failed",
+              "connection-lost",
+              "down stream 0 failed: webtransport session closed; the server did not answer over HTTP",
+            ],
+          ],
+    );
+    session.resources.discard();
+  }
+});
+
+test("a session's fourth failed handshake in the page throttles WebTransport: its redial and a new bus fail with why, loaded latency alone", async () => {
+  try {
+    const session = stage(DOWNLOAD, { fetch: async () => new Response(null) }, SESSION);
+    void session.resources.prepare(new AbortController().signal);
+    const worker = session.session();
+    bytes(worker, 0);
+    await elapse(0);
+    for (let failed = 0; failed < 4; failed++) worker.report({ type: "handshake", opened: false });
+    worker.report({ type: "broken", detail: "webtransport session closed" });
+    await elapse(300);
+    expect(worker.commands.filter(({ type }) => type === "download")).toHaveLength(1);
+    expect(session.events.filter(([type]) => type === "failed")).toEqual([
+      ["failed", "preparation-failed", THROTTLED],
+    ]);
+    const latency = { target: { ...SESSION, transport: "webtransport" } } as unknown as LatencyPath;
+    const loaded = stage(
+      { ...DOWNLOAD, loadedLatency: true },
+      {},
+      FETCH,
+      { current: null },
+      { latency },
+    );
+    outcome(loaded.resources.prepare(new AbortController().signal));
+    expect([loaded.lanes().length, loaded.probes().length]).toEqual([3, 0]);
+    expect(loaded.events.filter(([type]) => type === "latencyStalled")).toEqual([
+      ["latencyStalled", THROTTLED],
+    ]);
+    const idle = stage(
+      { stage: "latency", transfer: [], loadedLatency: false },
+      {},
+      FETCH,
+      { current: null },
+      { latency },
+    );
+    const prepared = outcome(idle.resources.prepare(new AbortController().signal));
+    await elapse(0);
+    expect(prepared.error).toMatchObject({ reason: "preparation-failed", message: THROTTLED });
+    for (const each of [session, loaded, idle]) each.resources.discard();
+  } finally {
+    // The page's ledger lifts with time, for the tests after this one.
+    await elapse(0);
+    jest.advanceTimersByTime(5 * 60_000);
+  }
+});
+
+test("a session discarded while it dials counts as a failed handshake, as Chrome counts it; one that delivered does not", async () => {
+  try {
+    const delivered = stage(DOWNLOAD, {}, SESSION);
+    outcome(delivered.resources.prepare(new AbortController().signal));
+    bytes(delivered.session(), 0);
+    delivered.resources.discard();
+    for (let abandoned = 0; abandoned < 3; abandoned++) {
+      const dialing = stage(DOWNLOAD, {}, SESSION);
+      outcome(dialing.resources.prepare(new AbortController().signal));
+      dialing.resources.discard();
+    }
+    expect(handshakes.throttled()).toBe(false);
+    const fourth = stage(DOWNLOAD, {}, SESSION);
+    outcome(fourth.resources.prepare(new AbortController().signal));
+    fourth.resources.discard();
+    expect(handshakes.throttled()).toBe(true);
+  } finally {
+    await elapse(0);
+    jest.advanceTimersByTime(5 * 60_000);
+  }
+});
+
+test("a session ended at the server's bound reopens without spending the stage's one reopen", async () => {
+  const session = stage(DOWNLOAD, { fetch: async () => new Response(null) }, SESSION);
+  void session.resources.prepare(new AbortController().signal);
+  const worker = session.session();
+  bytes(worker, 0);
+  await elapse(0);
+  for (let cut = 0; cut < 3; cut++) {
+    worker.report({ type: "ended", ending: sessionClosed(1)! });
+    await elapse(300);
+  }
+  expect(worker.commands.filter(({ type }) => type === "download")).toHaveLength(4);
+  expect(session.events.filter(([type]) => type === "failed")).toEqual([]);
 });
 
 test("one latency bus serves the server's run: a later stage adopts and re-paces it, and only a discard closes it", async () => {

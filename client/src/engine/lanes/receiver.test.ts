@@ -163,7 +163,7 @@ test("only advancing receiver observations pass, across a replacement feed socke
   feed.receiver.close();
 });
 
-test("feed refusals back off as busy until the feed opens, an unknown id rotates, and a revoked socket asks for sign-in", async () => {
+test("feed refusals count as busy until the feed opens, an unknown id rotates, and a revoked socket asks for sign-in", async () => {
   const refused = (code: string, message: string) => (socket: FakeSocket) => {
     socket.open();
     socket.send(`{"type":"error","code":"${code}","message":"${message}"}`);
@@ -191,8 +191,8 @@ test("feed refusals back off as busy until the feed opens, an unknown id rotates
   ).toEqual([
     ["connection-lost", undefined, "progress socket closed", true, 300],
     ["server-busy", undefined, "server full", false, 300],
-    ["server-busy", undefined, "client full", false, 600],
-    // The feed opened, which ended the busy streak. The run decides the one replacement.
+    ["server-busy", undefined, "client full", false, 300],
+    // The run decides the one replacement.
     ["server-busy", undefined, "server full", false, 300],
     ["protocol-error", true, "unknown upload id", false, 300],
   ]);

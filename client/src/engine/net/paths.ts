@@ -11,6 +11,7 @@ import type {
   VerifiedFor,
 } from "../types";
 import type { PageConfig } from "./page";
+import { THROTTLED } from "./webtransport";
 
 type Target = ThroughputTarget | LatencyTarget;
 type TargetOf<R extends Role> = R extends "throughput" ? ThroughputTarget : LatencyTarget;
@@ -293,13 +294,15 @@ export function unresolvedReason(
     page.webTransport !== "available" &&
     resolve(discovery, role, selection, { ...page, webTransport: "available" })
   )
-    return {
-      message:
-        page.webTransport === "insecure-page"
-          ? "WebTransport needs a secure page; open this interface over HTTPS."
-          : "This browser does not support WebTransport.",
-      retry: "impossible",
-    };
+    return page.webTransport === "throttled"
+      ? { message: THROTTLED, retry: "needs-user" }
+      : {
+          message:
+            page.webTransport === "insecure-page"
+              ? "WebTransport needs a secure page; open this interface over HTTPS."
+              : "This browser does not support WebTransport.",
+          retry: "impossible",
+        };
   if (selection.kind === "auto")
     return {
       message:

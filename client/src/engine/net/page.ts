@@ -7,6 +7,7 @@ import {
   signInMarker,
 } from "../../protocol/documents";
 import { AUTH_ROUTES } from "../../protocol/routes";
+import { handshakes } from "./webtransport";
 
 export interface PageConfig {
   origin: string;
@@ -15,23 +16,27 @@ export interface PageConfig {
   auth: boolean;
   /** The operator's default for saving results. The user's own choice wins. */
   historyDefault: boolean;
-  webTransport: "available" | "insecure-page" | "no-api";
+  /** Changes to `throttled` after the page's fourth failed handshake in 5 minutes, which a signal tracks. */
+  webTransport: "available" | "insecure-page" | "no-api" | "throttled";
 }
 
 export function readPageConfig(): PageConfig {
   const meta = (name: string) =>
     document.querySelector(`meta[name="${name}"]`)?.getAttribute("content");
+  const webTransport =
+    typeof WebTransport !== "undefined"
+      ? "available"
+      : isSecureContext
+        ? "no-api"
+        : "insecure-page";
   return {
     origin: location.origin,
     secure: location.protocol === "https:",
     auth: meta("graphite-meter-auth") === "enabled",
     historyDefault: meta("graphite-meter-result-history-default") === "true",
-    webTransport:
-      typeof WebTransport !== "undefined"
-        ? "available"
-        : isSecureContext
-          ? "no-api"
-          : "insecure-page",
+    get webTransport() {
+      return webTransport === "available" && handshakes.throttled() ? "throttled" : webTransport;
+    },
   };
 }
 
