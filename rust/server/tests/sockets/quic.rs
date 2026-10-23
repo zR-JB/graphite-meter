@@ -1,4 +1,4 @@
-//! The QUIC endpoint: Retry under pressure, the handshake bound, receive credit and an exhausted budget.
+//! The QUIC endpoint: Retry under pressure, the handshake bound, receive credit, late packets and an exhausted budget.
 
 use super::{
     http3::{H3, read, transport},
@@ -47,13 +47,18 @@ pub(super) async fn retried(h3: &H3, source: &str) -> bool {
 }
 
 #[tokio::test]
-async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holding_a_connection() {
+async fn unvalidated_handshakes_need_retry_under_pressure_or_beside_another_from_their_source() {
     let h3 = H3::start(&[]).await;
-    assert!(!retried(&h3, "127.0.0.2").await);
-    let _held = h3.connect_from("127.0.0.3", transport(None)).await.unwrap();
+    let held = h3.connect_from("127.0.0.2", transport(None)).await.unwrap();
+    // An answer means the server's side of the handshake completed too.
+    assert_eq!(held.send("GET", "/probe", b"").await.0.status(), 200);
     assert!(
-        retried(&h3, "127.0.0.3").await,
-        "the source holds a connection"
+        !retried(&h3, "127.0.0.2").await,
+        "the source's connections are no reason"
+    );
+    assert!(
+        retried(&h3, "127.0.0.2").await,
+        "the first Initial's handshake is still in progress"
     );
     assert!(!retried(&h3, "127.0.0.4").await);
     let budget = h3.server.budget.clone();
@@ -79,6 +84,52 @@ async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holdi
     );
 }
 
+/// A peer's packet after its connection ended gets no stateless reset, which Firefox takes for a close.
+#[tokio::test]
+async fn a_late_packet_for_an_ended_connection_gets_no_answer() {
+    let h3 = H3::start(&[]).await;
+    let server = h3.server.quic.unwrap();
+    let relay = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let late = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let relaying = tokio::spawn({
+        let (relay, late) = (relay.clone(), late.clone());
+        async move {
+            let (mut packet, mut client) = (vec![0; 65536], None);
+            loop {
+                let Ok((length, from)) = relay.recv_from(&mut packet).await else {
+                    continue;
+                };
+                let datagram = &packet[..length];
+                let to = if from == server {
+                    client.unwrap()
+                } else {
+                    // A short header that carried a request is large enough to be answered with a reset.
+                    if datagram[0] & 0x80 == 0 && length > 100 {
+                        *late.lock().unwrap() = datagram.to_vec();
+                    }
+                    client = Some(from);
+                    server
+                };
+                let _ = relay.send_to(datagram, to).await;
+            }
+        }
+    });
+    let connection = h3
+        .connect_via(relay.local_addr().unwrap(), transport(None))
+        .await;
+    assert_eq!(connection.send("GET", "/probe", b"").await.0.status(), 200);
+    connection.quic.close(0_u32.into(), b"done");
+    connection.endpoint.wait_idle().await;
+    relaying.abort();
+    // Past the server's draining period, it no longer knows the connection's IDs.
+    advance_clock(Duration::from_secs(5)).await;
+    let late = late.lock().unwrap().clone();
+    relay.send_to(&late, server).await.unwrap();
+    let mut answer = [0; 2048];
+    let answered = tokio::time::timeout(Duration::from_millis(300), relay.recv(&mut answer)).await;
+    assert!(answered.is_err(), "a late packet is dropped");
+}
+
 /// The budget's usage once it held still for three 30 ms windows in a row.
 pub(super) async fn settled(budget: &Budget) -> usize {
     let settling = async {
@@ -97,7 +148,7 @@ pub(super) async fn settled(budget: &Budget) -> usize {
 }
 
 #[tokio::test]
-async fn only_an_admitted_upload_reserves_receive_credit_until_its_connection_is_gone() {
+async fn only_admitted_uploads_hold_receive_credit_while_they_read() {
     let env = [
         ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"),
         ("GM_MAX_SESSIONS_PER_CLIENT", "1"),
@@ -119,15 +170,23 @@ async fn only_an_admitted_upload_reserves_receive_credit_until_its_connection_is
     );
     download.stop(graphite_meter_http3::Code::H3_REQUEST_CANCELLED);
     h3.server.until_active(0).await;
-    let mut answer = connection
-        .send("POST", &format!("/upload?id={id}"), b"funded")
+    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
+    upload
+        .send_data(bytes::Bytes::from_static(b"funded"))
         .await
-        .1;
-    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":6}"#);
+        .unwrap();
     let funded = settled(&budget).await - idle;
     assert!(
         funded >= CONNECTION_CREDIT,
-        "{funded} bytes once an admitted upload read"
+        "{funded} bytes while an admitted upload reads"
+    );
+    upload.finish().await.unwrap();
+    assert_eq!(answer.response().await.unwrap().status(), 200);
+    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":6}"#);
+    let returned = settled(&budget).await - idle;
+    assert!(
+        returned < CONNECTION_CREDIT / 4 && connection.quic.close_reason().is_none(),
+        "{returned} bytes once it stopped, on a connection still open"
     );
     connection.quic.close(0_u32.into(), b"done");
     let drained = async {

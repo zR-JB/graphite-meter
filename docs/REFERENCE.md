@@ -81,8 +81,8 @@ the setting.
   is the one operator subject. Without a login, the identity is an IPv4 address or an IPv6 /64, and its /56 and
   /48 share two and four times its limit. Upload receivers are counted the same way, and connections are counted
   by address.
-- A direct client address holds at most 8 QUIC connections and a browser opens one per WebTransport session, so a
-  larger per-client session share only helps a login that spans addresses.
+- Connections count TCP and QUIC alike. An idle QUIC connection ends without a close at its 30 s idle timeout, so
+  Firefox keeps the server's HTTP/3.
 - Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at
   a trusted proxy or firewall.
 - `GM_TRUSTED_PROXIES` rejects the default routes `0.0.0.0/0` and `::/0`. A trusted peer names its client with

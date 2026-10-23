@@ -21,14 +21,9 @@ impl Connection {
         Self(Driver::new(quic, budget, Role::Server))
     }
 
-    /// The next request; `None` once the connection closed gracefully, idle or drained. Cancel safe.
+    /// The next request; `None` once the connection closed gracefully or drained. Cancel safe.
     pub async fn next(&mut self) -> Result<Option<Request>, Error> {
         Ok(self.0.next().await?.map(Request))
-    }
-
-    /// Sends GOAWAY: later requests are refused, and the connection closes once the others end.
-    pub fn goaway(&mut self) {
-        self.0.goaway();
     }
 
     /// Also ends the session with `code` and `reason`, even later ones; the connection closes as others end or at the drain bound.
@@ -96,12 +91,6 @@ fn admit(
         return Err(stream.abort(Code::H3_REQUEST_REJECTED));
     };
     let mut request = head.message;
-    if request.method() != http::Method::CONNECT {
-        stream
-            .shared()
-            .served
-            .store(true, std::sync::atomic::Ordering::Release);
-    }
     request.extensions_mut().insert(Arc::new(charge));
     stream.recv.message.owed = head.content_length;
     Ok(request)

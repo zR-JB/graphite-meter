@@ -3,6 +3,7 @@
 use super::{
     Burst, Feed, Rehome,
     body::{Aborted, Body, ReplyBound},
+    lifecycle::CONNECTION_IDLE,
     tls,
     websocket::{self, Socket},
 };
@@ -13,7 +14,6 @@ use crate::{
 };
 use bytes::Bytes;
 use futures_util::task::AtomicWaker;
-use graphite_meter_http3::CONNECTION_IDLE;
 use http::{Method, Request, Response};
 use http_body::{Frame, SizeHint};
 use hyper::{

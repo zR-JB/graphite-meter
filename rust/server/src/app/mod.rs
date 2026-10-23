@@ -16,7 +16,7 @@ use crate::{
     engine::{Block, Meter, Uploads},
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
-    limits::{Budget, Hold, Pressure, Quotas, Refusal, Transport},
+    limits::{Budget, Hold, Pressure, Quotas, Refusal},
     peer::{ClientKeys, Peer},
     transport::{
         body::Body,
@@ -165,17 +165,19 @@ impl App {
     }
 
     /// A connection's share, keyed by its socket address; `None` refuses the connection.
-    pub fn connection(&self, peer: IpAddr, transport: Transport) -> Option<Hold> {
+    pub fn connection(&self, peer: IpAddr) -> Option<Hold> {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
-        self.quotas.connection(peer, &keys, transport)
+        self.quotas.connection(peer, &keys)
     }
 
-    /// Whether a QUIC handshake from `peer` needs Retry: a quarter of connections or budget used, or its source held.
-    pub fn quic_retry(&self, peer: IpAddr) -> bool {
+    /// A QUIC handshake from `peer`, held until it completes; `None` if it needs Retry first, as one does when
+    /// unvalidated with a quarter of connections or budget used, or while another from its source is in progress.
+    pub fn quic_handshake(&self, peer: IpAddr, validated: bool) -> Option<Hold> {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
-        self.quotas.connections_crowded()
+        let retry = self.quotas.connections_crowded()
             || self.budget.pressure() >= Pressure::Retry
-            || self.quotas.holds_quic(&keys)
+            || self.quotas.handshaking(&keys);
+        (validated || !retry).then(|| self.quotas.handshake(&keys))?
     }
 
     /// Receive-window credit for a connection `keys` fund; `None` past their share or the clients' half.

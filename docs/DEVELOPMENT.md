@@ -129,9 +129,11 @@ client runs each lane group on one pinned runtime and its prober on another.
 One budget, `GM_MAX_BUFFER_BYTES`, covers every HTTP/2 and QUIC buffer and is charged as each buffer fills. Startup
 refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor plus the QUIC endpoint buffers and the
 256 KiB download block. The floor is 1.5 MiB for HTTP/2 and about 0.5 MiB for QUIC. Receive windows stay 64 KiB
-until an admitted upload reads. An admitted HTTP/2 upload then opens a 24 MiB connection window with 8 MiB per
-stream. From a quarter of the budget unvalidated QUIC handshakes need Retry, and from three quarters no window
-grows. The budget bounds buffers, not resident memory. Two seconds after the last connection closes the server
+until an admitted upload reads, and a client's uploads hold at most the credit of 8 QUIC windows. An admitted HTTP/2
+upload then opens a 24 MiB connection window with 8 MiB per stream; a QUIC connection returns its credit when its last
+upload stops. Unvalidated QUIC handshakes need Retry from a quarter of the budget or the connections, or while another
+from the same client key (an IPv4 address, or an IPv6 /64, /56 or /48) is in progress, and from three quarters of the
+budget no window grows. The budget bounds buffers, not resident memory. Two seconds after the last connection closes the server
 returns its threads' free pages.
 
 The following choices were measured, and this list keeps them because they are easy to undo by accident. Release

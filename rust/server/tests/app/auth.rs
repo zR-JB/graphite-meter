@@ -3,7 +3,7 @@
 use super::*;
 use graphite_meter_server::{
     auth::{BrowserOrigin, Identity, NewLogin, Principal, Store},
-    limits::CONNECTION_CREDIT,
+    limits::{CONNECTION_CREDIT, WINDOWS_PER_CLIENT},
     peer::ClientKeys,
 };
 use http::{HeaderValue, StatusCode};
@@ -316,7 +316,7 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
 #[tokio::test]
 async fn password_logins_fund_windows_past_one_client_s_share() {
     // Three logins at a client's share each pass the principal's double share unless it is exempt.
-    let share = 8 * CONNECTION_CREDIT;
+    let share = WINDOWS_PER_CLIENT * CONNECTION_CREDIT;
     let funded = |app: &App| {
         let held: Vec<_> = (0..3)
             .map(|_| {

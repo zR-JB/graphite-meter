@@ -5,7 +5,6 @@ use crate::{
     auth::{COUNTERS, Security},
     config::{Config, ENGINE_VERSION, ListenAddress, ListenerKind, Methods, could_not},
     engine::download::BLOCK_BYTES,
-    limits::Transport,
     log,
     transport::{
         accept::{self, Listen},
@@ -194,15 +193,7 @@ impl Server {
                         buses: Handle::current(),
                     };
                     let serve = move |socket, peer| http1.connection(socket, peer);
-                    accepting.push(listen(
-                        app,
-                        socket,
-                        next,
-                        stopping,
-                        role,
-                        Transport::Tcp,
-                        serve,
-                    ));
+                    accepting.push(listen(app, socket, next, stopping, role, serve));
                     "tcp"
                 }
                 Socket::Http2(socket, tls) => {
@@ -211,15 +202,7 @@ impl Server {
                         tls,
                     };
                     let serve = move |socket, peer| http2.connection(socket, peer);
-                    accepting.push(listen(
-                        app,
-                        socket,
-                        next,
-                        stopping,
-                        role,
-                        Transport::Tcp,
-                        serve,
-                    ));
+                    accepting.push(listen(app, socket, next, stopping, role, serve));
                     "tcp"
                 }
                 Socket::Quic(quic) => {
@@ -231,8 +214,7 @@ impl Server {
                         let serve = move |incoming, peer| http3.connection(incoming, peer);
                         let serving = runtime.spawn(async move {
                             let next = move || next.clone();
-                            listen(app, listener, next, &stopping, role, Transport::Quic, serve)
-                                .await
+                            listen(app, listener, next, &stopping, role, serve).await
                         });
                         accepting.push(Box::pin(async move {
                             serving.await.map_err(|error| format!("{role}: {error}"))?
@@ -298,7 +280,6 @@ fn listen<'a, L, F>(
     runtime: impl Fn() -> Handle + Send + 'a,
     stopping: &'a CancellationToken,
     role: &'static str,
-    transport: Transport,
     serve: impl Fn(L::Connection, SocketAddr) -> F + Send + 'a,
 ) -> Accepting<'a>
 where
@@ -306,7 +287,7 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     Box::pin(async move {
-        let hold = |peer: SocketAddr| app.connection(peer.ip(), transport);
+        let hold = |peer: SocketAddr| app.connection(peer.ip());
         let serving = accept::serve(socket, runtime, stopping, hold, serve);
         serving.await.map_err(|error| format!("{role}: {error}"))
     })
@@ -586,8 +567,8 @@ mod background_tests {
         let app = app();
         let releases = AtomicUsize::new(0);
         let peer = "192.0.2.1".parse().unwrap();
-        let first = app.connection(peer, Transport::Tcp).unwrap();
-        let second = app.connection(peer, Transport::Quic).unwrap();
+        let first = app.connection(peer).unwrap();
+        let second = app.connection(peer).unwrap();
         let released = || releases.load(Ordering::Relaxed);
         let releasing = release_when_idle(&app, || {
             releases.fetch_add(1, Ordering::Relaxed);
@@ -611,7 +592,7 @@ mod background_tests {
                 "two seconds after the last connection closed"
             );
 
-            let again = app.connection(peer, Transport::Tcp).unwrap();
+            let again = app.connection(peer).unwrap();
             advance(IDLE_RELEASE * 3).await;
             settle().await;
             assert_eq!(
@@ -629,7 +610,7 @@ mod background_tests {
             assert_eq!(released(), 2, "once per idle period");
 
             for _ in 0..4 {
-                drop(app.connection(peer, Transport::Tcp).unwrap());
+                drop(app.connection(peer).unwrap());
                 settle().await;
                 advance(IDLE_RELEASE - Duration::from_millis(500)).await;
                 settle().await;
