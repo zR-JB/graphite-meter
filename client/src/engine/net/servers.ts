@@ -56,6 +56,7 @@ interface ServersEnv {
   setTransports(transports: TestConfig["transports"]): void;
   /** Checks and their timers may run: the app is booted and visible, and no run or start is pending. */
   active: Read<boolean>;
+  hidden: Read<boolean>;
   online: Read<boolean>;
   /** The server whose latency the console pins, if any. */
   latencyPin: Read<string | null>;
@@ -119,10 +120,11 @@ export interface Servers {
   ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
   /** Whether a run lasting `totalMs` from now ends before every sign-in `authorize` checked. */
   fits(totalMs: number): boolean;
-  /** A run failed on one server, or as a whole with null: a refused sign-in is required again, other failed paths are re-checked. */
+  /** A run failed on one server, or as a whole with null: a refused sign-in is required again, a path that failed is checked at the next start. */
   recheck(
     failure: { serverId: string; scope: Role; reason: FailureReason; message: string } | null,
   ): void;
+  proved(serverId: string, roles: readonly Role[]): void;
   resume(): void;
   dispose(): void;
 }
@@ -272,6 +274,7 @@ export function createServers(env: ServersEnv): Servers {
     limiter,
     openProbeChannel: env.openProbeChannel,
     active: computed(() => env.active() && !loading()),
+    hidden: env.hidden,
     online: env.online,
     metadata,
     latencyServer,
@@ -515,6 +518,8 @@ export function createServers(env: ServersEnv): Servers {
 
   async function prepare(signal: AbortSignal) {
     const chosen = chosenConnections();
+    // A check at Start adopts the renewed bus too, so the run dials one connection.
+    for (const connection of chosen) connection.link.bus.renew();
     // One judgment of freshness: what the checks keep is what the run may use, however long they take.
     const since = now() - FRESH_MS;
     await Promise.all(chosen.map((connection) => connection.check({ since, signal })));
@@ -600,14 +605,17 @@ export function createServers(env: ServersEnv): Servers {
     fits: (totalMs) => signInEnd === null || now() + totalMs <= signInEnd,
     recheck(failure) {
       if (!failure) {
-        for (const connection of chosenConnections()) connection.invalidate(ROLES);
+        for (const connection of chosenConnections()) connection.invalidate(ROLES, true);
         return;
       }
       const connection = connections.peek().get(failure.serverId);
       if (failure.reason === "sign-in-required")
         connection?.requireSignIn(failure.message || undefined);
-      else connection?.invalidate([failure.scope]);
+      // A channel that worked and then broke says nothing against its path; the discovery re-read watches the server.
+      else if (failure.reason === "path-failed" || failure.reason === "protocol-error")
+        connection?.invalidate([failure.scope], true);
     },
+    proved: (serverId, roles) => connections.peek().get(serverId)?.proved(roles),
     resume() {
       reloadFailed();
       for (const connection of connections.peek().values()) connection.resume();

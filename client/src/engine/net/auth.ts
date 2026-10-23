@@ -60,7 +60,7 @@ function credentials(
       const socket = route.startsWith("/ws/");
       // A WebSocket carries the page's own cookie. WebTransport carries neither cookie nor header, only a ticket.
       if (kind === "public" || (kind === "session" && socket)) return null;
-      const url = `${origin}${socket ? ROUTES.wsSession : ROUTES.wtSession}?target=${encodeURIComponent(origin + route)}`;
+      const url = `${entry.url}${socket ? ROUTES.wsSession : ROUTES.wtSession}?target=${encodeURIComponent(origin + route)}`;
       return { url, request: request(url, "POST") };
     },
     ended,

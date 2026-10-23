@@ -126,6 +126,26 @@ export interface PreparedServer {
   discovery: Discovery;
   throughput: ThroughputPath;
   latency: LatencyPath | null;
+  link: Link;
+}
+
+/** A selected server's resources that outlive checks, stages and runs; its HTTP probes and tickets go to its discovery origin. */
+export interface Link {
+  bus: BusSlot;
+  workers: WorkerPool;
+}
+
+export interface BusSlot {
+  adopt(target: LatencyTarget, events: ProbeChannelEvents): LatencyBus | null;
+  take(options: ProbeChannelOptions, events: ProbeChannelEvents): LatencyBus;
+  renew(): void;
+  park(): void;
+  dispose(bus?: LatencyBus): void;
+}
+
+export interface WorkerPool {
+  take(script: string): Worker;
+  give(script: string, worker: Worker): void;
 }
 
 /** A server's credentials: none, the page's sign-in, or a measurement grant, which never appears in a URL. */
@@ -201,8 +221,6 @@ export interface StageSetup {
   endsIn(): number;
   /** An upload id minted when the run started, for the stage's first upload; null leaves the stage to mint one. */
   uploadId: Promise<string | null>;
-  /** The server's latency bus for the run: opened by the first stage that probes, adopted by each later one. */
-  bus: { current: LatencyBus | null };
 }
 
 /** One server's resources for one stage, shared by its warmup and measured window. */
@@ -256,6 +274,7 @@ export class StageFailure extends Error {
 export interface ProbeChannelOptions {
   target: LatencyTarget;
   auth: ServerAuth;
+  control: string;
   intervalMs: number | null;
   /** Probes in flight at most; a full window skips a send, never times one out. */
   maxInFlight: number;
@@ -284,11 +303,12 @@ export interface ProbeChannel {
 export type OpenProbeChannel = (
   options: ProbeChannelOptions,
   events: ProbeChannelEvents,
-) => ProbeChannel;
+) => LatencyBus;
 /** A probe channel that outlives its stage. */
 export interface LatencyBus extends ProbeChannel {
   /** Its events go to `events` from now on, told at once whether the bus answers or stalled; false once it ended. */
   adopt(events: ProbeChannelEvents): boolean;
+  renew(): void;
 }
 
 /** The test settings as saved (localStorage `graphite-meter:v1` → `config`). */

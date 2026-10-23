@@ -21,19 +21,33 @@ const UNESTABLISHED: EndReport = {
   ending: { reason: "path-failed", retry: true, detail: "webtransport session did not establish" },
 };
 
-const post = (report: SessionReport) => postMessage(report);
 const ignore = () => {};
 const tickets = new Tickets();
-const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
 let session: Session | null = null;
+const counter = (): ByteReports => {
+  const counted = new ByteReports(
+    (bytes, epoch) => reports === counted && postMessage({ type: "bytes", bytes, epoch }),
+  );
+  return counted;
+};
+let reports = counter();
 
 self.onmessage = ({ data }: MessageEvent<SessionCommand>) => {
   if (data.type === "measure") reports.measure(data.epoch, data.at - performance.timeOrigin);
-  else if (data.type === "flush") post(reports.flushed(data.at));
-  else if (data.type === "stop")
-    void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
-  else session = new Session(data);
+  else if (data.type === "flush") postMessage(reports.flushed(data.at));
+  else if (data.type === "stop") void stop();
+  else {
+    session?.silence();
+    session = new Session(data);
+  }
 };
+
+async function stop(): Promise<void> {
+  await session?.stop();
+  session = null;
+  reports = counter();
+  postMessage({ type: "stopped" } satisfies SessionReport);
+}
 
 // A full task: a message, then a timer.
 const turn = new MessageChannel();
@@ -54,10 +68,18 @@ class Session {
   readonly #closed = new AbortController();
   /** The feed's terminal record, or the end of its grace. */
   readonly #completed = Promise.withResolvers<void>();
+  readonly #gone = Promise.withResolvers<void>();
+  #silent = false;
   #grace: ReturnType<typeof setTimeout> | undefined;
+  readonly #post = (report: SessionReport) => this.#silent || postMessage(report);
+  readonly reports = reports;
+
+  silence(): void {
+    this.#silent = true;
+  }
 
   constructor(readonly command: Dial) {
-    if (command.type === "download") reports.measure(command.epoch);
+    if (command.type === "download") this.reports.measure(command.epoch);
     void this.#dial().catch(this.#broken);
   }
 
@@ -69,22 +91,30 @@ class Session {
   async #stop(): Promise<void> {
     const open = this.#state === "open";
     // A dial abandoned before it opened failed its handshake, as Chrome counts it.
-    if (this.#state === "dialing" && this.#handshaking) post({ type: "handshake", opened: false });
+    if (this.#state === "dialing" && this.#handshaking)
+      this.#post({ type: "handshake", opened: false });
     if (open || this.#state === "dialing") this.#state = "stopping";
-    reports.flush();
+    this.reports.flush();
     if (!open) this.#closed.abort();
     if (this.command.type === "upload") await this.#finalize(this.command.finalize, open);
     this.#closed.abort();
+    if (!this.#handshaking) this.#gone.resolve();
+    await Promise.race([
+      this.#gone.promise,
+      new Promise((done) => setTimeout(done, CLOSE_GRACE_MS)),
+    ]);
+    this.#silent = true;
   }
 
   /** The first ending is the session's; the rest are its echoes. */
   #end(report: EndReport): void {
     clearTimeout(this.#grace);
     if (this.#state !== "dialing" && this.#state !== "open") return;
-    if (this.#state === "dialing" && this.#handshaking) post({ type: "handshake", opened: false });
+    if (this.#state === "dialing" && this.#handshaking)
+      this.#post({ type: "handshake", opened: false });
     this.#state = "ended";
-    reports.flush();
-    post(report);
+    this.reports.flush();
+    this.#post(report);
     this.#closed.abort();
   }
 
@@ -120,10 +150,12 @@ class Session {
         transport.close();
       } catch {}
     });
-    transport.closed.then(
-      ({ closeCode }) => this.#end(endOf(closeCode)),
-      () => this.#end(endOf(undefined)),
-    );
+    transport.closed
+      .then(
+        ({ closeCode }) => this.#end(endOf(closeCode)),
+        () => this.#end(endOf(undefined)),
+      )
+      .finally(this.#gone.resolve);
     try {
       // A black-holed handshake can leave `ready` and `closed` pending, so the budget ends the dial.
       await abortable(transport.ready, budget);
@@ -135,7 +167,7 @@ class Session {
     }
     if (this.#state !== "dialing") return;
     this.#state = "open";
-    post({ type: "handshake", opened: true });
+    this.#post({ type: "handshake", opened: true });
     if (command.type === "upload") return this.#upload(transport, command);
     void (command.datagrams ? this.#readDatagrams(transport) : this.#acceptStreams(transport));
   }
@@ -145,7 +177,7 @@ class Session {
     try {
       const incoming = transport.incomingUnidirectionalStreams.getReader();
       for (let next = await incoming.read(); !next.done; next = await incoming.read())
-        countBytes(next.value, reports.count).catch(this.#broken);
+        countBytes(next.value, this.reports.count).catch(this.#broken);
     } catch (error) {
       this.#broken(error);
     }
@@ -158,7 +190,7 @@ class Session {
       let yielded = performance.now();
       for (let next = await reader.read(); !next.done; next = await reader.read()) {
         const now = performance.now();
-        reports.count(next.value.byteLength, now);
+        this.reports.count(next.value.byteLength, now);
         if (now - yielded < YIELD_MS) continue;
         await taskTurn();
         yielded = performance.now();
@@ -196,8 +228,8 @@ class Session {
     const send = (record: FeedRecord | null) => {
       clearTimeout(timer);
       timer = undefined;
-      if (held) post({ type: "record", record: held });
-      if (record) post({ type: "record", record });
+      if (held) this.#post({ type: "record", record: held });
+      if (record) this.#post({ type: "record", record });
       if (held || record?.type === "progress") sentAt = performance.now();
       held = null;
     };

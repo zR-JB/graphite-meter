@@ -347,11 +347,16 @@ export async function start(page: Page, fleet: Fleet) {
           const summary = summaries.find((entry) => entry.server.id === server.id);
           // Firefox opens a speculative twin, which nothing uses, for every WebTransport dial.
           const dial = browser === "firefox" ? 2 : 1;
-          const transfer = summary?.throughput.protocol === "http3" ? 2 : 0;
+          // A WebTransport session rides QUIC whatever HTTP version the browser reported for its origin.
+          const { protocol, transport } = summary?.throughput ?? {};
+          const transfer =
+            protocol === "http3" || (transport && transport !== "fetch-stream") ? 2 : 0;
           const sessions = summary?.throughput.transport === "webtransport" ? dial : 1;
           const bus = summary?.latencyTarget?.transport === "webtransport" ? dial : 0;
+          // Until the lease, a session's upload control rides its HTTP/3 origin: requests and their CORS preflights.
+          const control = transport && transport !== "fetch-stream" ? 2 : 0;
           // A run that saved nothing for the server names no paths to plan for.
-          const quicPlan = summary ? transfer * sessions + bus : Infinity;
+          const quicPlan = summary ? transfer * sessions + control + bus : Infinity;
           return { id: server.id, ...counts, quicPlan };
         }),
       };
@@ -405,7 +410,7 @@ function overBudget(pages: Attempt[][]) {
 
 /** T7 over the runs a file's scenarios recorded, one list per page; workers are judged from a page's second run. */
 export function budgetTest(runs: string, pages: Attempt[][]) {
-  test.failing(`T7: ${runs} keep one bus, their workers and the QUIC plan [fails until step 8: stages create lane workers and rebuild the bus]`, () => {
+  test(`T7: ${runs} keep one bus, their workers and the QUIC plan`, () => {
     expect(pages.flat().length).toBeGreaterThan(0);
     expect(overBudget(pages)).toEqual([]);
   });

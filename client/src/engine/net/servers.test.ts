@@ -44,6 +44,7 @@ async function load(
     config,
     setTransports: (next) => config.set({ ...config.peek(), transports: next }),
     active,
+    hidden: signal(false),
     online,
     latencyPin: signal(null),
     openProbeChannel: new FakeBuses().open,
@@ -100,8 +101,8 @@ test("Start runs on what its checks verified however long they take, and never f
   servers.recheck({
     serverId: "self",
     scope: "latency",
-    reason: "timeout",
-    message: "Latency probes timed out",
+    reason: "path-failed",
+    message: "Latency channel did not open",
   });
   await net!.advance(900);
   probeMs = 1_500;
@@ -113,8 +114,8 @@ test("Start runs on what its checks verified however long they take, and never f
   servers.recheck({
     serverId: "self",
     scope: "latency",
-    reason: "timeout",
-    message: "Latency probes timed out",
+    reason: "path-failed",
+    message: "Latency channel did not open",
   });
   const blip = prepare();
   await net!.advance(200);

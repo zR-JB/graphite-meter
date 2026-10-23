@@ -51,7 +51,7 @@ export interface Flushed {
   at: number;
 }
 
-/** A lane worker reopens with `download` or `upload` after each ending; `stop` lets a download's body end, which `stopped` acknowledges. */
+/** A lane worker reopens with `download` or `upload` after each ending; `stop` lets a download's body end, which `stopped` acknowledges, and frees the worker for another lane. */
 export type LaneCommand =
   | {
       type: "download";
@@ -137,10 +137,11 @@ export type ProbeCommand =
     }
   | { type: "measure" }
   | { type: "pace"; intervalMs: number | null; maxInFlight?: number }
-  /** Dials again after the bus stalled; the worker never redials on its own. */
+  /** Dials again after the bus stalled; the worker redials on its own only at the server's bound. */
   | { type: "dial" }
-  /** Ends the measured window. `drained` acknowledges it once the window's probes resolved. */
-  | { type: "stop" };
+  | { type: "renew" }
+  /** Ends the measured window. `drained` acknowledges the latest stop once the window's probes resolved. */
+  | { type: "stop"; id: number };
 
 /** Outcomes cross with `observedAt` on epoch ms, since realm clocks differ. The owner translates them in place. */
 export type ProbeReport =
@@ -151,4 +152,5 @@ export type ProbeReport =
   | { type: "resumed" }
   | { type: "sign-in" }
   | Handshake
-  | { type: "drained" };
+  | { type: "drained"; id: number }
+  | { type: "renewing" };

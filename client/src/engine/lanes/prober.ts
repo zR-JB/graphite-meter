@@ -61,6 +61,7 @@ export class Prober {
   #measuring = false;
   /** A window ended and its probes in flight have yet to resolve. */
   #draining = false;
+  #stopId = 0;
   #timerAt = Infinity;
 
   constructor(
@@ -97,6 +98,12 @@ export class Prober {
     if (!this.#stalled) this.io.post({ type: "stalled", detail });
     this.#stalled = true;
     this.#settle(now);
+  }
+
+  renewing(): void {
+    if (this.#state !== "open") return;
+    this.#state = "connecting";
+    this.#interrupt();
   }
 
   /** A dial outlived its budget and still awaits the browser's verdict: an outage as far as the owner can tell. */
@@ -167,8 +174,9 @@ export class Prober {
   }
 
   /** Ends the measured window: its probes drain to their deadlines, at most 10 s away; the bus probes on, unmeasured. */
-  stop(): void {
-    if (this.#state === "stopped") return this.io.post({ type: "drained" });
+  stop(id = 0): void {
+    this.#stopId = id;
+    if (this.#state === "stopped") return this.io.post({ type: "drained", id });
     const now = this.clock.now();
     this.#measuring = false;
     this.#draining = true;
@@ -320,7 +328,7 @@ export class Prober {
     this.#sweep(now);
     this.#flush();
     this.#draining = false;
-    this.io.post({ type: "drained" });
+    this.io.post({ type: "drained", id: this.#stopId });
   }
 
   /** Ends a finished drain, or arms the timer for the earliest thing due; an early firing just re-arms. */

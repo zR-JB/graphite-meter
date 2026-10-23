@@ -119,7 +119,7 @@ test.chrome("settings discovery is bounded, reused and canceled on close", async
   const first = await activity.read();
   expect(first.requests).toEqual(fleet.map((server) => server.url));
   expect(first.peak).toBeLessThanOrEqual(4);
-  expect([first.probes, first.workers, first.activeWorkers]).toEqual([2, 1, 1]);
+  expect([first.probes, first.workers, first.activeWorkers]).toEqual([2, 2, 2]);
   await closeSettings(page);
   await openSettings(page);
   expect(await activity.read()).toEqual(first);
@@ -127,10 +127,10 @@ test.chrome("settings discovery is bounded, reused and canceled on close", async
   const peer = choices.getByRole("checkbox", { name: /^Frankfurt/ });
   await peer.click();
   await expect(ready).toBeVisible({ timeout: 15_000 });
-  await expect.poll(async () => (await activity.read()).activeWorkers).toBe(1);
+  await expect.poll(async () => (await activity.read()).activeWorkers).toBe(3);
   const selected = await activity.read();
   expect(selected.requests).toEqual(first.requests);
-  expect([selected.probes, selected.workers]).toEqual([4, 2]);
+  expect([selected.probes, selected.workers]).toEqual([4, 3]);
   await peer.click();
   await closeSettings(page);
 
@@ -141,7 +141,7 @@ test.chrome("settings discovery is bounded, reused and canceled on close", async
   const refreshed = await activity.read();
   const signIn = refreshed.requests.filter((origin) => origin === locked.url);
   expect(signIn).toHaveLength(1);
-  expect([refreshed.probes, refreshed.workers]).toEqual([4, 2]);
+  expect([refreshed.probes, refreshed.workers]).toEqual([4, 3]);
   expect(refreshed.peak).toBeLessThanOrEqual(4);
 
   await closeSettings(page);
@@ -153,7 +153,7 @@ test.chrome("settings discovery is bounded, reused and canceled on close", async
   expect((await activity.read()).catalogs).toEqual([home.url]);
 });
 
-test("metadata timeouts back off without starving later servers", async (page) => {
+test("metadata timeouts wait for the next read without starving later servers", async (page) => {
   const activity = await observe(page, [frankfurt.url, fleet[2]!.url]);
   await open(page);
   const settings = await openSettings(page);

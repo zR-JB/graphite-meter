@@ -30,6 +30,7 @@ function connect(
     limiter: createLimiter(),
     openProbeChannel: buses.open,
     active: signal(true),
+    hidden: signal(false),
     online: signal(true),
     metadata: signal(false),
     latencyServer: signal(shown ? entry.id : null),
@@ -59,7 +60,7 @@ function connect(
   return { connection, env, selected, buses, idle, readiness };
 }
 
-test("failed checks back off 5 s then 10 s, resume makes them due, and a grant's end waits for the user", async () => {
+test("a failed discovery is read again each minute, resume makes it due, and a grant's end waits for the user", async () => {
   let up = false;
   net = fakeNet((url) =>
     !up
@@ -76,17 +77,17 @@ test("failed checks back off 5 s then 10 s, resume makes them due, and a grant's
   };
   const grant = {
     token: "t".repeat(43),
-    deadline: 60_000,
+    deadline: 120_000,
     expires: Infinity,
     maximumLifetimeMs: 28_800_000,
   };
   const { connection } = connect(peer, { auth: grantAuth(peer, grant, net.now) });
   await net.advance(20_000);
-  expect(net.sent("/preflight")).toEqual([0, 5_000, 15_000]);
+  expect(net.sent("/preflight")).toEqual([0]);
   expect(connection.view.peek().message).toBe("Could not reach this test server");
   connection.resume();
-  await net.advance(0);
-  expect(net.sent("/preflight")).toEqual([0, 5_000, 15_000, 20_000]);
+  await net.advance(61_000);
+  expect(net.sent("/preflight")).toEqual([0, 20_000, 80_000]);
   up = true;
   connection.resume();
   await net.advance(0);
@@ -130,7 +131,7 @@ test("a device that says it is offline still checks its servers, and says offlin
   });
   expect(connection.prepared(0)).not.toBeNull();
   reachable = false;
-  await net.advance(5_000);
+  await net.advance(60_000);
   expect(connection.view.peek()).toMatchObject({
     readiness: "failed",
     message: "This device is offline",
@@ -142,7 +143,7 @@ test("a device that says it is offline still checks its servers, and says offlin
   expect(connection.prepared(net.now() - 1_000)).not.toBeNull();
 });
 
-test("a selected server re-reads discovery every 5 s without a checking flash or moving Automatic", async () => {
+test("a selected server re-reads discovery each minute without a checking flash or moving Automatic", async () => {
   const hops = ["h2", null, "h3"];
   let alive = true;
   net = fakeNet((url) => {
@@ -156,8 +157,8 @@ test("a selected server re-reads discovery every 5 s without a checking flash or
     };
   });
   const { connection, readiness } = connect(self);
-  await net.advance(14_000);
-  expect(net.sent("/preflight")).toEqual([0, 5_100, 10_200]);
+  await net.advance(140_000);
+  expect(net.sent("/preflight")).toEqual([0, 60_100, 120_200]);
   // The negotiated head, seen over HTTP/2 first, stays verified through a re-read without a hop and one over HTTP/3.
   expect(net.sent("/probe")).toEqual([100]);
   expect(connection.view.peek().throughput.path?.fetch).toMatchObject({
@@ -165,7 +166,7 @@ test("a selected server re-reads discovery every 5 s without a checking flash or
     protocol: "http2",
   });
   alive = false;
-  await net.advance(5_000);
+  await net.advance(60_000);
   expect(connection.view.peek().message).toBe("Could not reach this test server");
   expect(readiness).toEqual(["checking", "verified", "failed"]);
 });
@@ -185,8 +186,8 @@ test("a timer that fires before a coarse page clock reaches its time still re-re
   await net.advance(1_000);
   aheadMs = 0;
   alive = false;
-  await net.advance(5_000);
-  expect(net.sent("/preflight")).toEqual([0, 5_001]);
+  await net.advance(60_000);
+  expect(net.sent("/preflight")).toEqual([0, 60_001]);
   expect(connection.view.peek().message).toBe("Could not reach this test server");
 });
 
@@ -214,7 +215,7 @@ test("a server selected again keeps evidence up to 2 min old and proves older ev
   }
 });
 
-test("the bus that proved the shown server's latency becomes its idle monitor, and every other bus closes", async () => {
+test("the bus that proved the shown server's latency monitors it, gives way to a new check's after a stall, and stays once not shown", async () => {
   net = fakeNet((url) =>
     url.pathname === "/preflight"
       ? { body: preflight([h(".", "http1")], [ws(".")]) }
@@ -241,7 +242,6 @@ test("the bus that proved the shown server's latency becomes its idle monitor, a
   });
   expect(idle.length).toBe(30);
   expect(net.sent("/preflight")).toEqual([0]);
-  // A bus that went quiet leaves its path to be proven again, and the new check's bus monitors next.
   monitor.events.stalled("connection lost");
   expect(connection.view.peek().connectivity).toBe("offline");
   await net.advance(1_000);
@@ -255,11 +255,10 @@ test("the bus that proved the shown server's latency becomes its idle monitor, a
     idle: true,
     connectivity: "connected",
   });
-  // A server no longer shown is no longer monitored, and its discovery is re-read again.
   env.latencyServer.set(null);
-  expect(buses.opened[1]!.disposed).toBe(true);
-  await net.advance(5_000);
-  expect(net.sent("/preflight")).toEqual([0, 30_000, 35_000]);
+  await net.advance(30_000);
+  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true, false]);
+  expect(net.sent("/preflight")).toEqual([0, 60_000]);
 });
 
 test("a monitored server re-reads its discovery each minute, quietly, and a new generation proves its paths again", async () => {
@@ -280,7 +279,7 @@ test("a monitored server re-reads its discovery each minute, quietly, and a new 
   await net.advance(3_000);
   expect(net.sent("/preflight")).toEqual([0, 60_000, 120_000]);
   expect(net.sent("/probe")).toEqual([0, 0, 120_000, 120_000]);
-  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true, false]);
+  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([false]);
   expect(connection.view.peek()).toMatchObject({
     readiness: "verified",
     idle: true,
@@ -288,7 +287,7 @@ test("a monitored server re-reads its discovery each minute, quietly, and a new 
   });
 });
 
-test("a latency check's bus closes with the check when it is cut short or no monitor wants it", async () => {
+test("a latency check's bus stays with its server, unshown too, and closes when the check is cut short or the server goes", async () => {
   net = fakeNet((url) =>
     url.pathname === "/preflight"
       ? { body: preflight([h(".", "http1")], [ws(".")]) }
@@ -297,7 +296,7 @@ test("a latency check's bus closes with the check when it is cut short or no mon
   const unshown = connect(self, { latency: true, shown: false });
   await net.advance(1_000);
   expect(unshown.connection.view.peek().readiness).toBe("verified");
-  expect(unshown.buses.opened.map(({ disposed }) => disposed)).toEqual([true]);
+  expect(unshown.buses.opened.map(({ disposed }) => disposed)).toEqual([false]);
   const cut = connect(self, { latency: true });
   await net.advance(200);
   cut.env.selections.latency.set(parseSelection("transport:websocket"));
@@ -306,4 +305,102 @@ test("a latency check's bus closes with the check when it is cut short or no mon
   expect(cut.buses.opened.map(({ disposed }) => disposed)).toEqual([true, false]);
   cut.connection.dispose();
   expect(cut.buses.opened.map(({ disposed }) => disposed)).toEqual([true, true]);
+});
+
+test("a failed path check waits for a reason to check again, never for a timer", async () => {
+  let probing = false;
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")]) }
+      : probing
+        ? { body: PROBE, hop: "http/1.1" }
+        : "unreachable",
+  );
+  const { connection } = connect(self);
+  await net.advance(300_000);
+  expect(net.sent("/probe")).toEqual([0]);
+  expect(connection.view.peek().readiness).toBe("failed");
+  probing = true;
+  await connection.check({ since: net.now() });
+  expect(net.sent("/probe")).toEqual([0, 300_000]);
+  expect(connection.view.peek().readiness).toBe("verified");
+});
+
+test("a run that measured over a path without failing it proves it, as a check would", async () => {
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")]) }
+      : { body: PROBE, hop: "http/1.1" },
+  );
+  const { connection } = connect(self);
+  await net.advance(130_000);
+  const since = net.now() - 120_000;
+  expect(connection.prepared(since)).toBeNull();
+  connection.proved(["throughput"]);
+  expect(connection.prepared(since)?.throughput.verifiedAt).toBe(net.now());
+  expect(net.sent("/probe")).toEqual([0]);
+});
+
+test("a path a run failed on is proved again at the next start, not at once", async () => {
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")]) }
+      : { body: PROBE, hop: "http/1.1" },
+  );
+  const { connection } = connect(self);
+  await net.advance(1_000);
+  connection.invalidate(["throughput"], true);
+  await net.advance(90_000);
+  expect(net.sent("/preflight")).toEqual([0, 60_000]);
+  expect(net.sent("/probe")).toEqual([0]);
+  expect(connection.view.peek().readiness).toBe("unchecked");
+  await connection.check({ since: net.now() });
+  expect(net.sent("/probe")).toEqual([0, 91_000]);
+});
+
+test("a parked bus that went quiet while a run held the checks is proved again once checks may run", async () => {
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")], [ws(".")]) }
+      : { body: PROBE, hop: "http/1.1" },
+  );
+  const { env, buses } = connect(self, { latency: true });
+  await net.advance(1_000);
+  env.active.set(false);
+  buses.opened[0]!.events.stalled("connection lost");
+  await net.advance(5_000);
+  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true]);
+  expect(net.sent("/probe")).toEqual([0, 0]);
+  env.active.set(true);
+  await net.advance(1_000);
+  expect(net.sent("/probe")).toEqual([0, 0, 6_000]);
+  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true, false]);
+});
+
+test("transfer workers no run took between two timed discovery reads end at the second", async () => {
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")]) }
+      : { body: PROBE, hop: "http/1.1" },
+  );
+  const terminated: string[] = [];
+  const Real = globalThis.Worker;
+  globalThis.Worker = class {
+    constructor(readonly url: string) {}
+    terminate() {
+      terminated.push(this.url);
+    }
+  } as unknown as typeof Worker;
+  try {
+    const { connection } = connect(self);
+    await net.advance(1_000);
+    const { workers } = connection.link;
+    workers.give("lane", workers.take("lane"));
+    await net.advance(60_000);
+    expect(terminated).toEqual([]);
+    await net.advance(60_000);
+    expect(terminated).toHaveLength(1);
+  } finally {
+    globalThis.Worker = Real;
+  }
 });
