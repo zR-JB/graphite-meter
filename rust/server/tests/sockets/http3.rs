@@ -259,6 +259,32 @@ async fn cancelling_an_idle_progress_stream_releases_its_handler() {
 }
 
 #[tokio::test]
+async fn a_reply_stopped_while_the_connection_has_no_credit_is_reset() {
+    let h3 = H3::start(&[]).await;
+    let mut transport = transport(None);
+    transport.receive_window((64_u32 << 10).into());
+    let connection = h3.connect(transport).await;
+    let open = async || {
+        let (mut send, recv) = connection.open("GET", ENDLESS).await;
+        send.finish().await.unwrap();
+        recv
+    };
+    let mut credit_holder = open().await;
+    credit_holder.response().await.unwrap();
+    let mut stopped = open().await;
+    h3.server.until_active(2).await;
+    stopped.stop(Code::H3_REQUEST_CANCELLED);
+    let reset = async {
+        while connection.resets() == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(2), reset)
+        .await
+        .expect("the stopped reply is reset");
+}
+
+#[tokio::test]
 async fn connection_credit_reaches_the_reply_that_waited_longest() {
     let h3 = H3::start(&[]).await;
     let mut transport = transport(None);

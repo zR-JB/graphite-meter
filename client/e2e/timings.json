@@ -3,7 +3,7 @@
   "files": {
     "e2e/network/lockout.test.ts": 154080,
     "e2e/network/distance-tcp.test.ts": 136625,
-    "e2e/network/distance-quic.test.ts": 120895,
+    "e2e/network/distance-quic.test.ts": 181343,
     "e2e/network/outage.test.ts": 80688,
     "e2e/network/http3.test.ts": 75985,
     "e2e/network/tabs.test.ts": 68949,
