@@ -22,7 +22,7 @@ from scripts.legal.rust_inventory import compiled, components, selected
 from scripts.legal.rust_platform import SYSROOT
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
-NOQ = "git+https://github.com/zR-JB/noq?rev=2aba4e49f5c73f43ed23c40677ec96508842aa3c#2aba4e49f5c73f43ed23c40677ec96508842aa3c"
+NOQ = "git+https://github.com/zR-JB/noq?rev=54b63742f3fe286d97f98386db823bd8ed2eb6be#54b63742f3fe286d97f98386db823bd8ed2eb6be"
 
 
 class Scratch(unittest.TestCase):
@@ -69,7 +69,7 @@ class InventoryTests(Scratch):
         found, inventory, failures = components(metadata, builds, reviews, [])
         self.assertEqual(failures, {})
         self.assertEqual([(item.name, item.modified) for item in found], [("noq", True), ("ring", False)])
-        self.assertEqual(inventory[0]["upstreamRevision"], "2aba4e49f5c73f43ed23c40677ec96508842aa3c")
+        self.assertEqual(inventory[0]["upstreamRevision"], "54b63742f3fe286d97f98386db823bd8ed2eb6be")
         _, _, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
                                                        self.review("noq", "1.2.0", NOQ, True)], [])
         self.assertEqual(list(failures), [("noq", "1.3.0", NOQ)])
