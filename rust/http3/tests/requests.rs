@@ -2,14 +2,8 @@
 mod support;
 
 use bytes::Bytes;
-use graphite_meter_http3::{Code, Error, server};
-use std::{
-    future::{Future, poll_fn},
-    pin::pin,
-    sync::atomic::Ordering,
-    task::Poll,
-    time::Duration,
-};
+use graphite_meter_http3::{Code, Error};
+use std::{sync::atomic::Ordering, time::Duration};
 use support::*;
 
 #[tokio::test]
@@ -302,7 +296,7 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
 }
 
 #[tokio::test]
-async fn deadlines_close_idle_connections_and_stale_heads() -> Result<(), TestError> {
+async fn stale_heads_end_and_idle_connections_get_no_close() -> Result<(), TestError> {
     let Served { peers, serving, .. } = pair(PLAIN).await?.serve(|_, _| async {});
     let (driver, _requests) = client(&peers);
     let (send, mut recv) = peers.bi(&frame(0x01, &[0; 10])[..4]).await?;
@@ -319,46 +313,15 @@ async fn deadlines_close_idle_connections_and_stale_heads() -> Result<(), TestEr
         peers.server.close_reason().is_none(),
         "the stale head made the connection live"
     );
-    jump(Duration::from_secs(16)).await;
-    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
-
-    Ok(())
-}
-
-/// A request that ends before the driver's next pass still restarts the 15 s idle period.
-#[tokio::test]
-async fn a_request_finished_between_passes_restarts_the_idle_period() -> Result<(), TestError> {
-    let peers = pair(PLAIN).await?;
-    let mut connection = server::Connection::new(peers.server.clone(), Some(peers.budget.clone()));
-    // One pass starts the idle period; the connection then waits unpolled.
-    let waiting = poll_fn(|cx| Poll::Ready(pin!(connection.next()).poll(cx).is_pending())).await;
-    assert!(waiting);
-    jump(Duration::from_secs(10)).await;
-    let (mut send, mut recv) = peers.bi(&request_head(&[])).await?;
-    send.finish()?;
-    let (request, stream) = connection
-        .next()
-        .await?
-        .ok_or("a request")?
-        .resolve()
-        .await?;
-    respond(request, stream).await;
-    assert_eq!(raw_stream(&mut recv).await.1, Ok(()));
-    let serving = tokio::spawn(async move {
-        while connection.next().await?.is_some() {}
-        Ok::<_, Error>(())
-    });
-    yields().await;
-    jump(Duration::from_secs(14)).await;
+    // Only the transport's idle timeout, 120 s here, ends it, and that sends nothing.
+    jump(Duration::from_secs(60)).await;
     yields().await;
     assert!(
-        peers.server.close_reason().is_none(),
-        "closed within 15 s of the request"
+        peers.client.close_reason().is_none(),
+        "an idle connection gets no close"
     );
-    jump(Duration::from_secs(2)).await;
-    assert_eq!(serving.await?, Ok(()));
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+    drop((driver, serving));
+
     Ok(())
 }
 

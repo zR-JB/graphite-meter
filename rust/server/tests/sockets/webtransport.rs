@@ -1,13 +1,10 @@
-//! WebTransport sessions: datagram downloads, minimal credit, the idle ending and session-only connections.
+//! WebTransport sessions: datagram downloads, minimal credit, the idle ending and the connections they leave.
 
 use super::{
     http3::{Connection, H3, pass, transport},
     *,
 };
-use graphite_meter_http3::{
-    Code,
-    webtransport::{Session, SessionClose},
-};
+use graphite_meter_http3::webtransport::{Session, SessionClose};
 use http::{Request, Response};
 
 impl Connection {
@@ -72,25 +69,32 @@ async fn a_datagram_download_floods_its_bytes_a_datagram_at_a_time() {
 }
 
 #[tokio::test]
-async fn a_connection_that_carried_only_sessions_closes_when_the_peer_ends_its_last() {
+async fn connections_idle_open_after_their_sessions_and_refused_connects_hold_no_share() {
     let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
-    connection.session("/wt/ping").await.close(0, "").await;
-    assert_eq!(
-        connection.closed_within(Duration::from_secs(1)).await,
-        Some(Code::H3_NO_ERROR)
-    );
-    let serving = h3.connect(transport(None)).await;
-    assert_eq!(serving.send("GET", "/probe", b"").await.0.status(), 200);
-    serving.session("/wt/ping").await.close(0, "").await;
-    for _ in 0..2 {
+    let mut idle = Vec::new();
+    for _ in 0..12 {
+        let connection = h3.connect(transport(None)).await;
+        let refused = connection.open_session("/wt/missing").await.err();
         assert_eq!(
-            serving.send("GET", "/probe", b"").await.0.status(),
-            200,
-            "it served a request too"
+            refused.map(|answer| answer.status()),
+            Some(http::StatusCode::NOT_FOUND)
+        );
+        idle.push(connection);
+    }
+    let ended = h3.connect(transport(None)).await;
+    ended.session("/wt/ping").await.close(0, "").await;
+    idle.push(ended);
+    pass(Duration::from_secs(60)).await;
+    for connection in &idle {
+        assert_eq!(
+            connection.closed_within(Duration::from_millis(10)).await,
+            None,
+            "an idle connection gets no close"
         );
     }
-    assert_eq!(serving.quic.close_reason(), None);
+    let bus = idle[0].session("/wt/ping").await;
+    bus.send_datagram(b"PING,1").unwrap();
+    bus.read_datagram().await.expect("its PONG");
 }
 
 #[tokio::test]

@@ -113,8 +113,11 @@ impl Requests {
         let request = head.map(|()| Body::empty());
         match self.app.handle(request, &self.connection, exchange).await {
             Outcome::WebTransport(response, lane, plan) => {
-                let (window, mut funding) = (&self.window, Funding::Unfunded(None));
+                let (window, mut funding, mut reader) =
+                    (&self.window, Funding::Unfunded(None), None);
                 let fund = || {
+                    // Counted first, so another upload's end cannot return the credit this one just took.
+                    reader.get_or_insert_with(|| window.reader());
                     funding.fund(watch, self.app.budget(), |keys| window.fund(keys));
                     matches!(funding, Funding::Funded)
                 };

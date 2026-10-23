@@ -15,8 +15,8 @@ use crate::{
 use graphite_meter_net::quic::{RECEIVE_WINDOW, RECEIVE_WINDOW_FLOOR};
 use std::net::IpAddr;
 
-/// The QUIC connections one client address may hold within its connection share.
-pub const QUIC_PER_CLIENT: usize = 8;
+/// A client's admitted uploads hold receive credit for this many QUIC connection windows at once.
+pub const WINDOWS_PER_CLIENT: usize = 8;
 /// The receive credit a funded QUIC connection holds past its floor.
 pub const CONNECTION_CREDIT: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
 
@@ -29,16 +29,11 @@ static TOTAL_REFUSALS: RateLimited = RateLimited::new(
     module_path!(),
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Transport {
-    Tcp,
-    Quic,
-}
-
 pub struct Quotas {
     limits: Limits,
     connections: Quota,
-    quic: Quota,
+    /// Unbounded: it only tells whether a source has a QUIC handshake in progress.
+    handshakes: Quota,
     operations: Quota,
     sessions: Quota,
     credit: Quota,
@@ -47,34 +42,28 @@ pub struct Quotas {
 impl Quotas {
     /// `operator` is the principal every password login shares, which bounds no window credit.
     pub fn new(limits: Limits, budget: &Budget, operator: Option<ClientKey>) -> Self {
-        let quic_share = limits.connections_per_client.get().min(QUIC_PER_CLIENT);
         Self {
             limits,
             connections: Quota::new(
                 limits.connections.get(),
                 limits.connections_per_client.get(),
             ),
-            quic: Quota::new(usize::MAX, quic_share),
+            handshakes: Quota::new(usize::MAX, usize::MAX),
             operations: Quota::new(limits.operations.get(), limits.operations_per_client.get()),
             sessions: Quota::new(limits.sessions.get(), limits.sessions_per_client.get()),
-            credit: Quota::client_windows(budget.clone(), quic_share * CONNECTION_CREDIT, operator),
+            credit: Quota::client_windows(
+                budget.clone(),
+                WINDOWS_PER_CLIENT * CONNECTION_CREDIT,
+                operator,
+            ),
         }
     }
 
-    /// A connection from `peer` keyed by `keys`; a QUIC connection also takes one of the client's QUIC shares.
-    pub fn connection(
-        &self,
-        peer: IpAddr,
-        keys: &ClientKeys,
-        transport: Transport,
-    ) -> Option<Hold> {
-        let quic = match self.connections.acquire(keys, 1) {
-            Ok(hold) if transport == Transport::Tcp => return Some(hold),
-            Ok(hold) => match self.quic.acquire(keys, 1) {
-                Ok(quic) => return Some(hold.join(quic)),
-                Err(_) => true,
-            },
-            Err(Refusal::Client) => false,
+    /// A connection from `peer` keyed by `keys`, TCP or QUIC alike.
+    pub fn connection(&self, peer: IpAddr, keys: &ClientKeys) -> Option<Hold> {
+        match self.connections.acquire(keys, 1) {
+            Ok(hold) => return Some(hold),
+            Err(Refusal::Client) => {}
             Err(Refusal::Total) => {
                 TOTAL_REFUSALS.write(format_args!(
                     "connection from {peer} refused: GM_MAX_CONNECTIONS={} reached; raise it within \
@@ -83,30 +72,25 @@ impl Quotas {
                 ));
                 return None;
             }
-        };
+        }
         let held = CLIENT_REFUSALS.admit(keys.narrowest()?)?;
         let (per_client, refused) = (self.limits.connections_per_client, held + 1);
-        if quic {
-            let share = per_client.get().min(QUIC_PER_CLIENT);
-            log!(
-                Warn,
-                "admission",
-                "QUIC connections from {peer} refused: {share} per client reached, {refused} since its last line"
-            );
-        } else {
-            log!(
-                Warn,
-                "admission",
-                "connections from {peer} refused: GM_MAX_CONNECTIONS_PER_CLIENT={per_client} reached, {refused} since \
-                 its last line; set GM_TRUSTED_PROXIES for a proxy, or raise the limit for clients sharing an address"
-            );
-        }
+        log!(
+            Warn,
+            "admission",
+            "connections from {peer} refused: GM_MAX_CONNECTIONS_PER_CLIENT={per_client} reached, {refused} since \
+             its last line; set GM_TRUSTED_PROXIES for a proxy, or raise the limit for clients sharing an address"
+        );
         None
     }
 
-    /// Whether any key of a source holds a QUIC connection, so that its unvalidated handshakes need Retry.
-    pub fn holds_quic(&self, keys: &ClientKeys) -> bool {
-        self.quic.holds_any(keys)
+    /// Held while a QUIC handshake from `keys` is in progress, so that the source's next unvalidated one needs Retry.
+    pub fn handshake(&self, keys: &ClientKeys) -> Option<Hold> {
+        self.handshakes.acquire(keys, 1).ok()
+    }
+
+    pub fn handshaking(&self, keys: &ClientKeys) -> bool {
+        self.handshakes.holds_any(keys)
     }
 
     /// Whether a quarter of the connection capacity is used, so that unvalidated QUIC handshakes need Retry.
@@ -190,28 +174,38 @@ mod tests {
     }
 
     #[test]
-    fn a_client_holds_eight_quic_connections_within_its_connection_share() {
+    fn a_client_holds_connections_of_any_transport_within_its_share() {
         let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), None);
         let (ip, source) = ("192.0.2.1".parse().unwrap(), client("192.0.2.1"));
-        let quic: Vec<_> = (0..8)
-            .map(|_| quotas.connection(ip, &source, Transport::Quic).unwrap())
+        let held: Vec<_> = (0..32)
+            .map(|_| quotas.connection(ip, &source).unwrap())
             .collect();
-        assert!(quotas.connection(ip, &source, Transport::Quic).is_none());
-        assert!(quotas.holds_quic(&source));
-        let tcp: Vec<_> = (0..24)
-            .map(|_| quotas.connection(ip, &source, Transport::Tcp).unwrap())
-            .collect();
-        assert!(
-            quotas.connection(ip, &source, Transport::Tcp).is_none(),
-            "32 connections in all"
-        );
-        drop((quic, tcp));
-        assert!(!quotas.holds_quic(&source));
+        assert!(quotas.connection(ip, &source).is_none());
+        drop(held);
         let proxy = ClientKeys::Exempt;
         let proxied: Vec<_> = (0..40)
-            .map(|_| quotas.connection(ip, &proxy, Transport::Quic).unwrap())
+            .map(|_| quotas.connection(ip, &proxy).unwrap())
             .collect();
         assert_eq!(proxied.len(), 40, "a trusted proxy charges only the total");
+    }
+
+    #[test]
+    fn a_source_is_handshaking_while_it_holds_a_handshake() {
+        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), None);
+        let source = client("192.0.2.1");
+        assert!(!quotas.handshaking(&source));
+        let handshakes: Vec<_> = (0..100)
+            .map(|_| quotas.handshake(&source).unwrap())
+            .collect();
+        assert!(quotas.handshaking(&source));
+        assert!(!quotas.handshaking(&client("192.0.2.2")));
+        drop(handshakes);
+        assert!(!quotas.handshaking(&source));
+        let _proxied = quotas.handshake(&ClientKeys::Exempt).unwrap();
+        assert!(
+            !quotas.handshaking(&ClientKeys::Exempt),
+            "a trusted proxy's clients are not one source"
+        );
     }
 
     #[test]

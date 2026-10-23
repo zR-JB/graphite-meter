@@ -11,13 +11,10 @@ use crate::{
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, RecvHalf};
 use graphite_meter_net::quic::{
-    MAX_SEND_WINDOW, MIN_SEND_WINDOW, RECEIVE_WINDOW, server_transport,
+    MAX_SEND_WINDOW, MIN_SEND_WINDOW, RECEIVE_WINDOW, RECEIVE_WINDOW_FLOOR, server_transport,
 };
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     task::{Context, Poll},
     time::Duration,
 };
@@ -79,14 +76,13 @@ pub fn endpoint_bytes(
         .checked_add(kernel)
 }
 
-/// A connection's noq-charged share: its floor until dropped, and its first funded upload's credit.
+/// A connection's noq-charged share: its floor until dropped, and a funded upload's credit while uploads read.
 #[derive(Debug)]
 pub(super) struct ConnectionBudget {
     budget: Budget,
     shared: Arc<dyn noq::SharedBudget>,
     _floor: Lease,
     held: Mutex<Held>,
-    reserved: AtomicBool,
 }
 
 #[derive(Debug, Default)]
@@ -94,6 +90,8 @@ struct Held {
     credit: Option<(Lease, Hold)>,
     undrawn: usize,
     overdraft: usize,
+    /// Admitted uploads reading on the connection, funded or not.
+    readers: usize,
 }
 
 impl ConnectionBudget {
@@ -103,11 +101,10 @@ impl ConnectionBudget {
             shared: budget.noq(),
             _floor: floor,
             held: Mutex::default(),
-            reserved: AtomicBool::new(false),
         }
     }
 
-    /// Reserves the credit once, from the budget and the share of the client `keys` name; whether it is reserved.
+    /// Reserves the credit, from the budget and the share of the client `keys` name; whether it is reserved.
     pub(super) fn reserve(&self, app: &App, keys: &ClientKeys) -> bool {
         let mut held = lock(&self.held);
         if held.credit.is_none()
@@ -116,14 +113,30 @@ impl ConnectionBudget {
         {
             held.undrawn += CONNECTION_CREDIT;
             held.credit = Some((credit, share));
-            self.reserved.store(true, Ordering::Relaxed);
         }
         held.credit.is_some()
     }
 
-    /// Whether the credit is reserved, which it stays until the connection is gone.
     pub(super) fn reserved(&self) -> bool {
-        self.reserved.load(Ordering::Relaxed)
+        lock(&self.held).credit.is_some()
+    }
+
+    /// An admitted upload began or stopped reading; whether the last to stop returned the credit, the bytes it still
+    /// covers moving to the budget. Under pressure the connection keeps it.
+    fn reading(&self, reading: bool) -> bool {
+        let mut held = lock(&self.held);
+        if reading {
+            held.readers += 1;
+            return false;
+        }
+        held.readers -= 1;
+        let drawn = CONNECTION_CREDIT - held.undrawn;
+        if held.readers > 0 || held.credit.is_none() || !self.shared.try_charge(drawn) {
+            return false;
+        }
+        held.overdraft += drawn;
+        (held.undrawn, held.credit) = (0, None);
+        true
     }
 }
 
@@ -152,7 +165,7 @@ impl noq::SharedBudget for ConnectionBudget {
 const SEND_WINDOW_STEP: u64 = 256 << 10;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 
-/// The receive window: 64 KiB, then once an upload reads autotuned 768 KiB to 48 MiB on its client's credit.
+/// The receive window: 64 KiB, then while funded uploads read autotuned 768 KiB to 48 MiB on their client's credit.
 pub(super) struct QuicWindow {
     app: Arc<App>,
     quic: noq::Connection,
@@ -172,8 +185,28 @@ impl QuicWindow {
         reserved
     }
 
-    pub(super) fn raised(&self) -> bool {
-        self.budget.reserved()
+    /// An admitted upload reads on the connection until the guard drops.
+    pub(super) fn reader(&self) -> Reader<'_> {
+        self.read(true);
+        Reader(self)
+    }
+
+    /// Lowers the window once the credit is returned, raising it again if an upload funded it meanwhile.
+    fn read(&self, reading: bool) {
+        if self.budget.reading(reading) {
+            self.quic.set_receive_window(RECEIVE_WINDOW_FLOOR.into());
+            if self.budget.reserved() {
+                self.quic.set_receive_window(RECEIVE_WINDOW.into());
+            }
+        }
+    }
+}
+
+pub(super) struct Reader<'a>(&'a QuicWindow);
+
+impl Drop for Reader<'_> {
+    fn drop(&mut self) {
+        self.0.read(false);
     }
 }
 
@@ -187,6 +220,10 @@ impl ReceiveWindow for QuicWindow {
 
     fn raise(&self, _: &mut RecvHalf, keys: &ClientKeys) -> bool {
         self.fund(keys)
+    }
+
+    fn reading(&self, _: &mut RecvHalf, reading: bool) {
+        self.read(reading);
     }
 
     fn poll_data(

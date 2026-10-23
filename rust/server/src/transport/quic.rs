@@ -9,15 +9,10 @@ pub(crate) use budget::{endpoint_bytes, floor_bytes, noq_floor};
 pub(crate) use endpoint::OVERFLOW;
 pub use endpoint::{Binding, Endpoints};
 
-use super::{
-    PEER_FAILURES,
-    accept::Listen,
-    lifecycle::{Activity, Event, Grace, Lifecycle},
-    tls::Certificates,
-};
+use super::{PEER_FAILURES, accept::Listen, tls::Certificates};
 use crate::{
     app::{App, Connection, Endpoint},
-    limits::Lease,
+    limits::{Hold, Lease},
 };
 use budget::{ConnectionBudget, QuicWindow, SendWindow};
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -25,14 +20,7 @@ use graphite_meter_http3::{self as http3, server};
 use graphite_meter_proto::lane::LaneEnding;
 use request::Requests;
 use shard::{Occupant, Shard};
-use std::{
-    future::{Future, poll_fn},
-    io,
-    net::SocketAddr,
-    pin::pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{future::Future, io, net::SocketAddr, pin::pin, sync::Arc, time::Duration};
 use tokio::{
     runtime::Handle,
     time::{MissedTickBehavior, interval, timeout},
@@ -54,6 +42,7 @@ pub struct Listener {
 pub struct Arrival {
     incoming: noq::Incoming,
     occupant: Option<Occupant>,
+    handshake: Hold,
 }
 
 #[derive(Clone)]
@@ -85,12 +74,18 @@ impl Listen for Listener {
             .await
             .ok_or(io::ErrorKind::InvalidInput)?;
         let peer = incoming.remote_address();
-        if !incoming.remote_address_validated() && self.app.quic_retry(peer.ip().to_canonical()) {
+        let validated = incoming.remote_address_validated();
+        let Some(handshake) = self.app.quic_handshake(peer.ip().to_canonical(), validated) else {
             let _ = incoming.retry();
             return Ok(None);
-        }
+        };
         let occupant = self.shard.as_ref().map(Shard::occupy);
-        Ok(Some((Arrival { incoming, occupant }, peer)))
+        let arrival = Arrival {
+            incoming,
+            occupant,
+            handshake,
+        };
+        Ok(Some((arrival, peer)))
     }
 
     fn name(&self) -> String {
@@ -128,7 +123,11 @@ impl Http3 {
             .lease(floor)
             .map(|floor| self.budget(floor));
         let listener = self.clone();
-        let Arrival { incoming, occupant } = arrival;
+        let Arrival {
+            incoming,
+            occupant,
+            handshake,
+        } = arrival;
         async move {
             let _occupant = occupant;
             let Some((budget, config)) = budget else {
@@ -155,6 +154,7 @@ impl Http3 {
                     }
                 }
             };
+            drop(handshake);
             if let Err(error) = listener.serve(quic, budget, peer).await
                 && !ended_normally(&error)
             {
@@ -175,7 +175,7 @@ impl Http3 {
         (budget, Arc::new(config))
     }
 
-    /// Serves requests until the layer or lifecycle ends the connection; a stop closes every session first.
+    /// Serves requests until the connection ends: at noq's idle timeout, by the peer, or after a stop's drain.
     async fn serve(
         &self,
         quic: noq::Connection,
@@ -195,7 +195,6 @@ impl Http3 {
             quic.clone(),
         );
         let mut http = server::Connection::new(quic.clone(), Some(budget));
-        let mut lifecycle = Lifecycle::new(connection.work, Grace::Once);
         let (mut running, mut send_window) = (FuturesUnordered::new(), SendWindow::default());
         let mut tuning = interval(SEND_WINDOW_TUNING);
         tuning.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -213,14 +212,8 @@ impl Http3 {
                 Some(()) = running.next() => {}
                 () = &mut stopping, if !stopped => {
                     stopped = true;
-                    lifecycle.stop();
                     http.shutdown(LaneEnding::Shutdown.webtransport_code(), LaneEnding::Shutdown.reason());
                 }
-                // The layer closes connections without a live request itself.
-                event = poll_fn(|cx| lifecycle.poll(cx, Activity { credited: window.raised(), streams: true })) => match event {
-                    Event::GoAway => http.goaway(),
-                    Event::Close => return Ok(()),
-                },
                 _ = tuning.tick() => send_window.tune(&quic, !running.is_empty(), self.app.budget()),
             }
         }

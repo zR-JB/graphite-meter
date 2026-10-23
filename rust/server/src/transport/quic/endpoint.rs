@@ -70,7 +70,8 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
 
     fn single(&self, address: SocketAddr, runtime: Handle) -> Result<Endpoints, String> {
         let udp = Udp::bind(address, 1, &runtime)?;
-        let config = noq::EndpointConfig::default();
+        let mut config = noq::EndpointConfig::default();
+        config.cid_generator(cid_generator(0));
         let bytes = udp.bytes(&config, 1, &self.app.config().limits)?;
         (self.fits)(bytes)?;
         let http3 = self.http3(1)?;

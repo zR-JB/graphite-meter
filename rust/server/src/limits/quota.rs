@@ -189,16 +189,6 @@ impl fmt::Debug for Hold {
     }
 }
 
-impl Hold {
-    pub fn join(mut self, other: Hold) -> Hold {
-        self.linked = Some(Box::new(match self.linked.take() {
-            Some(linked) => linked.join(other),
-            None => other,
-        }));
-        self
-    }
-}
-
 impl Drop for Hold {
     fn drop(&mut self) {
         let inner = &self.quota.0;
@@ -294,10 +284,7 @@ mod tests {
         let (moved, joined) = (quota.clone(), other.clone());
         let panicked = std::thread::spawn(move || {
             let client = v6("2001:db8::1");
-            let _hold = moved
-                .acquire(&client, 3)
-                .unwrap()
-                .join(joined.acquire(&client, 2).unwrap());
+            let _hold = moved.acquire_within(&client, 3, Some(&joined)).unwrap();
             panic!("the work failed");
         })
         .join();

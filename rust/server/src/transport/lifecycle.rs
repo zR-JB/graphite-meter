@@ -1,28 +1,22 @@
-//! When a multiplexed connection goes away and closes, by its streams, admitted work and credit; HTTP/2 and QUIC.
+//! When an HTTP/2 connection goes away and closes, by its streams, admitted work and credit.
 
 use super::accept::SHUTDOWN_GRACE;
 use crate::lane::Work;
-use graphite_meter_http3::CONNECTION_IDLE;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 use tokio::time::{Instant, Sleep, sleep, sleep_until};
+
+/// A TCP connection without requests or streams closes after this long, whatever its HTTP version.
+pub const CONNECTION_IDLE: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     GoAway,
     Close,
-}
-
-/// How admitted work that outlived the GOAWAY grace ends it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Grace {
-    /// The connection closes a fresh grace after that work ends, as HTTP/2 does.
-    Fresh,
-    /// The connection closes as soon as that work ends, as QUIC does.
-    Once,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +29,6 @@ pub struct Activity {
 #[derive(Debug)]
 pub struct Lifecycle {
     work: Work,
-    grace: Grace,
     stopping: bool,
     /// The start of the admitted work's idle period last observed; `None` while some runs.
     idle_since: Option<Instant>,
@@ -46,10 +39,9 @@ pub struct Lifecycle {
 }
 
 impl Lifecycle {
-    pub fn new(work: Work, grace: Grace) -> Self {
+    pub fn new(work: Work) -> Self {
         Self {
             work,
-            grace,
             stopping: false,
             idle_since: None,
             stale: None,
@@ -86,9 +78,7 @@ impl Lifecycle {
         if since != self.idle_since {
             self.idle_since = since;
             self.stale = None;
-            if let (Grace::Fresh, false, Some(since), Some(closing)) =
-                (self.grace, self.stopping, since, &mut self.closing)
-            {
+            if let (false, Some(since), Some(closing)) = (self.stopping, since, &mut self.closing) {
                 closing.as_mut().reset(since + SHUTDOWN_GRACE);
             }
         }
@@ -124,73 +114,67 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_credited_connection_goes_away_after_its_admitted_work_and_closes_after_the_grace() {
-        for grace in [Grace::Fresh, Grace::Once] {
-            let work = Work::default();
-            let mut lifecycle = Lifecycle::new(work.clone(), grace);
-            advance(CONNECTION_IDLE * 2).await;
-            assert!(
-                poll(&mut lifecycle, false, true).await.is_pending(),
-                "no credit, no idle rule"
-            );
-            drop(work.start());
-            assert!(poll(&mut lifecycle, true, true).await.is_pending());
-            advance(CONNECTION_IDLE - MILLI).await;
-            assert!(
-                poll(&mut lifecycle, true, true).await.is_pending(),
-                "unadmitted streams do not count"
-            );
-            advance(MILLI).await;
-            assert_eq!(
-                poll(&mut lifecycle, true, true).await,
-                Poll::Ready(Event::GoAway)
-            );
-            advance(SHUTDOWN_GRACE - MILLI).await;
-            assert!(poll(&mut lifecycle, true, true).await.is_pending());
-            advance(MILLI).await;
-            assert_eq!(
-                poll(&mut lifecycle, true, true).await,
-                Poll::Ready(Event::Close),
-                "unadmitted streams get 5 s"
-            );
-        }
+        let work = Work::default();
+        let mut lifecycle = Lifecycle::new(work.clone());
+        advance(CONNECTION_IDLE * 2).await;
+        assert!(
+            poll(&mut lifecycle, false, true).await.is_pending(),
+            "no credit, no idle rule"
+        );
+        drop(work.start());
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        advance(CONNECTION_IDLE - MILLI).await;
+        assert!(
+            poll(&mut lifecycle, true, true).await.is_pending(),
+            "unadmitted streams do not count"
+        );
+        advance(MILLI).await;
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::GoAway)
+        );
+        advance(SHUTDOWN_GRACE - MILLI).await;
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        advance(MILLI).await;
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::Close),
+            "unadmitted streams get 5 s"
+        );
     }
 
     #[tokio::test(start_paused = true)]
     async fn admitted_work_racing_the_goaway_runs_on_and_then_gets_its_grace() {
-        for grace in [Grace::Fresh, Grace::Once] {
-            let work = Work::default();
-            let mut lifecycle = Lifecycle::new(work.clone(), grace);
-            drop(work.start());
-            assert!(poll(&mut lifecycle, true, true).await.is_pending());
-            advance(CONNECTION_IDLE).await;
-            assert_eq!(
-                poll(&mut lifecycle, true, true).await,
-                Poll::Ready(Event::GoAway)
-            );
-            let racing = work.start();
-            advance(SHUTDOWN_GRACE * 4).await;
-            assert!(
-                poll(&mut lifecycle, true, true).await.is_pending(),
-                "running work is not cut"
-            );
-            drop(racing);
-            if grace == Grace::Fresh {
-                assert!(poll(&mut lifecycle, true, true).await.is_pending());
-                advance(SHUTDOWN_GRACE - MILLI).await;
-                assert!(poll(&mut lifecycle, true, true).await.is_pending());
-                advance(MILLI).await;
-            }
-            assert_eq!(
-                poll(&mut lifecycle, true, true).await,
-                Poll::Ready(Event::Close)
-            );
-        }
+        let work = Work::default();
+        let mut lifecycle = Lifecycle::new(work.clone());
+        drop(work.start());
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        advance(CONNECTION_IDLE).await;
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::GoAway)
+        );
+        let racing = work.start();
+        advance(SHUTDOWN_GRACE * 4).await;
+        assert!(
+            poll(&mut lifecycle, true, true).await.is_pending(),
+            "running work is not cut"
+        );
+        drop(racing);
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        advance(SHUTDOWN_GRACE - MILLI).await;
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        advance(MILLI).await;
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::Close)
+        );
     }
 
     #[tokio::test(start_paused = true)]
     async fn credit_gained_while_idle_starts_the_stale_bound_from_the_last_admitted_work() {
         let work = Work::default();
-        let mut lifecycle = Lifecycle::new(work.clone(), Grace::Once);
+        let mut lifecycle = Lifecycle::new(work.clone());
         drop(work.start());
         assert!(poll(&mut lifecycle, false, true).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
@@ -207,7 +191,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_connection_without_streams_goes_away_after_fifteen_seconds() {
-        let mut lifecycle = Lifecycle::new(Work::default(), Grace::Fresh);
+        let mut lifecycle = Lifecycle::new(Work::default());
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
         assert!(
