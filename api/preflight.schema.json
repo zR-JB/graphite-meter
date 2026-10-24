@@ -5,7 +5,7 @@
   "description": "Logical server discovery with independently selectable throughput and latency endpoints.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["server", "engineVersion", "generation", "capabilities", "lease"],
+  "required": ["server", "engineVersion", "apiVersion", "generation", "capabilities", "lease"],
   "properties": {
     "server": {
       "type": "object",
@@ -16,7 +16,11 @@
         "location": { "type": "string", "maxLength": 256 }
       }
     },
-    "engineVersion": { "type": "string", "maxLength": 256 },
+    "engineVersion": { "type": "string", "maxLength": 256, "description": "The envelope: the server's release." },
+    "apiVersion": {
+      "type": "integer", "minimum": 1,
+      "description": "The envelope: the API version (apiversions.txt). Clients read a preflight without it as API version 1, or 2 with lease."
+    },
     "generation": { "type": "string", "minLength": 1, "maxLength": 256 },
     "capabilities": {
       "type": "object",

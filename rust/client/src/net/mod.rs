@@ -14,11 +14,13 @@ pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 
 pub const UNREACHABLE: &str = "Could not reach this test server";
 
+use crate::VERSION;
 use bytes::Bytes;
 use conn::{Answer, Failed};
 use graphite_meter_net::{Connector, Pool, Proxy, Verify, lock};
 use graphite_meter_proto::{
     discovery::{IpFamily, Probe, Protocol},
+    envelope::Envelope,
     lane::LaneEnding,
     lease::{LEASE_HEADER, Lease, LeaseRequest},
     origin::{Origin, Scheme},
@@ -158,7 +160,18 @@ impl Client {
         via: Protocol,
     ) -> Result<(Protocol, IpFamily), Fault> {
         let request = Request::new(Method::GET, origin, Route::Probe);
-        let (version, probe) = self.exchange(via, request, Probe::decode).await?;
+        let (version, document) = self
+            .exchange(via, request, |data| Ok(data.to_vec()))
+            .await?;
+        // The envelope comes first, so a port another release serves is named whatever the rest holds.
+        let envelope = Envelope::probe(&document);
+        if let Some(mismatch) =
+            envelope.and_then(|envelope| envelope.mismatch(&origin.to_string(), VERSION))
+        {
+            return Err(Fault::Incompatible(mismatch));
+        }
+        let probe =
+            Probe::decode(&document).map_err(|error| Fault::Malformed(error.to_string()))?;
         let protocol = match (via, version) {
             (Protocol::Negotiated, Version::HTTP_11) => Protocol::Http1,
             (Protocol::Negotiated, Version::HTTP_2) => Protocol::Http2,

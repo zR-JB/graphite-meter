@@ -101,7 +101,9 @@ async fn the_probe_reports_the_client_the_transport_and_the_handler_load() {
         json(response).await
     };
     let document = probe(Endpoint::Quic, "::ffff:198.51.100.4").await;
-    assert_eq!(document, golden("probe.golden.json"));
+    let mut expected = golden("probe.golden.json");
+    expected["engineVersion"] = ENGINE_VERSION.into();
+    assert_eq!(document, expected);
     assert!(Probe::decode(document.to_string().as_bytes()).is_ok());
     drop(held);
     for (endpoint, protocol) in [
@@ -110,8 +112,9 @@ async fn the_probe_reports_the_client_the_transport_and_the_handler_load() {
         (Endpoint::H3Companion, "http/1.1"),
     ] {
         let document = probe(endpoint, "2001:db8::9").await;
-        let expected = json!({"clientIp": "2001:db8::9", "clientIpVersion": 6, "clientIpSource": "socket",
-            "protocolNegotiated": protocol, "load": {"active": 0, "max": 256}});
+        let expected = json!({"engineVersion": ENGINE_VERSION, "apiVersion": 2, "clientIp": "2001:db8::9",
+            "clientIpVersion": 6, "clientIpSource": "socket", "protocolNegotiated": protocol,
+            "load": {"active": 0, "max": 256}});
         assert_eq!(document, expected);
     }
     let forwarded = request("GET", "/probe").header("x-real-ip", "198.51.100.8");

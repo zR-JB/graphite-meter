@@ -3,6 +3,7 @@
   "document": {
     "server": { "name": "graphite-meter", "location": "fra", "region": "eu-central" },
     "engineVersion": "9.0.0",
+    "apiVersion": 2,
     "generation": "future-generation",
     "capabilities": {
       "uploadCheckpoint": true,

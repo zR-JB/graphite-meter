@@ -1,0 +1,14 @@
+# Graphite Meter API version pin, shared by the Rust workspace and the browser client.
+#
+# Format (one API version per non-comment, non-blank line):
+#   <API version> | <first release>
+#
+#   API version   = the integer a server's preflight and probe carry as `apiVersion` (api/discovery.md, The envelope)
+#   first release = the first Graphite Meter release that speaks it
+#
+# A server raises the API version with each change older clients cannot read. Servers up to 0.13.5 sent no
+# `apiVersion`; clients read a preflight without it and without `lease` as API version 1, and one with `lease` as 2.
+# Read by rust/proto/tests/envelope.rs and client/src/protocol/pins.test.ts.
+
+1 | 0.1.0
+2 | 0.13.5
