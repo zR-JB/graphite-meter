@@ -71,7 +71,8 @@ function follow(
     left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     fetch: async (url, init = {}) => {
-      if (init.method === "DELETE") return deletes.push(init), new Response(null, { status: 204 });
+      if (init.method === "DELETE")
+        return (deletes.push(init), new Response(null, { status: 204 }));
       if (!url.includes("/upload/progress")) return Response.json(counters.shift());
       expect(url).toBe("https://peer.example/upload/progress?id=u1");
       return answers.shift()!(init);
