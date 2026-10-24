@@ -292,7 +292,7 @@ mod tests {
         let latency: Vec<_> = latency.iter().copied().map(probe).collect();
         let capabilities = json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": latency});
         let document = json!({"server": {"name": "meter"}, "engineVersion": "1", "generation": "g",
-            "capabilities": capabilities});
+            "capabilities": capabilities, "lease": {"maxMeasurements": 32, "maxSessions": 8}});
         Preflight::decode(document.to_string().as_bytes()).unwrap()
     }
 
@@ -407,7 +407,6 @@ mod tests {
         let (stage_limit, idle_rtt) = (Duration::from_secs(seconds), None);
         let paths = Paths {
             throughput,
-            control: protocol,
             latency: None,
             stage_limit,
             idle_rtt,
@@ -444,10 +443,8 @@ mod tests {
         assert!(!prepared.reusable(&config("-server a -stages down,up").key(), at));
         assert!(!prepared.reusable(&config("-server a -stages down -insecure").key(), at));
         let late = Some(Failure::new(FailureReason::Timeout, "late"));
-        let failed = Prepared {
-            servers: vec![server("a", 30, None), server("b", 30, late)],
-            ..prepared
-        };
+        let mut failed = prepared;
+        failed.servers = vec![server("a", 30, None), server("b", 30, late)];
         assert!(!failed.reusable(&longer, at));
     }
 

@@ -5,7 +5,7 @@
   "description": "Logical server discovery with independently selectable throughput and latency endpoints.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["server", "engineVersion", "generation", "capabilities"],
+  "required": ["server", "engineVersion", "generation", "capabilities", "lease"],
   "properties": {
     "server": {
       "type": "object",
@@ -30,6 +30,16 @@
         },
         "throughput": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/throughputEndpoint" } },
         "latency": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/latencyEndpoint" } }
+      }
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxMeasurements", "maxSessions"],
+      "description": "The most one client's lease holds; a server without this member predates the lease.",
+      "properties": {
+        "maxMeasurements": { "type": "integer", "minimum": 1, "description": "Measurements at once: lanes, latency buses, progress feeds and sessions." },
+        "maxSessions": { "type": "integer", "minimum": 0, "description": "Of those, WebTransport transfer sessions." }
       }
     }
   },

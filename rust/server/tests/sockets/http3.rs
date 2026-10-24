@@ -133,13 +133,6 @@ impl Connection {
         serde_json::from_slice(&read(&mut body).await.unwrap()).unwrap()
     }
 
-    pub(super) async fn upload_id(&self) -> String {
-        self.json("POST", "/upload/session").await["uploadId"]
-            .as_str()
-            .unwrap()
-            .into()
-    }
-
     /// The code the server closed the connection with, if it did within `bound` of real time.
     pub(super) async fn closed_within(&self, bound: Duration) -> Option<Code> {
         match tokio::time::timeout(bound, self.quic.closed()).await {
@@ -257,7 +250,7 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
 async fn cancelling_an_idle_progress_stream_releases_its_handler() {
     let h3 = H3::start(&[]).await;
     let connection = h3.connect(transport(None)).await;
-    let id = connection.upload_id().await;
+    let id = h3.server.upload_id().await;
     let (progress, mut feed) = connection
         .send("GET", &format!("/upload/progress?id={id}"), b"")
         .await;

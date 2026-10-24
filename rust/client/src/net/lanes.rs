@@ -377,10 +377,8 @@ impl Group {
 
     fn request(&self, method: Method, route: Route, query: Vec<(&'static str, String)>) -> Request {
         Request {
-            method,
-            origin: self.plan.path.origin.clone(),
-            route,
             query,
+            ..Request::new(method, &self.plan.path.origin, route)
         }
     }
 

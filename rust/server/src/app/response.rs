@@ -117,7 +117,7 @@ pub fn refusal(refusal: impl Into<Refusal>) -> Response<Body> {
     let headers = response.headers_mut();
     headers.insert(REFUSAL_HEADER, HeaderValue::from_static(refusal.code()));
     match refusal {
-        Refusal::ClientLimit | Refusal::ServerBusy => {
+        Refusal::ClientLimit | Refusal::ServerCapacity => {
             headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
         }
         Refusal::Revoked => {

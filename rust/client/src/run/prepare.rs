@@ -14,6 +14,7 @@ use graphite_meter_proto::{
     discovery::{
         Capabilities, IpFamily, LatencyTransport, Preflight, Protocol, ThroughputTransport,
     },
+    lease::LeaseRequest,
     origin::Origin,
     reason::FailureReason,
     route::Route,
@@ -25,6 +26,11 @@ use std::{
 };
 use tokio::time::{self, timeout};
 
+/// Why a server is refused whose lease holds less than its run would.
+const TOO_MANY: &str =
+    "the test needs more measurements at once than this server admits for one client";
+/// Why a server is refused whose preflight offers no lease, after its name.
+pub const OLDER: &str = "runs an older Graphite Meter; update it";
 /// How long a path check may take, the catalog and every server included.
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long a run may take its check's paths and connections.
@@ -57,8 +63,6 @@ pub struct ServerPath {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub throughput: ThroughputPath,
-    /// The protocol its throughput check went over, unresolved; upload control requests take it and its connection.
-    pub control: Protocol,
     pub latency: Option<LatencyPath>,
     pub stage_limit: Duration,
     pub idle_rtt: Option<Duration>,
@@ -66,7 +70,24 @@ pub struct Paths {
     pub ip_family: IpFamily,
 }
 
+impl Drop for Prepared {
+    fn drop(&mut self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if self.client.leased() {
+            let client = self.client.clone();
+            runtime.spawn(async move { client.end_leases().await });
+        }
+    }
+}
+
 impl Prepared {
+    /// Ends its servers' leases, so the next check's are not refused for the share these hold.
+    pub async fn end(self) {
+        self.client.end_leases().await;
+    }
+
     pub fn event(&self) -> Event {
         let (servers, catalog) = (self.servers.clone().into(), self.catalog.clone());
         Event::Prepared { servers, catalog }
@@ -127,10 +148,15 @@ async fn check(
 ) -> Result<Paths, Failure> {
     let served = server.origin.clone();
     let request = Request::new(Method::GET, &served, Route::Preflight);
-    let preflight = client
-        .json(Protocol::Negotiated, request, Preflight::decode)
-        .await;
-    let preflight = preflight.map_err(|fault| fault.failure())?;
+    let document = client.json(Protocol::Negotiated, request, |data| Ok(data.to_vec()));
+    let document = document.await.map_err(|fault| fault.failure())?;
+    let preflight =
+        Preflight::decode(&document).map_err(|error| {
+            match Preflight::predates_lease(&document) {
+                true => refused(format!("{} {OLDER}", server.name)),
+                false => Fault::Malformed(error.to_string()).failure(),
+            }
+        })?;
     if !preflight.server.name.is_empty() {
         server.name.clone_from(&preflight.server.name);
     }
@@ -148,6 +174,12 @@ async fn check(
     let bases = preflight.base_urls();
     let targets: Vec<_> = bases.map(|base| base.resolve(&served).clone()).collect();
     client.enroll(&served, &targets);
+    let grant = ceilings(config, &candidates.throughput);
+    let leased = client.lease(&served, &targets, grant).await;
+    let leased = leased.map_err(|fault| fault.failure())?;
+    if leased.measurements < grant.measurements || leased.sessions < grant.sessions {
+        return Err(Failure::new(FailureReason::ClientLimit, TOO_MANY));
+    }
     let latency = async {
         if candidates.latency.is_empty() {
             return Ok(None);
@@ -158,16 +190,13 @@ async fn check(
         };
         first(&candidates.latency, checked).await
     };
-    let checked = |path: ThroughputPath| async move {
-        Ok((path.protocol, check_throughput(client, &path).await?))
-    };
+    let checked = |path: ThroughputPath| async move { check_throughput(client, &path).await };
     let throughput = first(&candidates.throughput, checked);
     let joined = tokio::try_join!(throughput, latency).map_err(unproven)?;
-    let ((control, (throughput, ip_family)), latency) = joined;
+    let ((throughput, ip_family), latency) = joined;
     let (latency, idle_rtt) = latency.unzip();
     Ok(Paths {
         throughput,
-        control,
         latency,
         idle_rtt,
         stage_limit: preflight.capabilities.stage_limit(),
@@ -243,6 +272,29 @@ async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, 
     };
     let verified = timeout(VERIFY, verified).await;
     verified.unwrap_or(Err(Fault::TimedOut("latency reply")))
+}
+
+/// The most any candidate path's run holds at once: both directions' lanes, or a WebTransport session each, beside the
+/// latency bus, an upload's feed and its finalize.
+fn ceilings(config: &Config, paths: &[ThroughputPath]) -> LeaseRequest {
+    let need = |path: &ThroughputPath| match path.transport {
+        ThroughputTransport::FetchStream => {
+            let lanes = config.lanes(path.protocol, path.transport);
+            (lanes.down + lanes.up, 0)
+        }
+        _ => (2, 2),
+    };
+    let (lanes, sessions) = paths
+        .iter()
+        .map(need)
+        .fold((0, 0), |(lanes, sessions), (more, also)| {
+            (lanes.max(more), sessions.max(also))
+        });
+    LeaseRequest {
+        measurements: u32::try_from(lanes + 3).unwrap_or(u32::MAX),
+        sessions,
+        uploads: 0,
+    }
 }
 
 fn refused(text: impl Into<String>) -> Failure {

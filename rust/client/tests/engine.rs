@@ -367,13 +367,13 @@ fn latency_failures_are_announced_as_they_happen_and_only_once() {
         failure: Failure::new(reason, "down"),
     };
     let downs = [
-        (id("b"), down(FailureReason::ServerBusy)),
+        (id("b"), down(FailureReason::ServerCapacity)),
         (id("b"), down(FailureReason::ConnectionLost)),
     ];
     script.step(ms(1000), &[], &downs);
     assert_eq!(
         script.failed(),
-        [(ms(1000), "b", Scope::Latency, FailureReason::ServerBusy)]
+        [(ms(1000), "b", Scope::Latency, FailureReason::ServerCapacity)]
     );
     assert!(script.removed().is_empty());
 }

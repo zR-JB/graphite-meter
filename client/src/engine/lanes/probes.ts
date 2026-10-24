@@ -125,13 +125,11 @@ export function openProbeChannel(
   try {
     if (!websocket && handshakes.throttled.peek()) throw new Error(THROTTLED);
     const url = `${websocket ? target.origin.replace(/^http/, "ws") : target.origin}${route}`;
-    const ticket = auth.ticket(target.origin, route);
     dialing = !websocket;
     worker.postMessage({
       type: "start",
-      url,
+      url: auth.socket(url),
       transport: target.transport,
-      ticket,
       intervalMs,
       maxInFlight,
     } satisfies ProbeCommand);

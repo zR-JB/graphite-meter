@@ -4,6 +4,12 @@ import type { HttpProtocol, TestConfig } from "../types";
 import { planStreams, type PlanServer } from "./streams";
 
 const ORIGIN = "https://meter.example";
+const NEXT_HOP: Record<HttpProtocol, string | null> = {
+  http1: "http/1.1",
+  http2: "h2",
+  http3: "h3",
+  negotiated: null,
+};
 
 function server(
   name: string,
@@ -13,7 +19,12 @@ function server(
   const targets = socket ? [{ transport: "websocket" as const }] : [];
   return {
     server: { id: name, name },
-    discovery: { latency: new Map([[origin, { blocked: null, targets }]]) },
+    // The discovery origin is the transfer origin, over the same protocol.
+    discovery: {
+      origin,
+      protocol: NEXT_HOP[protocol],
+      latency: new Map([[origin, { blocked: null, targets }]]),
+    },
     throughput: {
       target: { transport: transport as "fetch-stream" },
       fetch: { origin, protocol },

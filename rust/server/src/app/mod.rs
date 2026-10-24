@@ -10,13 +10,14 @@ pub(crate) mod response;
 pub(crate) use gate::MAX_HEAD_BYTES;
 
 use crate::{
+    admission::Leases,
     assets::{Asset, Assets},
     auth::Auth,
     config::{Config, ListenerKind},
     engine::{Block, Meter, Uploads},
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
-    limits::{Budget, Full, Hold, Pressure, Quotas},
+    limits::{Budget, Hold, Pressure, Quotas},
     lock, log,
     peer::{ClientKeys, Peer},
     transport::{
@@ -27,11 +28,7 @@ use crate::{
 };
 use bytes::Buf;
 use graphite_meter_legal::Notices;
-use graphite_meter_proto::{
-    lane::LaneEnding,
-    refusal::Refusal,
-    route::{Kind, Route},
-};
+use graphite_meter_proto::{lane::LaneEnding, refusal::Refusal, route::Route};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Authority};
 use std::{
     collections::HashMap,
@@ -49,6 +46,7 @@ pub struct App {
     config: Config,
     budget: Budget,
     quotas: Quotas,
+    leases: Leases,
     uploads: Uploads,
     auth: Auth,
     assets: Assets,
@@ -143,6 +141,7 @@ impl App {
             .collect();
         Ok(Self {
             quotas: Quotas::new(config.limits, &budget, operator),
+            leases: Leases::default(),
             uploads: Uploads::new(crate::random(), Meter::new(config.verbose)),
             auth,
             assets: Assets::embedded(config.auth.is_some(), config.result_history_default),
@@ -334,17 +333,16 @@ impl App {
             Route::Download => self.download(&request, peer, connection, exchange)?,
             Route::UploadProgress => self.progress(&request, peer, connection, exchange)?,
             Route::Probe => self.probe(peer, connection.endpoint),
+            Route::Lease => self.lease(request, peer).await,
             Route::Preflight => response::json_of(&self.preflight(&request)),
             Route::Servers => self.catalog(&request),
-            Route::UploadSession => self.upload_session(),
             Route::UploadCheckpoint => self.checkpoint(&request, peer),
-            Route::WtSession => self.auth.ticket(&request, peer.auth(), Kind::WebTransport),
-            Route::WsSession => self.auth.ticket(&request, peer.auth(), Kind::WebSocket),
         };
         Ok(Outcome::Response(response))
     }
 
-    /// Admits a lane holding a handler for the operation lifetime, or a `session` for the session lifetime.
+    /// Admits a lane holding a handler for the operation lifetime, or a `session` for the session lifetime: against
+    /// the lease it presents, else the client's share.
     pub(super) fn admit(
         &self,
         peer: &Peer,
@@ -364,15 +362,20 @@ impl App {
         connection: &Connection,
         exchange: Exchange,
         session: bool,
-    ) -> Result<Lane, Full> {
+    ) -> Result<Lane, Refusal> {
         let lifetimes = &self.config.lifetimes;
-        let (hold, lifetime) = match session {
-            true => (self.quotas.session(&keys), lifetimes.session),
-            false => (self.quotas.operation(&keys), lifetimes.operation),
+        let lifetime = match session {
+            true => lifetimes.session,
+            false => lifetimes.operation,
+        };
+        let (keys, admission) = match peer.lease() {
+            Some(lease) => (lease.keys().clone(), lease.admit(&self.quotas, session)?),
+            None if session => (keys.clone(), self.quotas.session(&keys)?.into()),
+            None => (keys.clone(), self.quotas.operation(&keys)?.into()),
         };
         Ok(exchange.admit(
             keys,
-            hold?,
+            admission,
             lifetime,
             &connection.work,
             &self.shutdown,
@@ -403,7 +406,7 @@ impl App {
             WtRoute::Upload => Plan::Upload(Upload {
                 uploads: self.uploads.clone(),
                 id: query::get(query, "id").unwrap_or_default(),
-                owner: peer.keys(),
+                owner: peer.owner(),
                 datagrams: query::datagrams(query),
             }),
             WtRoute::Ping => Plan::Ping,
@@ -428,7 +431,7 @@ impl App {
         let lane = match self.admit_as(keys, peer, connection, exchange, false) {
             Ok(lane) => Ok(lane),
             // A feed at capacity still upgrades, so the browser reads why from its record as it would from a status.
-            Err(refusal) if route == Route::WsProgress => Err(Refusal::from(refusal)),
+            Err(refusal) if route == Route::WsProgress => Err(refusal),
             Err(refusal) => return Err(response::refusal(refusal)),
         };
         let accepted = match websocket::handshake(request) {
@@ -439,7 +442,7 @@ impl App {
             (Route::Ping, Ok(lane)) => Socket::Bus(lane),
             (_, Ok(lane)) => {
                 let id = query::get(request.uri().query(), "id").unwrap_or_default();
-                match self.uploads.subscribe(&id, peer.keys().as_ref()) {
+                match self.uploads.subscribe(&id, peer.owner().as_ref()) {
                     Ok(feed) => Socket::Feed(lane, feed),
                     Err(refusal) => Socket::Refused(refusal),
                 }
@@ -499,7 +502,7 @@ impl App {
         let transfer = self.uploads.meter().open();
         let mut sink = match self
             .uploads
-            .begin(&id, peer.keys().as_ref(), lane.clone(), transfer)
+            .begin(&id, peer.owner().as_ref(), lane.clone(), transfer)
         {
             Ok(sink) => sink,
             Err(refusal) => return Err(response::refusal(refusal)),
@@ -616,18 +619,9 @@ impl Endpoint {
     /// Whether this endpoint serves `route`: the only mount decision. The companion mounts transfers to refuse them.
     pub const fn mounts(self, route: Route) -> bool {
         match route {
-            Route::Probe
-            | Route::UploadSession
-            | Route::UploadCheckpoint
-            | Route::UploadProgress
-            | Route::WtSession
-            | Route::Download
-            | Route::Upload => true,
-            Route::Preflight
-            | Route::Servers
-            | Route::WsSession
-            | Route::Ping
-            | Route::WsProgress => self.ui(),
+            Route::Probe | Route::Download | Route::Upload => true,
+            Route::Lease | Route::UploadCheckpoint | Route::UploadProgress => !self.bootstrap(),
+            Route::Preflight | Route::Servers | Route::Ping | Route::WsProgress => self.ui(),
             Route::WtDownload | Route::WtUpload | Route::WtPing => matches!(self, Self::Quic),
         }
     }
@@ -657,9 +651,9 @@ impl Endpoint {
         match self {
             Self::H1 if auth => "trusted proxy only; GET / redirects to HTTPS",
             Self::H1 | Self::H1Tls => ALL,
-            Self::H2 => "probe, transfers, progress",
-            Self::H3Companion => "HTTP/3 bootstrap probe, upload control, tickets",
-            Self::Quic => "probe, transfers, progress, WebTransport",
+            Self::H2 => "probe, transfers, leases, upload control",
+            Self::H3Companion => "HTTP/3 bootstrap probe",
+            Self::Quic => "probe, transfers, leases, upload control, WebTransport",
         }
     }
 }

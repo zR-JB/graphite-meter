@@ -1,16 +1,17 @@
-//! Tests sessions over the app, with one-use socket tickets, sign-out and the upload ownership a login decides.
+//! Tests sessions over the app, with the sockets a lease opens, sign-out and the upload ownership a login decides.
 
 use super::{
     auth::{BROWSER, PUBLIC, auth_app, bearer, login, public, signed, store, tls},
     *,
 };
-use graphite_meter_proto::upload::Session;
 use graphite_meter_server::{
+    admission::UNUSED_BOUND,
     auth::{COUNTERS, NewLogin, Principal},
     transport::websocket::Socket,
 };
 use http::StatusCode;
 use http_body_util::Full;
+use serde_json::json;
 use std::time::Duration;
 
 const NONCE: &str = "dGhlIHNhbXBsZSBub25jZQ==";
@@ -25,18 +26,9 @@ fn websocket(path: &str, origin: &str) -> Request<Full<Bytes>> {
     empty(request)
 }
 
-async fn mint(app: &App, login: &NewLogin, route: &str, target: &str) -> Response<Body> {
-    tls(
-        app,
-        empty(signed("POST", &format!("{route}?target={target}"), login)),
-    )
-    .await
-}
-
-async fn ticket(app: &App, login: &NewLogin, route: &str, target: &str) -> String {
-    let minted = json(mint(app, login, route, target).await).await;
-    assert!(minted["expires"].as_u64().unwrap() > 0);
-    minted["token"].as_str().unwrap().into()
+async fn take(app: &App, login: &NewLogin, body: Value) -> Value {
+    let request = signed("POST", "/lease", login).body(Full::new(Bytes::from(body.to_string())));
+    json(tls(app, request.unwrap()).await).await
 }
 
 fn is_socket(outcome: &Outcome) -> bool {
@@ -44,78 +36,28 @@ fn is_socket(outcome: &Outcome) -> bool {
 }
 
 #[tokio::test(start_paused = true)]
-async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
+async fn a_lease_authenticates_sockets_from_its_origin_until_unused_or_signed_out() {
     let app = auth_app(&[]);
     let login = login(&app, Principal::operator());
-    let target = "https://meter.example/ws/ping";
-    let token = ticket(&app, &login, "/ws/session", target).await;
-    assert!(token.starts_with("gmw_"));
-    let path = format!("/ws/ping?token={token}");
-    assert!(is_socket(
-        &outcome(&app, Endpoint::H1Tls, "192.0.2.1", websocket(&path, PUBLIC)).await
-    ));
-    let replayed = tls(&app, websocket(&path, PUBLIC)).await;
-    assert_eq!(
-        header(&replayed, "graphite-meter-auth"),
-        Some("required"),
-        "a ticket opens one socket"
-    );
-    let path = format!(
-        "/ws/ping?token={}",
-        ticket(&app, &login, "/ws/session", target).await
-    );
-    assert_eq!(
-        tls(&app, websocket(&path, BROWSER)).await.status(),
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        tls(&app, websocket(&path, PUBLIC)).await.status(),
-        StatusCode::FORBIDDEN,
-        "a refusal spends it"
-    );
-    let path = format!(
-        "/ws/ping?token={}",
-        ticket(&app, &login, "/ws/session", target).await
-    );
-    tokio::time::advance(Duration::from_secs(30)).await;
-    assert_eq!(
-        tls(&app, websocket(&path, PUBLIC)).await.status(),
-        StatusCode::FORBIDDEN,
-        "tickets expire"
-    );
-    for target in [
-        "https://meter.example/ws/ping%3Fx",
-        "https://meter.example/ws/ping%23x",
-        "http://meter.example/ws/ping",
-        "https://other.example/ws/ping",
-        "https://user@meter.example/ws/ping",
-        "https://meter.example/wt/ping",
-    ] {
-        assert_eq!(
-            mint(&app, &login, "/ws/session", target).await.status(),
-            StatusCode::BAD_REQUEST,
-            "{target}"
-        );
+    let lease = take(&app, &login, json!({"measurements": 2, "sessions": 0})).await;
+    let token = lease["token"].as_str().unwrap();
+    assert!(token.starts_with("gml_"));
+    let path = format!("/ws/ping?lease={token}");
+    for _ in 0..3 {
+        let opened = outcome(&app, Endpoint::H1Tls, "192.0.2.1", websocket(&path, PUBLIC)).await;
+        assert!(is_socket(&opened), "a lease opens one socket after another");
     }
-    let mut tokens = Vec::new();
-    for _ in 0..9 {
-        tokio::time::advance(Duration::from_millis(1)).await;
-        tokens.push(ticket(&app, &login, "/ws/session", target).await);
-    }
-    let path = |token: &String| format!("/ws/ping?token={token}");
-    assert_eq!(
-        tls(&app, websocket(&path(&tokens[0]), PUBLIC))
-            .await
-            .status(),
-        StatusCode::FORBIDDEN,
-        "a ninth ticket replaces the one nearest expiry"
-    );
-    for token in &tokens[1..] {
-        let request = websocket(&path(token), PUBLIC);
-        assert!(is_socket(
-            &outcome(&app, Endpoint::H1Tls, "192.0.2.1", request).await
-        ));
-    }
+    let foreign = tls(&app, websocket(&path, BROWSER)).await;
+    assert_eq!(header(&foreign, "graphite-meter-auth"), Some("required"));
+    tokio::time::sleep(UNUSED_BOUND + Duration::from_millis(1)).await;
+    let unused = tls(&app, websocket(&path, PUBLIC)).await;
+    assert_eq!(header(&unused, "graphite-meter-auth"), Some("required"));
+    let lease = take(&app, &login, json!({"measurements": 1, "sessions": 0})).await;
+    let path = format!("/ws/ping?lease={}", lease["token"].as_str().unwrap());
+    assert!(store(&app).sign_out(login.key, false));
+    tokio::task::yield_now().await;
+    let signed_out = tls(&app, websocket(&path, PUBLIC)).await;
+    assert_eq!(header(&signed_out, "graphite-meter-auth"), Some("required"));
 }
 
 #[tokio::test]
@@ -194,10 +136,13 @@ async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject()
 }
 
 async fn upload_id(app: &App, login: &NewLogin) -> String {
-    let minted = tls(app, empty(signed("POST", "/upload/session", login))).await;
-    Session::decode(text(minted).await.as_bytes())
-        .unwrap()
-        .upload_id
+    let lease = take(
+        app,
+        login,
+        json!({"measurements": 1, "sessions": 0, "uploads": 1}),
+    )
+    .await;
+    lease["uploads"][0].as_str().unwrap().into()
 }
 
 #[tokio::test]
@@ -237,21 +182,20 @@ async fn an_upload_belongs_to_the_login_or_grant_that_started_it() {
 }
 
 #[tokio::test]
-async fn a_progress_socket_takes_a_ticket_for_its_own_route_and_attaches_its_owners_feed() {
+async fn a_progress_socket_presenting_the_lease_attaches_its_feed() {
     let app = auth_app(&[]);
     let owner = login(&app, Principal::operator());
-    let id = upload_id(&app, &owner).await;
-    let open = |token: String| websocket(&format!("/ws/progress?id={id}&token={token}"), PUBLIC);
-    let pinged = ticket(&app, &owner, "/ws/session", "https://meter.example/ws/ping").await;
-    let refused = tls(&app, open(pinged)).await;
-    assert_eq!(header(&refused, "graphite-meter-auth"), Some("required"));
-    let token = ticket(
+    let lease = take(
         &app,
         &owner,
-        "/ws/session",
-        "https://meter.example/ws/progress",
+        json!({"measurements": 1, "sessions": 0, "uploads": 1}),
     )
     .await;
-    let opened = outcome(&app, Endpoint::H1Tls, "192.0.2.1", open(token)).await;
+    let (token, id) = (
+        lease["token"].as_str().unwrap(),
+        lease["uploads"][0].as_str().unwrap(),
+    );
+    let open = websocket(&format!("/ws/progress?id={id}&lease={token}"), PUBLIC);
+    let opened = outcome(&app, Endpoint::H1Tls, "192.0.2.1", open).await;
     assert!(matches!(opened, Outcome::WebSocket(_, Socket::Feed(..))));
 }

@@ -1,3 +1,4 @@
+import { createLease } from "./lease";
 import { afterEach, expect, test } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import { createBusSlot } from "../lanes/probes";
@@ -45,9 +46,11 @@ async function check<P>(
       : probe(url, attempt++),
   );
   net = fake;
+  const auth = publicAuth(entry);
   const context: CheckContext = {
     entry,
-    auth: publicAuth(entry),
+    auth,
+    lease: createLease(entry.url, auth),
     page: browser,
     bus: createBusSlot(buses.open, {} as ProbeChannelEvents),
     now: fake.now,

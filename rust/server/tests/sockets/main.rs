@@ -153,11 +153,20 @@ impl Running {
             .unwrap();
     }
 
+    /// A new upload ID, from a lease on the discovery origin that ends at once.
     async fn upload_id(&self) -> String {
         let mut client = self.connect().await;
-        let answer = client.request("POST /upload/session", "").await;
-        let session: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
-        session["uploadId"].as_str().unwrap().into()
+        let body = r#"{"measurements":1,"sessions":0,"uploads":1}"#;
+        let answer = client.request("POST /lease", body).await;
+        let lease: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        let token = lease["token"].as_str().unwrap();
+        client
+            .send(&format!(
+                "DELETE /lease HTTP/1.1\r\nHost: test\r\nGraphite-Meter-Lease: {token}\r\n\r\n"
+            ))
+            .await;
+        client.answer().await.unwrap();
+        lease["uploads"][0].as_str().unwrap().into()
     }
 }
 

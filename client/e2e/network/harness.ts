@@ -238,15 +238,19 @@ function countWorkers() {
 }
 
 /**
- * Opens the app on the fleet's first server with every server selected, signed in when the fleet has a password, and
- * waits for its checks.
+ * Opens the app at `origin`, the fleet's first server's by default, with every server selected, signed in when the fleet
+ * has a password, and waits for its checks.
  */
-export async function openApp(page: Page, fleet: Fleet, config: Partial<TestConfig> = {}) {
-  const [first] = fleet.servers;
+export async function openApp(
+  page: Page,
+  fleet: Fleet,
+  config: Partial<TestConfig> = {},
+  origin = fleet.servers[0]!.url,
+) {
   await page.clearStorage(fleet.servers.flatMap((server) => [server.http, server.url]));
   await page.addInitScript(countWorkers);
-  await open(page, fleet.signIn ? `${first!.url}/login` : first!.url, {
-    servers: fleet.servers.map(({ id, url }) => ({ id, url })),
+  await open(page, fleet.signIn ? `${origin}/login` : origin, {
+    servers: fleet.servers.map(({ id, url }) => ({ id, url: id === "self" ? origin : url })),
     config: { ...baseConfig, ...config },
   });
   if (fleet.signIn) {
@@ -353,10 +357,8 @@ export async function start(page: Page, fleet: Fleet) {
             protocol === "http3" || (transport && transport !== "fetch-stream") ? 2 : 0;
           const sessions = summary?.throughput.transport === "webtransport" ? dial : 1;
           const bus = summary?.latencyTarget?.transport === "webtransport" ? dial : 0;
-          // Until the lease, a session's upload control rides its HTTP/3 origin: requests and their CORS preflights.
-          const control = transport && transport !== "fetch-stream" ? 2 : 0;
           // A run that saved nothing for the server names no paths to plan for.
-          const quicPlan = summary ? transfer * sessions + control + bus : Infinity;
+          const quicPlan = summary ? transfer * sessions + bus : Infinity;
           return { id: server.id, ...counts, quicPlan };
         }),
       };

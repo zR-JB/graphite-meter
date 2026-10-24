@@ -7,13 +7,17 @@ rejected, and counter records always carry explicit `bytes` and `nanos`. See als
 
 ## Session and data ownership
 
-1. `POST /upload/session` returns `{"uploadId":"..."}`. The caller uses that ID
-   for the aggregate's data lanes and progress feed.
+1. [`POST /lease`](discovery.md#the-lease) mints the IDs it is asked for. The
+   caller uses each ID for one aggregate's data lanes and progress feed. The
+   first request that uses an ID makes its owner: the lease it presents, else
+   its sign-in, else its client address. Every later request for that ID must
+   present the same owner, so with a lease it may come from any address and
+   origin; the clients send the control requests below to the discovery origin.
 2. `GET /upload/progress?id=...` attaches to the receiver's NDJSON feed. Its
    `ready` record confirms that the aggregate and reader claim are established.
-   Over confirmed HTTP/1.1 the browser reads the same feed over the
-   [progress socket](wire.md#progress-socket) when the upload's origin offers
-   one; otherwise it reads this route.
+   When the discovery origin answered over confirmed HTTP/1.1 and offers the
+   [progress socket](wire.md#progress-socket), the browser reads the same feed
+   there; otherwise it reads this route.
 3. `POST /upload?id=...` sends raw upload bytes. The server validates the ID and
    owner before reading the body. Missing, forged, expired, or foreign IDs are
    refused without counting data. A completed POST replies with that POST's

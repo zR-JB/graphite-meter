@@ -1,10 +1,11 @@
 // The engine's shared vocabulary and the contract between the run and each server's stage resources.
 import type { Probe } from "../protocol/documents";
-import type { Ending, ProbeOutcome, RequestRecipe, TicketRecipe } from "../protocol/messages";
+import type { Ending, ProbeOutcome, RequestRecipe } from "../protocol/messages";
 import type { FailureReason } from "../protocol/reasons";
+import type { Lease } from "./net/lease";
 import type { Activity, Stage } from "./run/schedule";
 
-export type { Ending, FailureReason, Probe, ProbeOutcome, RequestRecipe, Stage, TicketRecipe };
+export type { Ending, FailureReason, Probe, ProbeOutcome, RequestRecipe, Stage };
 export type Direction = "down" | "up";
 export const ROLES = ["throughput", "latency"] as const;
 export const MAX_SELECTED = 4;
@@ -129,10 +130,11 @@ export interface PreparedServer {
   link: Link;
 }
 
-/** A selected server's resources that outlive checks, stages and runs; its HTTP probes and tickets go to its discovery origin. */
+/** A selected server's resources that outlive checks, stages and runs; its probes, lease and upload control go to its discovery origin. */
 export interface Link {
   bus: BusSlot;
   workers: WorkerPool;
+  lease: Lease;
 }
 
 export interface BusSlot {
@@ -157,8 +159,8 @@ export interface ServerAuth {
   request(url: string, method: string): RequestRecipe;
   /** A control request at high priority; a 403 with the sign-in marker throws SignInRequired, its body released. */
   fetch(url: string, init?: RequestInit): Promise<Response>;
-  /** Null when a socket needs no ticket: public servers, and a WebSocket riding the page's own cookie. */
-  ticket(origin: string, route: string): TicketRecipe | null;
+  /** A WebSocket or WebTransport URL with what admits it: the lease's token, as no field can carry it. */
+  socket(url: string): string;
   /** Whether a broken stream was the sign-in or grant ending: the one cheap check per kind, at most 3 s. */
   ended(signal?: AbortSignal): Promise<boolean>;
 }
@@ -212,8 +214,6 @@ export interface StageSetup {
   gating?: Record<Direction, number>;
   /** The probe spacing of this stage: the idle cadence for the latency stage, the loaded one otherwise. */
   cadence: PingCadence;
-  /** Distinguishes this run's requests from cached ones. */
-  seed: string;
   events: StageEvents;
   /** Run ms, the clock checkpoints are stamped with. */
   now(): number;
