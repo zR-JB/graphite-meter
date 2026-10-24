@@ -1,4 +1,4 @@
-// One server's connection evidence between runs, each fact with its own backoff, and the Settings view of it.
+// One server's connection evidence between runs, the Settings view of it, and its link: a bus and workers that last.
 import {
   batch,
   computed,
@@ -16,9 +16,9 @@ import {
   ROLES,
   type Discovery,
   type LatencyPath,
+  type Link,
   type OpenProbeChannel,
   type PreparedServer,
-  type ProbeChannel,
   type ProbeChannelEvents,
   type ProbeOutcome,
   type Role,
@@ -33,24 +33,23 @@ import {
   failureOf,
   withinBudget,
   type CheckContext,
-  type CheckedBus,
   type Failure,
 } from "./checks";
+import { createBusSlot, IDLE_INTERVAL_MS } from "../lanes/probes";
+import { createWorkerPool } from "../lanes/pool";
+import { createLease } from "./lease";
 import type { Limiter } from "./limiter";
 import type { PageConfig, PageSession } from "./page";
 import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
 
 /** Start runs on evidence at most this old when it judged it. A reselected server keeps discovery this old. */
 export const FRESH_MS = 120_000;
-/** An unmonitored selected server re-reads its discovery this often, so a dead peer never stays ready. */
-const LIVENESS_MS = 5_000;
-/** A monitored one re-reads it this often: its bus proves liveness, not an unchanged discovery behind a proxy. */
-const MONITORED_MS = 60_000;
+/** A selected server re-reads its discovery this often, also after a failed read; the shown one's bus proves more. */
+const LIVENESS_MS = 60_000;
+const HIDDEN_MS = 30_000;
 const DISCOVERY_BUDGET_MS = 5_000;
 const ROLE_BUDGET_MS = 12_000;
-const IDLE_INTERVAL_MS = 1_000;
 const OFFLINE = "This device is offline";
-const backoffMs = (attempts: number) => Math.min(60_000, 5_000 * 2 ** (attempts - 1));
 
 export type Readiness = "unchecked" | "checking" | "verified" | "sign-in" | "failed";
 
@@ -82,7 +81,7 @@ export interface ServerView {
 }
 
 interface CheckOptions {
-  /** A retry re-reads discovery and redoes the role checks (all, or only `role`), whatever their backoff. */
+  /** A retry re-reads discovery and redoes the role checks (all, or only `role`), whatever holds them back. */
   force?: boolean;
   role?: Role;
   /** Start and resume re-read discovery and re-check what failed or was verified before this page-ms instant. */
@@ -96,6 +95,7 @@ export interface ConnectionEnv {
   limiter: Limiter;
   openProbeChannel: OpenProbeChannel;
   active: Read<boolean>;
+  hidden: Read<boolean>;
   online: Read<boolean>;
   /** Settings is open, so unselected servers are discovered for their names and limits. */
   metadata: Read<boolean>;
@@ -111,23 +111,25 @@ export interface Connection {
   readonly entry: CatalogEntry;
   readonly auth: ServerAuth;
   readonly view: Read<ServerView>;
+  readonly link: Link;
   /** Without options, does what has fallen due. It never rejects, and outcomes land in the view. */
   check(options?: CheckOptions): Promise<void>;
   /** The server ready to run on evidence verified at or after `since` (page ms), or null. */
   prepared(since: number): PreparedServer | null;
-  /** Verified roles become unchecked, e.g. after a run failed on them. */
-  invalidate(roles: readonly Role[]): void;
+  /** Verified roles become unchecked, e.g. after a run failed on them, which a `deferred` check proves again only at the next start. */
+  invalidate(roles: readonly Role[], deferred?: boolean): void;
+  proved(roles: readonly Role[]): void;
   requireSignIn(message?: string): void;
-  /** The network or the page came back, so retryable backoffs end and stale evidence is checked again. */
+  /** The network or the page came back, so retryable failures fall due and stale evidence is checked again. */
   resume(): void;
   dispose(): void;
 }
 
 type Task = { abort: AbortController; quiet: boolean; promise: Promise<void> };
-/** A failure and when to retry it. `due` is Infinity when only the user or a changed server can clear it. */
-type Fault = { failure: Failure; attempts: number; due: number };
+/** A failure and when to retry it. `due` is Infinity when only the user, a start or a changed server can clear it. */
+type Fault = { failure: Failure; due: number };
 type Outcome<P> =
-  | { state: "none" }
+  | { state: "none"; until?: { selection: string; generation: string } }
   | { state: "verified"; path: P }
   | { state: "failed"; fault: Fault; selection: string; generation: string };
 interface RoleCheck<P> {
@@ -152,12 +154,37 @@ function connect(
   env: ConnectionEnv,
 ): Omit<Connection, "dispose"> {
   const { now, page } = env;
-  const context: CheckContext = { entry, auth, page, openProbeChannel: env.openProbeChannel, now };
+  const parked: ProbeChannelEvents = {
+    ready() {},
+    outcomes(outcomes) {
+      if (disposed || !watchedPath.peek()) return;
+      env.idleLatency(entry.id, outcomes);
+      // Timeouts alone prove the bus runs, not that the server answers.
+      if (outcomes.some(({ timedOut }) => !timedOut)) connectivity.set("connected");
+    },
+    interrupted() {},
+    // A bus that went quiet is a path to prove again, since a peer that died leaves Ready; a check dials it anew.
+    stalled() {
+      if (disposed) return;
+      link.bus.dispose();
+      if (watchedPath.peek()) connectivity.set("offline");
+      quiet.set(true);
+    },
+    resumed() {},
+    signInRequired() {
+      queueMicrotask(() => disposed || requireSignIn());
+    },
+  };
+  const workers = createWorkerPool();
+  const lease = createLease(entry.url, auth);
+  const link: Link = { bus: createBusSlot(env.openProbeChannel, parked), workers, lease };
+  const context: CheckContext = { entry, auth, lease, page, bus: link.bus, now };
   const discovery = signal<Discovery | null>(null);
   /** The last discovery failure is kept through a loud re-read, which only hides it. */
   const fault = signal<Fault | null>(null);
   const discovering = signal<Task | null>(null);
   const connectivity = signal<ServerView["connectivity"]>(null);
+  const quiet = signal(false);
   const roleCheck = <P>(): RoleCheck<P> => ({
     outcome: signal<Outcome<P>>({ state: "none" }),
     task: signal(null),
@@ -172,8 +199,6 @@ function connect(
     fn(latency, "latency");
   };
   let disposed = false;
-  /** The bus the latest latency check proved, for the idle monitor to take over. */
-  let handed: CheckedBus | null = null;
 
   // The browser's offline word is advisory: a link without a gateway reads offline yet reaches its server.
   const loopback = isLoopback(new URL(entry.url).hostname);
@@ -230,8 +255,17 @@ function connect(
   );
 
   // These say what falls due, in page ms. Infinity means nothing, or what waits on the user.
+  const held = (role: Role): boolean => {
+    const outcome = roles[role].outcome();
+    const until = outcome.state === "none" ? outcome.until : undefined;
+    return (
+      !!until &&
+      until.generation === discovery()?.generation &&
+      until.selection === selectionText(env.selections[role]())
+    );
+  };
   const roleDue = (role: Role): number => {
-    if (!required(role) || roles[role].task() || valid[role]()) return Infinity;
+    if (!required(role) || roles[role].task() || valid[role]() || held(role)) return Infinity;
     return failureHere(role)?.due ?? 0;
   };
   const discoveryDue = computed((): number => {
@@ -241,7 +275,7 @@ function connect(
     const known = discovery();
     if (!known) return 0;
     if (!selected()) return known.readAt + FRESH_MS;
-    return known.readAt + (watchedPath() ? MONITORED_MS : LIVENESS_MS);
+    return known.readAt + LIVENESS_MS;
   });
   const signedOut = () => auth.left() <= 0 && !fault.peek()?.failure.signIn;
   const dueAt = computed((): number => {
@@ -266,13 +300,11 @@ function connect(
     });
   }
 
-  function faultAfter(previous: Fault | null, error: unknown): Fault {
+  function faultAfter(error: unknown, readAgainMs = Infinity): Fault {
     const failure = failureOf(error, name.peek());
     // The page's own login ends for the whole page; the app navigates to sign-in.
     if (failure.signIn && auth.kind === "session") env.session.end("expired");
-    if (failure.retry !== "retryable") return { failure, attempts: 0, due: Infinity };
-    const attempts = (previous?.failure.retry === "retryable" ? previous.attempts : 0) + 1;
-    return { failure, attempts, due: now() + backoffMs(attempts) };
+    return { failure, due: failure.retry === "retryable" ? now() + readAgainMs : Infinity };
   }
 
   /** Runs one check owning `slot` after a limiter slot, within its budget; an outcome lands only while it is current. */
@@ -328,7 +360,7 @@ function connect(
         );
         fault.set(null);
       },
-      (error) => fault.set(faultAfter(fault.peek(), error)),
+      (error) => fault.set(faultAfter(error, LIVENESS_MS)),
     );
   }
 
@@ -337,7 +369,7 @@ function connect(
     known: Discovery,
     selection: Selection,
     owner: AbortSignal | undefined,
-    run: (signal: AbortSignal) => Promise<{ path: P; bus: CheckedBus | null }>,
+    run: (signal: AbortSignal) => Promise<P>,
   ): Promise<void> {
     const text = selectionText(selection);
     return job(
@@ -346,26 +378,14 @@ function connect(
       ROLE_BUDGET_MS,
       owner,
       run,
-      ({ path, bus }) => {
-        check.outcome.set({ state: "verified", path });
-        // The idle monitor takes over the bus that proved its path, in this flush. No other bus outlives its check.
-        if (bus && watchedPath.peek() === path) handed = bus;
-        else bus?.dispose();
-      },
-      (error) => {
-        const previous = check.outcome.peek();
-        const same =
-          previous.state === "failed" &&
-          previous.selection === text &&
-          previous.generation === known.generation;
-        const fault = faultAfter(same ? previous.fault : null, error);
+      (path) => check.outcome.set({ state: "verified", path }),
+      (error) =>
         check.outcome.set({
           state: "failed",
-          fault,
+          fault: faultAfter(error),
           selection: text,
           generation: known.generation,
-        });
-      },
+        }),
     );
   }
 
@@ -375,10 +395,9 @@ function connect(
     const known = discovery.peek()!;
     const selection = env.selections[role].peek();
     return role === "throughput"
-      ? verify(throughput, known, selection, owner, async (signal) => ({
-          path: await checkThroughput(context, known, selection, signal),
-          bus: null,
-        }))
+      ? verify(throughput, known, selection, owner, (signal) =>
+          checkThroughput(context, known, selection, signal),
+        )
       : verify(latency, known, selection, owner, (signal) =>
           checkLatency(context, known, selection, signal),
         );
@@ -422,7 +441,7 @@ function connect(
         if (path) return (force || fresh) && path.verifiedAt < stale;
         const failure = failureHere(each);
         // Retrying one role leaves another role's failure alone.
-        if (!failure) return true;
+        if (!failure) return force || fresh || !held(each);
         return (
           !role && failure.failure.retry === "retryable" && (force || fresh || failure.due <= at)
         );
@@ -431,12 +450,25 @@ function connect(
     await Promise.all(due.map((each) => probe(each, owner)));
   }
 
-  function invalidate(which: readonly Role[]): void {
+  function invalidate(which: readonly Role[], deferred = false): void {
+    const generation = discovery.peek()?.generation ?? "";
     batch(() =>
       eachRole((check, role) => {
         if (!which.includes(role) || check.outcome.peek().state !== "verified") return;
         cancel(check.task);
-        check.outcome.set({ state: "none" });
+        const selection = selectionText(env.selections[role].peek());
+        check.outcome.set({ state: "none", ...(deferred && { until: { selection, generation } }) });
+      }),
+    );
+  }
+
+  function proved(which: readonly Role[]): void {
+    const at = now();
+    batch(() =>
+      eachRole((check, role) => {
+        const outcome = check.outcome.peek();
+        if (which.includes(role) && outcome.state === "verified")
+          check.outcome.set({ state: "verified", path: { ...outcome.path, verifiedAt: at } });
       }),
     );
   }
@@ -450,14 +482,14 @@ function connect(
     if (auth.kind === "session") env.session.end("expired");
     batch(() => {
       cancelAll();
-      fault.set({ failure, attempts: 0, due: Infinity });
+      fault.set({ failure, due: Infinity });
     });
   }
 
   function resume(): void {
     if (signedOut()) return requireSignIn();
     const reset = (each: Fault): Fault =>
-      each.failure.retry === "retryable" ? { ...each, attempts: 0, due: 0 } : each;
+      each.failure.retry === "retryable" ? { ...each, due: 0 } : each;
     batch(() => {
       const failed = fault.peek();
       if (failed) fault.set(reset(failed));
@@ -521,6 +553,8 @@ function connect(
       const wait = Math.ceil(at - now());
       if (wait > 0) return void (timer = setTimeout(fire, wait));
       armed = false;
+      // Workers no run took since the last timed read have waited a full read cadence.
+      workers.sweep();
       void check();
     };
     // What is due already starts before the page paints, so a row never flashes its unchecked state.
@@ -534,59 +568,58 @@ function connect(
   effect(() => {
     const path = watchedPath();
     if (!path) return;
-    const checked = handed;
-    handed = null;
-    let current = true;
-    let channel: ProbeChannel | undefined;
-    onCleanup(() => {
-      current = false;
-      channel?.dispose();
-    });
+    const { bus } = link;
+    let watched = true;
     // A bus that cannot even open is a path to prove again.
-    const lost = () =>
-      queueMicrotask(() => {
-        if (current) invalidate(["latency"]);
-      });
-    const events: ProbeChannelEvents = {
-      ready() {},
-      outcomes(outcomes) {
-        if (!current) return;
-        env.idleLatency(entry.id, outcomes);
-        // Timeouts alone prove the bus runs, not that the server answers.
-        if (outcomes.some(({ timedOut }) => !timedOut)) connectivity.set("connected");
-      },
-      interrupted() {},
-      // A bus that went quiet is one too, since a peer that died leaves Ready.
-      stalled() {
-        if (current) connectivity.set("offline");
-        lost();
-      },
-      resumed() {},
-      signInRequired() {
-        queueMicrotask(() => {
-          if (current) requireSignIn();
-        });
-      },
+    const unopened = () => queueMicrotask(() => disposed || invalidate(["latency"]));
+    const open = () => {
+      if (!watched) return;
+      try {
+        const { target } = path;
+        const held = bus.take(
+          { target, auth: lease, control: entry.url, intervalMs: IDLE_INTERVAL_MS, maxInFlight: 2 },
+          parked,
+        );
+        // Every idle probe counts, as there is no warmup.
+        held.measure();
+      } catch {
+        unopened();
+      }
     };
-    if (checked) {
-      channel = checked.adopt(events);
-      channel.pace(IDLE_INTERVAL_MS);
-      return;
-    }
-    try {
-      channel = env.openProbeChannel(
-        { target: path.target, auth, intervalMs: IDLE_INTERVAL_MS, maxInFlight: 2 },
-        events,
-      );
-      // Every idle probe counts, as there is no warmup.
-      channel.measure();
-    } catch {
-      lost();
-    }
+    untrack(() => void lease.renew().then(open, () => watched && unopened()));
+    onCleanup(() => {
+      watched = false;
+      bus.park();
+    });
+  });
+  effect(() => {
+    if (!env.active() || !quiet()) return;
+    untrack(() => {
+      quiet.set(false);
+      invalidate(["latency"]);
+    });
+  });
+  effect(() => {
+    if (!required("latency")) link.bus.dispose();
+    if (selected()) return;
+    workers.drain();
+    lease.end();
+  });
+  effect(() => {
+    if (!env.hidden()) return;
+    const timer = setTimeout(() => {
+      link.bus.dispose();
+      workers.drain();
+      lease.end();
+    }, HIDDEN_MS);
+    onCleanup(() => clearTimeout(timer));
   });
   onCleanup(() => {
     disposed = true;
     cancelAll();
+    link.bus.dispose();
+    workers.close();
+    lease.end();
   });
 
   // The view reads settled booleans, so a quiet re-read that starts and ends changes nothing it shows.
@@ -654,14 +687,18 @@ function connect(
     entry,
     auth,
     view,
+    link,
     check,
     prepared: (since) =>
       untrack(() => {
         if (auth.left() <= 0) return null;
         const ready = paths(since);
-        return ready && { server: identity(), auth, discovery: discovery()!, ...ready };
+        return (
+          ready && { server: identity(), auth: lease, discovery: discovery()!, link, ...ready }
+        );
       }),
     invalidate,
+    proved,
     requireSignIn,
     resume,
   };

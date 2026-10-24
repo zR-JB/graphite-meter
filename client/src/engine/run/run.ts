@@ -32,7 +32,6 @@ import {
   type StageEvents,
   type StageLanes,
   type StageResources,
-  type StageSetup,
   type TestConfig,
 } from "../types";
 import { pageClock, RunClock, type Clock } from "./clock";
@@ -78,6 +77,9 @@ const SILENCE_MS = 1_500;
 const RECEIVER_SILENCE_MS = 4_000;
 /** The one redial after a stall: its HTTP proof and its establishment, 3 s each, and their margins. */
 const LATENCY_RECOVERY_MS = 7_300;
+/** The server forgets an unused upload id after 2 minutes, so a stage starting later mints its own. */
+const UPLOAD_ID_FRESH_MS = 90_000;
+const UPLOADS: readonly Stage[] = ["upload", "bidirectional"];
 
 /** The test settings a run follows, with the warmup already adapted to the measured RTT. */
 export type RunPlan = Pick<
@@ -105,6 +107,8 @@ export interface RunOptions {
   dropped: DroppedServer[];
   plan: RunPlan;
   open: OpenStage;
+  /** Mints an upload id, so that no upload stage's start waits for one. */
+  mint(server: PreparedServer, signal: AbortSignal): Promise<string>;
   /** Lanes per server for a stage; throws when servers sharing an origin cannot all get theirs. */
   streams(servers: readonly PreparedServer[], activity: Activity): Map<string, StageLanes>;
   clock?: Clock;
@@ -165,8 +169,8 @@ interface Participant {
   rotated: boolean;
   /** Probe adjacency for jitter; a reconnect breaks it. */
   continuity: number;
-  /** Its latency bus across the run's stages, disposed when the run ends. */
-  bus: StageSetup["bus"];
+  /** Upload ids minted at the start, each for its upload stage. */
+  uploadIds: Partial<Record<Stage, Promise<string | null>>>;
 }
 
 /** A server in one stage. Times are active ms. */
@@ -257,6 +261,10 @@ export class Run {
   readonly #source: Participant;
   readonly #dropped: DroppedServer[];
   readonly #open: OpenStage;
+  readonly #mint: RunOptions["mint"];
+  /** Ends the upload ids still being minted when the run ends. */
+  readonly #minting = new AbortController();
+  #mintedAt = 0;
   readonly #streams: RunOptions["streams"];
   readonly #page: Clock;
   #clock!: RunClock;
@@ -306,12 +314,13 @@ export class Run {
         removed: false,
         rotated: false,
         continuity: 0,
-        bus: { current: null },
+        uploadIds: {},
       };
     });
     this.#source = this.#servers.find((server) => server.id === options.focus) ?? this.#servers[0]!;
     this.#dropped = options.dropped;
     this.#open = options.open;
+    this.#mint = options.mint;
     this.#streams = options.streams;
     this.#page = options.clock ?? pageClock;
     this.#validate(options.plan, this.#servers);
@@ -346,6 +355,13 @@ export class Run {
       .activity.stage;
     for (const { server, reason, message } of this.#dropped)
       this.#record(server.id, "throughput", reason, message, charged);
+    this.#mintedAt = Date.now();
+    for (const server of this.#servers)
+      for (const stage of UPLOADS)
+        if (planned(this.#plan, stage))
+          server.uploadIds[stage] = this.#mint(server.prepared, this.#minting.signal).catch(
+            () => null,
+          );
     this.#tick();
     this.#arm();
   }
@@ -401,7 +417,12 @@ export class Run {
     if (continued) {
       this.#shown = now;
       for (const server of this.#servers) server.buckets.widen(now.end - now.start);
-      if (stage) this.#evaluate(stage);
+      if (stage) {
+        // A preparing stage's clock holds, so its plan starts when it resumes.
+        if (stage.phase !== "preparing")
+          for (const seat of active(stage)) seat.resources.replanned();
+        this.#evaluate(stage);
+      }
     }
     this.#tick();
   }
@@ -479,6 +500,12 @@ export class Run {
 
   #current(stage: StageRun): boolean {
     return this.#state === "running" && this.#stage === stage;
+  }
+
+  /** Timeline ms until `stage`'s last planned segment ends. */
+  #endsIn(stage: Stage): number {
+    const end = this.#segments.findLast((segment) => segment.activity.stage === stage)?.end;
+    return Math.max(0, (end ?? 0) - this.#position());
   }
 
   /** Timeline ms now: the last tick plus the page time since, unless held. */
@@ -636,6 +663,7 @@ export class Run {
         stage.ramp = { at, down: active(stage).reduce((sum, seat) => sum + seat.shown, 0) };
       }
       if (shown.phase !== "warmup") this.#measure(stage);
+      else for (const seat of active(stage)) seat.resources.replanned();
       this.#tick();
       this.#arm();
     });
@@ -643,6 +671,10 @@ export class Run {
 
   #seat(stage: StageRun, server: Participant): Seat {
     const { activity } = stage;
+    // Wall time, as the server's: a page clock can stand still while the device sleeps.
+    const fresh = Date.now() - this.#mintedAt < UPLOAD_ID_FRESH_MS;
+    const uploadId = (fresh && server.uploadIds[activity.stage]) || Promise.resolve(null);
+    delete server.uploadIds[activity.stage];
     // Resources report only after `open` returns them.
     const seat = {
       server,
@@ -664,10 +696,10 @@ export class Run {
       ...(stage.streams.get(server.id) ?? { streams: { down: 0, up: 0 } }),
       uploadLanes: [...stage.streams.values()].reduce((sum, lanes) => sum + lanes.streams.up, 0),
       cadence: this.#cadence(activity),
-      seed: `r${Math.round(this.#clock.start)}`,
       events: this.#events(stage, seat),
       now: () => this.#clock.runMs(),
-      bus: server.bus,
+      endsIn: () => this.#endsIn(activity.stage),
+      uploadId,
     });
     stage.seats.set(server.id, seat);
     return seat;
@@ -697,6 +729,8 @@ export class Run {
       seat.progressAt = { down: at, up: at };
       seat.heardAt = at;
       seat.resources.measure(opensAt);
+      // A late tick or a gap may have moved the window's start, and with it the stage's end.
+      seat.resources.replanned();
     }
     if (activity.stage === "latency") return;
     // The first upload window starts at the window, not in the warmup.
@@ -1146,7 +1180,11 @@ export class Run {
   /** A page gap starts a new interval before any evidence after it applies; true when one did. */
   #resumeAfterGap(stage: StageRun): boolean {
     this.#clock.read();
-    if (!this.#clock.takeGap() || stage.phase !== "measuring") return false;
+    if (!this.#clock.takeGap()) return false;
+    // The timeline left the gap out, so the stage's end moved.
+    if (stage.phase === "warmup" || stage.phase === "measuring")
+      for (const seat of active(stage)) seat.resources.replanned();
+    if (stage.phase !== "measuring") return false;
     this.#resumeEvidence(stage);
     return true;
   }
@@ -1574,6 +1612,7 @@ export class Run {
   }
 
   #release(): void {
+    this.#minting.abort();
     this.#cancelTimer();
     const stage = this.#stage;
     if (stage) {
@@ -1587,8 +1626,7 @@ export class Run {
     this.#aggregate.close();
     for (const server of this.#servers) {
       server.latency.close();
-      server.bus.current?.dispose();
-      server.bus.current = null;
+      server.prepared.link.bus.park();
     }
   }
 

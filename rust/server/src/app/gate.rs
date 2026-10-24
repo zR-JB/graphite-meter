@@ -6,6 +6,7 @@ use super::{
     response,
 };
 use crate::{
+    admission,
     peer::{Address, Peer},
     transport::body::Body,
 };
@@ -36,8 +37,13 @@ impl App {
             &self.config.trusted_proxies,
         );
         let peer = Peer::new(address);
-        let lease = self.auth.authorize(request, endpoint, &peer)?;
-        let peer = peer.with_auth(lease);
+        let origin = request.headers().get(header::ORIGIN);
+        // A token naming no live lease of this `Origin` is ignored, as after a restart: the request has none.
+        let lease =
+            admission::presented(request).and_then(|token| self.leases.find(&token, origin));
+        let leased = lease.as_ref().and_then(|lease| lease.auth());
+        let auth = self.auth.authorize(request, endpoint, &peer, leased)?;
+        let peer = peer.with_auth(auth).with_lease(lease);
         match route {
             Some(route) if !allows(route, method) => {
                 let mut allow: Vec<_> = methods(route).collect();

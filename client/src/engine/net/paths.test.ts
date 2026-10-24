@@ -1,6 +1,8 @@
+import { createLease } from "./lease";
 import { expect, test } from "bun:test";
 import type { Preflight } from "../../protocol/documents";
-import type { Discovery } from "../types";
+import { createBusSlot } from "../lanes/probes";
+import type { Discovery, ProbeChannelEvents } from "../types";
 import { discover } from "./checks";
 import { FakeBuses, fakeNet, h, page, publicAuth, ws, wt } from "./fakes.testutil";
 import {
@@ -82,8 +84,9 @@ test("this page's policy refuses origins it cannot reach, before any request", a
       const context = {
         entry,
         auth: publicAuth(entry),
+        lease: createLease(url, publicAuth(entry)),
         page,
-        openProbeChannel: new FakeBuses().open,
+        bus: createBusSlot(new FakeBuses().open, {} as ProbeChannelEvents),
         now: net.now,
       };
       await expect(discover(context, new AbortController().signal)).rejects.toMatchObject({

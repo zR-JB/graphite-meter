@@ -1,10 +1,11 @@
 // The engine's shared vocabulary and the contract between the run and each server's stage resources.
 import type { Probe } from "../protocol/documents";
-import type { Ending, ProbeOutcome, RequestRecipe, TicketRecipe } from "../protocol/messages";
+import type { Ending, ProbeOutcome, RequestRecipe } from "../protocol/messages";
 import type { FailureReason } from "../protocol/reasons";
+import type { Lease } from "./net/lease";
 import type { Activity, Stage } from "./run/schedule";
 
-export type { Ending, FailureReason, Probe, ProbeOutcome, RequestRecipe, Stage, TicketRecipe };
+export type { Ending, FailureReason, Probe, ProbeOutcome, RequestRecipe, Stage };
 export type Direction = "down" | "up";
 export const ROLES = ["throughput", "latency"] as const;
 export const MAX_SELECTED = 4;
@@ -126,6 +127,27 @@ export interface PreparedServer {
   discovery: Discovery;
   throughput: ThroughputPath;
   latency: LatencyPath | null;
+  link: Link;
+}
+
+/** A selected server's resources that outlive checks, stages and runs; its probes, lease and upload control go to its discovery origin. */
+export interface Link {
+  bus: BusSlot;
+  workers: WorkerPool;
+  lease: Lease;
+}
+
+export interface BusSlot {
+  adopt(target: LatencyTarget, events: ProbeChannelEvents): LatencyBus | null;
+  take(options: ProbeChannelOptions, events: ProbeChannelEvents): LatencyBus;
+  renew(): void;
+  park(): void;
+  dispose(bus?: LatencyBus): void;
+}
+
+export interface WorkerPool {
+  take(script: string): Worker;
+  give(script: string, worker: Worker): void;
 }
 
 /** A server's credentials: none, the page's sign-in, or a measurement grant, which never appears in a URL. */
@@ -137,8 +159,8 @@ export interface ServerAuth {
   request(url: string, method: string): RequestRecipe;
   /** A control request at high priority; a 403 with the sign-in marker throws SignInRequired, its body released. */
   fetch(url: string, init?: RequestInit): Promise<Response>;
-  /** Null when a socket needs no ticket: public servers, and a WebSocket riding the page's own cookie. */
-  ticket(origin: string, route: string): TicketRecipe | null;
+  /** A WebSocket or WebTransport URL with what admits it: the lease's token, as no field can carry it. */
+  socket(url: string): string;
   /** Whether a broken stream was the sign-in or grant ending: the one cheap check per kind, at most 3 s. */
   ended(signal?: AbortSignal): Promise<boolean>;
 }
@@ -192,13 +214,13 @@ export interface StageSetup {
   gating?: Record<Direction, number>;
   /** The probe spacing of this stage: the idle cadence for the latency stage, the loaded one otherwise. */
   cadence: PingCadence;
-  /** Distinguishes this run's requests from cached ones. */
-  seed: string;
   events: StageEvents;
   /** Run ms, the clock checkpoints are stamped with. */
   now(): number;
-  /** The server's latency bus for the run: opened by the first stage that probes, adopted by each later one. */
-  bus: { current: LatencyBus | null };
+  /** Timeline ms until the stage's planned end, a live change included. */
+  endsIn(): number;
+  /** An upload id minted when the run started, for the stage's first upload; null leaves the stage to mint one. */
+  uploadId: Promise<string | null>;
 }
 
 /** One server's resources for one stage, shared by its warmup and measured window. */
@@ -207,6 +229,8 @@ export interface StageResources {
   prepare(signal: AbortSignal): Promise<void>;
   /** Opens the measured window at page time `at`. */
   measure(at: number): void;
+  /** The run's clock started for the stage, or its planned end moved: download bodies follow it from their next request. */
+  replanned(): void;
   /** A receiver checkpoint; `final` issues fresh requests and retries a miss within 1.5 s. */
   checkpoint(signal: AbortSignal, final?: boolean): Promise<Checkpoint | null>;
   /** The window's download bytes the lanes counted by page time `at`, or null without every answer; never rejects. */
@@ -250,6 +274,7 @@ export class StageFailure extends Error {
 export interface ProbeChannelOptions {
   target: LatencyTarget;
   auth: ServerAuth;
+  control: string;
   intervalMs: number | null;
   /** Probes in flight at most; a full window skips a send, never times one out. */
   maxInFlight: number;
@@ -278,11 +303,12 @@ export interface ProbeChannel {
 export type OpenProbeChannel = (
   options: ProbeChannelOptions,
   events: ProbeChannelEvents,
-) => ProbeChannel;
+) => LatencyBus;
 /** A probe channel that outlives its stage. */
 export interface LatencyBus extends ProbeChannel {
   /** Its events go to `events` from now on, told at once whether the bus answers or stalled; false once it ended. */
   adopt(events: ProbeChannelEvents): boolean;
+  renew(): void;
 }
 
 /** The test settings as saved (localStorage `graphite-meter:v1` → `config`). */

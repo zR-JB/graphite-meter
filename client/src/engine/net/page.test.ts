@@ -89,7 +89,7 @@ test("one /auth/session check answers every lane asking whether the login ended;
   }
   // The page's own requests carry its cookies, and its CSRF token where they change state; a marker ends the login.
   const session = signedIn(() => ({ status: 403, headers: MARKER }));
-  expect((await session.fetch("/upload/session", { method: "POST" })).status).toBe(403);
+  expect((await session.fetch("/upload/checkpoint", { method: "POST" })).status).toBe(403);
   const { init } = net!.requests[0]!;
   expect({ ...init, headers: Object.fromEntries(new Headers(init.headers)) }).toEqual({
     method: "POST",

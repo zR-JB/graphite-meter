@@ -1,6 +1,7 @@
 // The Details sheet's body; this browser's address shows only while its key is pressed.
 import "./details.css";
 import type { App } from "../../app/app";
+import { protocolFromNextHop } from "../../engine/net/paths";
 import { describeStreams, feedSocket, needsPings } from "../../engine/net/streams";
 import { activities } from "../../engine/run/schedule";
 import type { Role } from "../../engine/types";
@@ -127,13 +128,18 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     const shown = target("throughput");
     if (!shown) return unknown();
     const known = discovery();
-    const feed =
-      shown.transport !== "fetch-stream"
-        ? "webtransport"
-        : known && feedSocket(known, shown)
-          ? "websocket"
-          : "fetch-stream";
-    return `${TRANSPORT[feed]} over ${describePath(known, "throughput", shown).carrier}`;
+    if (shown.transport !== "fetch-stream")
+      return `${TRANSPORT.webtransport} over ${describePath(known, "throughput", shown).carrier}`;
+    if (!known) return unknown();
+    // A fetch upload's feed reaches the discovery origin, whichever origin carries its lanes.
+    const socket = feedSocket(known);
+    const { carrier } = describePath(known, "throughput", {
+      transport: "fetch-stream",
+      origin: known.origin,
+      tls: known.origin.startsWith("https:"),
+      protocol: socket ? "http1" : (protocolFromNextHop(known.protocol) ?? "negotiated"),
+    });
+    return `${TRANSPORT[socket ? "websocket" : "fetch-stream"]} over ${carrier}`;
   };
   const address = computed(() => {
     const probe = facts().throughput?.probe;

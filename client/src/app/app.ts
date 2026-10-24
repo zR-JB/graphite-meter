@@ -3,7 +3,7 @@ import { planStreams } from "../engine/net/streams";
 import { readPageConfig, createPageSession } from "../engine/net/page";
 import { createServers, stageLimit } from "../engine/net/servers";
 import { openProbeChannel } from "../engine/lanes/probes";
-import { openStage } from "../engine/lanes/stage";
+import { mintUpload, openStage } from "../engine/lanes/stage";
 import type { LatencyBucket } from "../engine/measure/buckets";
 import { adaptWarmup, totalMs } from "../engine/run/schedule";
 import { pageMs } from "../lib/frame";
@@ -66,6 +66,7 @@ export function createApp() {
     setTransports: (transports) =>
       preferences.set({ config: { ...preferences.config.peek(), transports } }),
     active: computed(() => booted() && visible() && !leaving() && !busy()()),
+    hidden: computed(() => !visible() && !busy()()),
     online,
     latencyPin,
     openProbeChannel,
@@ -96,19 +97,22 @@ export function createApp() {
     }),
     authorize: servers.authorize,
     async prepare(signal, config) {
-      const ready = await servers.prepare(signal);
+      const ready = await servers.prepare(signal, config);
       // The blocker judged each limit as last read; Start holds the run to the discovery it just read.
       const limit = stageLimit(
         ready.servers.map(({ server, discovery }) => ({ name: server.name, discovery })),
       );
       const refused = stageLimitError(config, limit);
-      if (refused) throw new Error(refused);
-      return ready;
+      if (!refused) return ready;
+      ready.release();
+      throw new Error(refused);
     },
     fits: servers.fits,
     recheck: servers.recheck,
+    proved: servers.proved,
     finished: (finished) => (finished ? saver.offer(historyRecord(finished)) : saver.withdraw()),
     open: openStage,
+    mint: mintUpload,
     streams: (prepared, activity) =>
       new Map(
         [...planStreams(prepared, activity, preferences.config.peek().transferStreams)].map(

@@ -16,6 +16,7 @@ function setup(
   const refusal = signal("");
   const offers: string[] = [];
   const calls: string[] = [];
+  const leases = { released: 0 };
   const peers = options.servers ?? [{ id: "self" }];
   const run = createRun({
     preferences,
@@ -26,10 +27,13 @@ function setup(
       servers: peers.map(({ id }) => prepared(id, true)),
       dropped: [],
       focus: "self",
+      release: () => leases.released++,
     }),
     fits: (ms) => options.fits?.(ms) ?? true,
     recheck: () => {},
+    proved: () => {},
     finished: (finished) => offers.push(finished ? "offer" : "withdraw"),
+    mint: async () => "u",
     open: (stage) =>
       resources(peers.find(({ id }) => id === stage.server.server.id)!, stage, calls, clock),
     streams: (servers, activity) =>
@@ -46,7 +50,7 @@ function setup(
       ),
     clock,
   });
-  return { clock, run, preferences, refusal, offers, calls };
+  return { clock, run, preferences, refusal, offers, calls, leases };
 }
 
 const only = (

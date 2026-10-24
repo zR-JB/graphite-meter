@@ -18,9 +18,10 @@ const paths = [
   ],
 ] as const;
 
-// Only Chrome takes the run's certificate for QUIC, and Firefox 157 can wedge a worker's abandoned HTTP/2 download (a Firefox bug).
+// Only Chrome takes the run's certificate for QUIC. These stages run their planned time, so downloads end on the server's
+// clock and no worker ends mid-download.
 for (const [name, at, throughputTarget, origin, transport, protocol] of paths)
-  (protocol === "http/1.1" ? test : test.chrome)(
+  (protocol === "h3" ? test.chrome : test)(
     `${name} carries both directions over ${protocol}`,
     async (page) => {
       // Latency's WebTransport path is the datagram bus too, so this cell carries both.
@@ -65,11 +66,8 @@ for (const [name, at, throughputTarget, origin, transport, protocol] of paths)
       });
       expect(server.download?.reportedBytesPerSec).toBeGreaterThan(0);
       expect(server.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-      // An upload's feed stays on its own origin, over that origin's WebSocket only for HTTP/1.1.
-      const feed =
-        protocol === "http/1.1"
-          ? `${origin.replace(/^http/, "ws")}/ws/progress`
-          : `${origin}/upload/progress`;
+      // An upload's feed goes to the discovery origin, the page's here, over its WebSocket as it serves HTTP/1.1.
+      const feed = `${at.replace(/^http/, "ws")}/ws/progress`;
       expect(await page.evaluate(() => [...(window as any).feeds])).toEqual(
         transport === "fetch-stream" ? [feed] : [],
       );

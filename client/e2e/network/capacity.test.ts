@@ -28,8 +28,5 @@ test(
       await fleet.close();
     }
   },
-  {
-    timeout: 120_000,
-    failing: "until step 9: capacity is found per lane mid-stage, without a lease",
-  },
+  { timeout: 120_000 },
 );

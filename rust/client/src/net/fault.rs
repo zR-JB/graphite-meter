@@ -56,7 +56,7 @@ impl Fault {
             Self::Status { status, .. } if *status == StatusCode::TOO_MANY_REQUESTS => {
                 FailureReason::ClientLimit
             }
-            Self::Status { status, .. } if busy(*status) => FailureReason::ServerBusy,
+            Self::Status { status, .. } if busy(*status) => FailureReason::ServerCapacity,
             Self::Status { .. } | Self::Malformed(_) => FailureReason::ProtocolError,
             Self::Refused(refusal) => refusal.failure_reason(),
         }
@@ -130,7 +130,7 @@ impl Fault {
         match refusal {
             Refusal::Idle => Self::Ended(LaneEnding::Idle),
             Refusal::Revoked => Self::SignIn(issuer()),
-            Refusal::ServerBusy | Refusal::ClientLimit => Self::Status {
+            Refusal::ServerCapacity | Refusal::ClientLimit => Self::Status {
                 status: refusal.status(),
                 from,
                 retry_after,
@@ -192,7 +192,7 @@ impl std::error::Error for Fault {}
 fn upload_control(route: Route) -> bool {
     matches!(
         route,
-        Route::UploadSession | Route::UploadProgress | Route::UploadCheckpoint
+        Route::Lease | Route::UploadProgress | Route::UploadCheckpoint
     )
 }
 
@@ -210,7 +210,7 @@ fn source(route: Route) -> &'static str {
         Route::Preflight => "preflight",
         Route::Probe => "probe",
         Route::UploadCheckpoint => "receiver checkpoint",
-        Route::UploadSession => "upload session",
+        Route::Lease => "admission",
         Route::UploadProgress => "upload progress",
         route => route.path(),
     }
@@ -250,7 +250,7 @@ mod tests {
         Fault::answer(
             StatusCode::from_u16(status).unwrap(),
             &headers,
-            Route::UploadSession,
+            Route::Lease,
             issuer,
         )
     }
@@ -272,47 +272,35 @@ mod tests {
         const FULL: [(&str, &str); 2] = [(REFUSAL, "client-limit"), ("retry-after", "1")];
         let mismatch = "upload id belongs to another client (HTTP 403)";
         let rows: &[Row] = &[
-            (
-                503,
-                &[],
-                ServerBusy,
-                busy(0),
-                "HTTP 503 from upload session",
-            ),
+            (503, &[], ServerCapacity, busy(0), "HTTP 503 from admission"),
             (
                 429,
                 &[("retry-after", "3")],
                 ClientLimit,
                 busy(3),
-                "HTTP 429 from upload session",
+                "HTTP 429 from admission",
             ),
-            (
-                429,
-                &DATE,
-                ClientLimit,
-                busy(0),
-                "HTTP 429 from upload session",
-            ),
+            (429, &DATE, ClientLimit, busy(0), "HTTP 429 from admission"),
             (
                 500,
                 &[],
                 ProtocolError,
                 Class::Redial,
-                "HTTP 500 from upload session",
+                "HTTP 500 from admission",
             ),
             (
                 204,
                 &[],
                 ProtocolError,
                 Class::Final,
-                "HTTP 204 from upload session",
+                "HTTP 204 from admission",
             ),
             (
                 403,
                 &[],
                 ProtocolError,
                 Class::Final,
-                "HTTP 403 from upload session",
+                "HTTP 403 from admission",
             ),
             (403, &AUTH, SignInRequired, Class::Final, "Sign-in required"),
             (
@@ -331,18 +319,12 @@ mod tests {
             ),
             (
                 503,
-                &[(REFUSAL, "server-busy")],
-                ServerBusy,
+                &[(REFUSAL, "server-capacity")],
+                ServerCapacity,
                 busy(0),
-                "HTTP 503 from upload session",
+                "HTTP 503 from admission",
             ),
-            (
-                400,
-                &FULL,
-                ClientLimit,
-                busy(1),
-                "HTTP 429 from upload session",
-            ),
+            (400, &FULL, ClientLimit, busy(1), "HTTP 429 from admission"),
             (
                 400,
                 &[(REFUSAL, "invalid")],

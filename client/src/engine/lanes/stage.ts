@@ -1,5 +1,4 @@
 // One server's resources for one stage; a failure or ended sign-in reaches the run once.
-import { readJSON, release, uploadSession } from "../../protocol/documents";
 import type { LaneCommand, SessionCommand } from "../../protocol/messages";
 import { ROUTES } from "../../protocol/routes";
 import { feedSocket, needsPings } from "../net/streams";
@@ -12,7 +11,8 @@ import {
   type Ending,
   type FailureReason,
   type OpenStage,
-  type ProbeChannel,
+  type PreparedServer,
+  type LatencyBus,
   type ProbeChannelEvents,
   type Role,
   type StageResources,
@@ -22,20 +22,37 @@ import {
 import { Carrier, type CarrierHost, type CarrierPlan } from "./carrier";
 import { answered, ESTABLISH_MS } from "./endings";
 import { handshakes, THROTTLED } from "../net/webtransport";
-import { openProbeChannel } from "./probes";
 import { Receiver, type ReceiverHost } from "./receiver";
 import { abortable, delay } from "../run/clock";
 
 /** Readiness gets a dial's budget and a margin for the workers to report within it. */
 const READY_MS = ESTABLISH_MS + 500;
-/** Large enough that a stage ends by aborting a download, not by fetching it again. */
+/** Large enough that only the server's clock or a stop ends a download. */
 const DOWNLOAD_BYTES = 64 * 1024 ** 3;
+/** Download bodies end this long after the stage's planned end, so its last window still sees bytes flow. */
+const END_MARGIN_MS = 250;
 /** Bounds the probes in flight. A loaded stage shares the link with its transfer, so its window stays small. */
 const IN_FLIGHT = { fixed: 16, replyDriven: 4, loaded: 2 };
 /** One sign-in check answers every break this long after it started, so an outage is not checked per reopening. */
 const SIGN_IN_CHECK_MS = 3_000;
 
 export const openStage: OpenStage = (setup) => new Stage(setup);
+
+/** An upload id minted with the server's lease; a broken request asks `signedOut` whether the sign-in ended. */
+export async function mintUpload(
+  { link, server }: PreparedServer,
+  signal: AbortSignal,
+  signedOut: () => Promise<boolean> = async () => false,
+): Promise<string> {
+  try {
+    return await link.lease.upload(AbortSignal.any([signal, AbortSignal.timeout(ESTABLISH_MS)]));
+  } catch (cause) {
+    if (cause instanceof SignInRequired || signal.aborted) throw cause;
+    // A broken request may be the sign-in or grant ending. The check, too, ends with the budget.
+    if (await abortable(signedOut(), signal)) throw new SignInRequired(server);
+    throw new Error("the upload id could not be minted", { cause });
+  }
+}
 
 class Stage implements StageResources {
   readonly #setup: StageSetup;
@@ -48,17 +65,22 @@ class Stage implements StageResources {
   #down: Carrier | null = null;
   #up: Carrier | null = null;
   #receiver: Receiver | null = null;
-  #probes: ProbeChannel | null = null;
+  #probes: LatencyBus | null = null;
   #probesReady = false;
+  #probesMeasuring = false;
   readonly #stalls: Record<Direction, boolean> = { down: false, up: false };
   #unprepared: ((error: Error) => void) | null = null;
   #changed = Promise.withResolvers<void>();
   #signInCheck: { at: number; ended: Promise<boolean> } | null = null;
   /** Lanes and feeds that reopened once already; a second ending other than a server bound fails the stage. */
   readonly #reopened = new Set<string>();
+  /** The run's clock runs for this stage, so its planned end is exact. */
+  #planned = false;
+  #uploadId: Promise<string | null>;
 
   constructor(setup: StageSetup) {
     this.#setup = setup;
+    this.#uploadId = setup.uploadId;
   }
 
   async prepare(signal: AbortSignal): Promise<void> {
@@ -100,7 +122,25 @@ class Stage implements StageResources {
     this.#measuring = true;
     this.#down?.measure(at);
     this.#receiver?.measure();
+    this.#probesMeasuring = !!this.#probes;
     this.#probes?.measure();
+  }
+
+  replanned(): void {
+    this.#planned = true;
+    if (this.#timed) this.#down?.ends(this.#bodiesEnd()!);
+  }
+
+  get #timed(): boolean {
+    const { protocol } = this.#setup.server.throughput.fetch;
+    return protocol === "http2" || protocol === "http3";
+  }
+
+  /** Epoch ms download bodies end by, just past the planned end so the window's last bytes flow; null while the
+   *  clock holds for the stage to prepare, as its end is not known yet. */
+  #bodiesEnd(): number | null {
+    if (!this.#planned) return null;
+    return performance.timeOrigin + performance.now() + this.#setup.endsIn() + END_MARGIN_MS;
   }
 
   async checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
@@ -119,10 +159,12 @@ class Stage implements StageResources {
   async replaceUpload(signal: AbortSignal): Promise<void> {
     if (!this.#receiver || this.#throughputEnded || this.#released.signal.aborted) return;
     this.#receiver.close();
-    this.#up?.release();
+    const released = this.#up?.release();
     this.#receiver = this.#up = null;
     // The replacement's lanes and feed start with their own reopen.
     for (const label of this.#reopened) if (label.startsWith("up")) this.#reopened.delete(label);
+    await released;
+    if (signal.aborted || this.#released.signal.aborted) return;
     try {
       await this.#prepareUpload(
         AbortSignal.any([signal, this.#released.signal, AbortSignal.timeout(READY_MS)]),
@@ -136,7 +178,7 @@ class Stage implements StageResources {
 
   async finish(): Promise<void> {
     if (this.#released.signal.aborted) return;
-    const drained = this.#probes?.stop();
+    const drained = this.#probes?.stop().then(() => (this.#probesMeasuring = false));
     await Promise.all([this.#down?.stop(), this.#up?.stop()]);
     await this.#receiver?.finish();
     await drained;
@@ -148,8 +190,9 @@ class Stage implements StageResources {
   discard(incomplete = false): void {
     if (this.#released.signal.aborted) return;
     if (this.#probes) {
-      this.#probes.dispose(incomplete);
-      this.#setup.bus.current = null;
+      // The bus stays the server's; outcomes it still owes this population are lost to it.
+      if (incomplete && this.#probesMeasuring) this.#setup.events.probesIncomplete();
+      this.#setup.server.link.bus.park();
     }
     this.#released.abort();
     this.#throughputEnded = true;
@@ -176,7 +219,8 @@ class Stage implements StageResources {
   }
 
   #openProbes(): void {
-    const { server, activity, cadence, events, bus } = this.#setup;
+    const { server, activity, cadence, events } = this.#setup;
+    const { bus } = server.link;
     if (!server.latency || !needsPings(activity)) return;
     const intervalMs = CADENCE_MS[cadence];
     const maxInFlight =
@@ -200,32 +244,37 @@ class Stage implements StageResources {
       signInRequired: () => this.#signIn("latency"),
       incomplete: () => events.probesIncomplete(),
     };
-    // A handshake behind a stage's own transfers can take seconds, so each later stage adopts the bus already open.
-    if (bus.current?.adopt(own)) bus.current.pace(intervalMs, maxInFlight);
-    else if (server.latency.target.transport !== "websocket" && handshakes.throttled.peek()) {
+    const { target } = server.latency;
+    // A handshake behind a stage's own transfers can take seconds, so a stage adopts the server's bus already open.
+    const adopted = bus.adopt(target, own);
+    adopted?.pace(intervalMs, maxInFlight);
+    if (!adopted && target.transport !== "websocket" && handshakes.throttled.peek()) {
       // Loaded latency never holds throughput back.
       if (activity.stage === "latency") throw new StageFailure("path-failed", THROTTLED);
       return events.latencyStalled(THROTTLED);
-    } else
-      bus.current = openProbeChannel(
-        { target: server.latency.target, auth: server.auth, intervalMs, maxInFlight },
+    }
+    this.#probes =
+      adopted ??
+      bus.take(
+        { target, auth: server.auth, control: server.server.url, intervalMs, maxInFlight },
         own,
       );
-    this.#probes = bus.current;
   }
 
   /** Mints an upload id and opens its receiver; HTTP lanes write only once the feed is open, so it reports from the first byte. */
   async #prepareUpload(signal: AbortSignal): Promise<Receiver> {
-    const { auth, discovery, throughput } = this.#setup.server;
-    const id = await this.#mintUpload(signal);
+    const { auth, discovery, server, throughput } = this.#setup.server;
+    // The run's id serves the stage's first upload; a replacement is minted.
+    const minted = this.#uploadId;
+    this.#uploadId = Promise.resolve(null);
+    const id =
+      (await abortable(minted, signal)) ??
+      (await mintUpload(this.#setup.server, signal, () => this.#signedOut()));
     if (this.#throughputEnded) throw new Error("throughput already ended");
     const carried = throughput.target.transport !== "fetch-stream";
-    const route = carried
-      ? "session"
-      : feedSocket(discovery, throughput.fetch)
-        ? "websocket"
-        : "http";
-    const receiver = new Receiver(this.#receiverHost, auth, throughput.fetch.origin, id, route);
+    const route = carried ? "session" : feedSocket(discovery) ? "websocket" : "http";
+    // The lease owns the upload, so its control goes to the discovery origin, whichever origin carries its lanes.
+    const receiver = new Receiver(this.#receiverHost, auth, server.url, id, route);
     this.#receiver = receiver;
     if (this.#measuring) receiver.measure();
     if (carried) this.#up = this.#carrier("up", receiver);
@@ -234,33 +283,10 @@ class Stage implements StageResources {
     return receiver;
   }
 
-  async #mintUpload(signal: AbortSignal): Promise<string> {
-    const { auth, server, throughput } = this.#setup.server;
-    let response: Response;
-    try {
-      response = await auth.fetch(`${throughput.fetch.origin}${ROUTES.uploadSession}`, {
-        method: "POST",
-        signal: AbortSignal.any([signal, AbortSignal.timeout(ESTABLISH_MS)]),
-      });
-    } catch (cause) {
-      if (cause instanceof SignInRequired || signal.aborted) throw cause;
-      // A broken request may be the sign-in or grant ending. The check, too, ends with the budget.
-      if (await abortable(this.#signedOut(), signal)) throw new SignInRequired(server);
-      throw new Error("upload session could not be established", { cause });
-    }
-    if (!response.ok) {
-      release(response);
-      throw new Error(`upload session returned HTTP ${response.status}`);
-    }
-    const { uploadId } = uploadSession(await readJSON(response));
-    signal.throwIfAborted();
-    return uploadId;
-  }
-
   /** Opens one direction's carrier and its lanes now, or none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
     if (this.#throughputEnded) return null;
-    const { server, streams, uploadLanes, gating, seed } = this.#setup;
+    const { server, streams, uploadLanes, gating } = this.#setup;
     const { auth } = server;
     const { target, fetch } = server.throughput;
     const count = streams[direction];
@@ -268,25 +294,28 @@ class Stage implements StageResources {
     let plan: CarrierPlan;
     if (target.transport === "fetch-stream") {
       plan = {
+        pool: server.link.workers,
         worker: WORKERS.lane,
         lanes: count,
         gating: direction === "down" ? Math.min(count, gating?.down ?? count) : 0,
         session: false,
-        open: (lane, epoch) =>
+        open: (_, epoch) =>
           this.#signedIn((): LaneCommand => {
             if (direction === "up") {
-              const url = `${fetch.origin}${ROUTES.upload}?cb=${seed}-${lane}&${upload}`;
+              const url = `${fetch.origin}${ROUTES.upload}?${upload}`;
               const rttMs = server.latency?.rttMs ?? null;
               const request = auth.request(url, "POST");
               return { type: "upload", url, request, streams: count, sharing: uploadLanes, rttMs };
             }
-            const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}&cb=${seed}-${lane}`;
+            const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}`;
             return {
               type: "download",
               url,
               request: auth.request(url, "GET"),
               epoch,
               streams: count,
+              timed: this.#timed,
+              until: this.#timed ? this.#bodiesEnd() : null,
             };
           }),
       };
@@ -299,6 +328,7 @@ class Stage implements StageResources {
           : upload;
       const url = `${target.origin}${route}?${query}${direction === "up" && datagrams ? "&datagrams=1" : ""}`;
       plan = {
+        pool: server.link.workers,
         worker: WORKERS.session,
         lanes: 1,
         gating: direction === "down" ? 1 : 0,
@@ -306,13 +336,13 @@ class Stage implements StageResources {
         open: (_, epoch) =>
           this.#signedIn((): SessionCommand => {
             if (handshakes.throttled.peek()) throw new Error(THROTTLED);
-            const ticket = auth.ticket(target.origin, route);
-            if (direction === "down") return { type: "download", url, ticket, datagrams, epoch };
+            const leased = auth.socket(url);
+            if (direction === "down") return { type: "download", url: leased, datagrams, epoch };
             const finalize = {
               url: receiver!.feed,
               request: auth.request(receiver!.feed, "DELETE"),
             };
-            return { type: "upload", url, ticket, datagrams, streams: count, finalize };
+            return { type: "upload", url: leased, datagrams, streams: count, finalize };
           }),
       };
     }
@@ -393,8 +423,8 @@ class Stage implements StageResources {
     this.#stall(direction, stall);
     if (broken) void this.#signedOut().then((signedOut) => signedOut && this.#signIn("throughput"));
     await delay(delayMs, signal);
-    const { auth, throughput } = this.#setup.server;
-    const answers = await answered(throughput.fetch.origin, auth, signal, ESTABLISH_MS);
+    const { auth, server } = this.#setup.server;
+    const answers = await answered(server.url, auth, signal, ESTABLISH_MS);
     // Whoever closed this lane or feed meanwhile owns its ending.
     if (signal.aborted || this.#throughputEnded) return false;
     if (!answers)

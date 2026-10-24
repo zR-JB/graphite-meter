@@ -5,10 +5,10 @@ import {
   readJSON,
   release,
   safeDetail,
-  socketTicket,
   type CatalogEntry,
   type Probe,
 } from "../../protocol/documents";
+import { isRecord } from "../../lib/decode";
 import { ROUTES } from "../../protocol/routes";
 import { ESTABLISH_MS } from "../lanes/endings";
 import { midpointMedian } from "../measure/latency";
@@ -21,8 +21,8 @@ import {
   type Discovery,
   type LatencyPath,
   type LatencyTarget,
-  type OpenProbeChannel,
-  type ProbeChannel,
+  type BusSlot,
+  type LatencyBus,
   type ProbeChannelEvents,
   type Role,
   type ServerAuth,
@@ -30,6 +30,7 @@ import {
   type ThroughputPath,
   type ThroughputTarget,
 } from "../types";
+import type { Lease } from "./lease";
 import type { PageConfig } from "./page";
 import {
   allowsOrigin,
@@ -67,9 +68,11 @@ export interface Failure {
 
 export interface CheckContext {
   entry: CatalogEntry;
+  /** Discovery and probes take the credentials alone; what the server admits presents the lease. */
   auth: ServerAuth;
+  lease: Lease;
   page: PageConfig;
-  openProbeChannel: OpenProbeChannel;
+  bus: BusSlot;
   now(): number;
 }
 
@@ -234,7 +237,19 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
       await release(response);
       throw new CheckError(`${CHECK_FAILED} (HTTP ${response.status})`, "retryable");
     }
-    const document = await decoded(response, preflight, `${CHECK_FAILED} (unreadable discovery)`);
+    const document = await decoded(
+      response,
+      (value) => {
+        // A server without the lease is refused by name, as nothing it would admit could present one.
+        if (isRecord(value) && !("lease" in value))
+          throw new CheckError(
+            `${entry.name} runs an older Graphite Meter; update it`,
+            "retryable",
+          );
+        return preflight(value);
+      },
+      `${CHECK_FAILED} (unreadable discovery)`,
+    );
     const requestMs = now() - startedAt;
     const { capabilities } = document;
     if (
@@ -405,7 +420,7 @@ async function verifyThroughput(
       "retryable",
     );
   if (!proven || view.protocol === "negotiated") view.protocol = observed ?? "negotiated";
-  if (session) await verifySession(context.auth, target, signal);
+  if (session) await verifySession(context.lease, target, signal);
   return {
     target: session ? target : view,
     fetch: view,
@@ -416,24 +431,14 @@ async function verifyThroughput(
 
 /** Opening a session is not enough: the selected transfer must deliver a byte. */
 async function verifySession(
-  auth: ServerAuth,
+  lease: Lease,
   target: SessionTarget,
   signal: AbortSignal,
 ): Promise<void> {
   const datagrams = target.transport === "webtransport-datagram";
-  let url = `${target.origin}${ROUTES.wtDownload}?bytes=${SESSION_CHECK_BYTES}${datagrams ? "&datagrams=1" : ""}`;
-  const ticket = auth.ticket(target.origin, ROUTES.wtDownload);
-  if (ticket) {
-    const response = await auth.fetch(ticket.url, { method: "POST", signal });
-    if (!response.ok) {
-      await release(response);
-      throw new CheckError(`WebTransport ticket refused (HTTP ${response.status})`, "retryable");
-    }
-    const { token } = await decoded(response, socketTicket, "Unexpected WebTransport ticket");
-    // Authentication off answers an empty ticket, which the dial must not carry.
-    if (token) url += `&token=${encodeURIComponent(token)}`;
-  }
-  signal.throwIfAborted();
+  const route = `${target.origin}${ROUTES.wtDownload}?bytes=${SESSION_CHECK_BYTES}${datagrams ? "&datagrams=1" : ""}`;
+  const unhold = await lease.hold({ measurements: 1, sessions: 1 }, signal);
+  const url = lease.socket(route);
   let session: WebTransport | null = null;
   const close = () => {
     try {
@@ -465,14 +470,8 @@ async function verifySession(
     clearTimeout(deadline);
     signal.removeEventListener("abort", close);
     close();
+    unhold();
   }
-}
-
-/** The bus a latency check proved, kept open for the idle monitor to adopt; until then it closes with its check. */
-export interface CheckedBus {
-  /** Its events go to `events` from now on, and the channel to its adopter. */
-  adopt(events: ProbeChannelEvents): ProbeChannel;
-  dispose(): void;
 }
 
 /** Proves the latency path `selection` names: its origin answers a probe while its bus answers pings, both at once. */
@@ -481,7 +480,7 @@ export async function checkLatency(
   discovery: Discovery,
   selection: Selection,
   signal: AbortSignal,
-): Promise<{ path: LatencyPath; bus: CheckedBus }> {
+): Promise<LatencyPath> {
   const targets = targetsFor(context, discovery, "latency", selection);
   const verifiedFor = { selection: selectionText(selection), head: targets[0]!.id };
   const passed = passedOver(context, discovery, "latency", selection);
@@ -489,28 +488,16 @@ export async function checkLatency(
     // Either failing ends the other at once.
     const both = new AbortController();
     const linked = AbortSignal.any([bounded, both.signal]);
-    const collecting = collectRtt(context, target, linked);
+    const collecting = context.lease.renew(linked).then(() => collectRtt(context, target, linked));
     try {
-      const [{ probe }, { rttMs, channel, events }] = await Promise.all([
+      const [{ probe }, { rttMs, channel }] = await Promise.all([
         probeOrigin(target.origin, context.auth, linked),
         collecting,
       ]);
-      const release = () => channel.dispose();
-      bounded.addEventListener("abort", release, { once: true });
-      // The budget may have ended between the answers and here; its abort has fired already.
-      if (bounded.aborted) release();
-      const bus: CheckedBus = {
-        adopt(next) {
-          bounded.removeEventListener("abort", release);
-          Object.assign(events, next);
-          return channel;
-        },
-        dispose() {
-          bounded.removeEventListener("abort", release);
-          channel.dispose();
-        },
-      };
-      const path = {
+      // The budget may have ended between the answers and here.
+      if (bounded.aborted) context.bus.dispose(channel);
+      else context.bus.park();
+      return {
         target,
         probe,
         rttMs,
@@ -518,10 +505,9 @@ export async function checkLatency(
         verifiedAt: context.now(),
         verifiedFor: { ...verifiedFor, fallback },
       };
-      return { path, bus };
     } catch (error) {
       void collecting.then(
-        ({ channel }) => channel.dispose(),
+        ({ channel }) => context.bus.dispose(channel),
         () => {},
       );
       throw error;
@@ -531,9 +517,9 @@ export async function checkLatency(
   });
 }
 
-type Collected = { rttMs: number | null; channel: ProbeChannel; events: ProbeChannelEvents };
+type Collected = { rttMs: number | null; channel: LatencyBus };
 
-/** Opens the bus at the preparation cadence and collects replies for a moment: their median or null, and the still-open bus. */
+/** Adopts or opens the bus at the preparation cadence and collects replies for a moment: their median or null, and the bus. */
 function collectRtt(
   context: CheckContext,
   target: LatencyTarget,
@@ -542,7 +528,7 @@ function collectRtt(
   if (signal.aborted) return Promise.reject(signal.reason);
   const { promise, resolve, reject } = Promise.withResolvers<Collected>();
   const rtts: number[] = [];
-  let channel: ProbeChannel | null = null;
+  let channel: LatencyBus | null = null;
   let collecting = false;
   let done = false;
   /** The median, once collected; handed over with the channel once that exists. */
@@ -553,14 +539,14 @@ function collectRtt(
     clearTimeout(timer);
     signal.removeEventListener("abort", abort);
     if (error !== undefined) {
-      channel?.dispose();
+      if (channel) context.bus.dispose(channel);
       return reject(error);
     }
     const sorted = rtts.toSorted((a, b) => a - b);
     collected = {
       rttMs: sorted.length ? midpointMedian(sorted.length, (rank) => sorted[rank]!) : null,
     };
-    if (channel) resolve({ ...collected, channel, events });
+    if (channel) resolve({ ...collected, channel });
   };
   const abort = () => finish(signal.reason);
   let timer = setTimeout(
@@ -568,7 +554,7 @@ function collectRtt(
     ESTABLISH_MS + ESTABLISH_MARGIN_MS,
   );
   signal.addEventListener("abort", abort, { once: true });
-  const { entry, auth } = context;
+  const { entry, lease } = context;
   const events: ProbeChannelEvents = {
     ready() {
       if (done || collecting) return;
@@ -586,16 +572,22 @@ function collectRtt(
     signInRequired: () => finish(new SignInRequired(identityOf(entry))),
   };
   try {
-    channel = context.openProbeChannel(
-      { target, auth, intervalMs: PREPARATION_INTERVAL_MS, maxInFlight: 2 },
+    channel = context.bus.take(
+      {
+        target,
+        auth: lease,
+        control: entry.url,
+        intervalMs: PREPARATION_INTERVAL_MS,
+        maxInFlight: 2,
+      },
       events,
     );
   } catch (error) {
     finish(new CheckError("Latency channel did not open", "retryable", { cause: error }));
     return promise;
   }
-  if (collected) resolve({ ...collected, channel, events });
-  else if (done) channel.dispose();
+  if (collected) resolve({ ...collected, channel });
+  else if (done) context.bus.dispose(channel);
   else channel.measure();
   return promise;
 }

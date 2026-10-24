@@ -9,11 +9,6 @@ export interface RequestRecipe {
   redirect: RequestRedirect;
 }
 
-export interface TicketRecipe {
-  url: string;
-  request: RequestRecipe;
-}
-
 /** How a lane, feed or channel ended; `retry` may recover it, `rotate` lets the run replace an upload id the server forgot. */
 export interface Ending {
   reason: FailureReason;
@@ -51,9 +46,21 @@ export interface Flushed {
   at: number;
 }
 
-/** A lane worker reopens with `download` or `upload` after each ending and stops by termination. */
+/** A lane worker reopens with `download` or `upload` after each ending; `stop` lets a download's body end, which `stopped` acknowledges, and frees the worker for another lane. */
 export type LaneCommand =
-  | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
+  | {
+      type: "download";
+      url: string;
+      request: RequestRecipe;
+      epoch: number;
+      streams: number;
+      /** Bodies end on the server's clock (`ms=`); HTTP/1.1 sends a length instead, as a proxy re-chunks a body without. */
+      timed: boolean;
+      /** Epoch ms by which the server's clock ends each body (`ms=`), or null while the stage's end is not yet known. */
+      until: number | null;
+    }
+  /** The stage's planned end moved: later bodies end by this epoch ms instead. */
+  | { type: "until"; until: number }
   | {
       type: "upload";
       url: string;
@@ -65,13 +72,15 @@ export type LaneCommand =
       rttMs: number | null;
     }
   | { type: "measure"; epoch: number; at: number }
-  | { type: "flush"; at: number };
+  | { type: "flush"; at: number }
+  | { type: "stop" };
 
 /** `posted` is one completed upload POST timed on the worker clock, as presentation evidence, never a measurement. */
 export type LaneReport =
   | BytesReport
   | { type: "posted"; bytes: number; elapsedMs: number }
   | EndReport
+  | { type: "stopped" }
   | Flushed;
 
 /** A session worker (re)dials with `download` or `upload`; `stop` finalizes an upload and is acknowledged by `stopped`. */
@@ -79,14 +88,12 @@ export type SessionCommand =
   | {
       type: "download";
       url: string;
-      ticket: TicketRecipe | null;
       datagrams: boolean;
       epoch: number;
     }
   | {
       type: "upload";
       url: string;
-      ticket: TicketRecipe | null;
       datagrams: boolean;
       streams: number;
       /** The DELETE that finalizes the upload id. */
@@ -117,16 +124,16 @@ export type ProbeCommand =
       type: "start";
       url: string;
       transport: "websocket" | "webtransport";
-      ticket: TicketRecipe | null;
       intervalMs: number | null;
       maxInFlight: number;
     }
   | { type: "measure" }
   | { type: "pace"; intervalMs: number | null; maxInFlight?: number }
-  /** Dials again after the bus stalled; the worker never redials on its own. */
+  /** Dials again after the bus stalled; the worker redials on its own only at the server's bound. */
   | { type: "dial" }
-  /** Ends the measured window. `drained` acknowledges it once the window's probes resolved. */
-  | { type: "stop" };
+  | { type: "renew" }
+  /** Ends the measured window. `drained` acknowledges the latest stop once the window's probes resolved. */
+  | { type: "stop"; id: number };
 
 /** Outcomes cross with `observedAt` on epoch ms, since realm clocks differ. The owner translates them in place. */
 export type ProbeReport =
@@ -137,4 +144,5 @@ export type ProbeReport =
   | { type: "resumed" }
   | { type: "sign-in" }
   | Handshake
-  | { type: "drained" };
+  | { type: "drained"; id: number }
+  | { type: "renewing" };

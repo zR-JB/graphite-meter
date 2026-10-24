@@ -40,8 +40,9 @@
     return response;
   }
   async function uploadId() {
-    const session = await fetched(base + "/upload/session", { method: "POST" });
-    return (await session.json()).uploadId;
+    const body = JSON.stringify({ measurements: 1, sessions: 0, uploads: 1 });
+    const lease = await fetched(base + "/lease", { method: "POST", body });
+    return (await lease.json()).uploads[0];
   }
   async function session(path, run) {
     const wt = new WebTransport(base + path, options);

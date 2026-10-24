@@ -117,6 +117,22 @@ async fn json(response: Response<Body>) -> Value {
     serde_json::from_str(&text(response).await).unwrap()
 }
 
+/// Answers `POST /lease` with `body` from `peer` on the discovery origin.
+async fn take_lease(app: &App, peer: &str, builder: Builder, body: Value) -> Response<Body> {
+    let request = builder.body(http_body_util::Full::new(Bytes::from(body.to_string())));
+    send_from(app, Endpoint::H1, peer, request.unwrap()).await
+}
+
+/// A new upload ID, from a lease that ends at once.
+async fn mint(app: &App) -> String {
+    let body = serde_json::json!({"measurements": 1, "sessions": 0, "uploads": 1});
+    let lease = json(take_lease(app, "192.0.2.1", request("POST", "/lease"), body).await).await;
+    let token = lease["token"].as_str().unwrap();
+    let ended = request("DELETE", "/lease").header("graphite-meter-lease", token);
+    send(app, Endpoint::H1, empty(ended)).await;
+    lease["uploads"][0].as_str().unwrap().into()
+}
+
 async fn active(app: &App) -> u64 {
     let probe = json(send(app, Endpoint::H1, empty(request("GET", "/probe"))).await).await;
     probe["load"]["active"].as_u64().unwrap()

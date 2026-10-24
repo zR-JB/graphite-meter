@@ -124,6 +124,7 @@ export const preflight = object({
     uploadCheckpoint: oneOf(true),
     maxStageMs: integer(1_000, MAX_STAGE_LIMIT_MS),
   }),
+  lease: object({ maxMeasurements: integer(1), maxSessions: integer() }),
 });
 export type Preflight = Decoded<typeof preflight>;
 
@@ -138,10 +139,16 @@ export const probe = object(
 );
 export type Probe = Decoded<typeof probe>;
 
-export const uploadSession = object({ uploadId: string(1, 8192) });
+/** One `POST /lease` mints at most this many upload ids. */
+export const MAX_LEASE_UPLOADS = 4;
 
-/** A single-use socket ticket. Authentication off answers an empty token. */
-export const socketTicket = object({ token: string(0, 8192), expires: integer() });
+/** A lease: its token, what it holds, and the upload ids minted with it. */
+export const lease = object({
+  token: string(1, 8192),
+  measurements: integer(),
+  sessions: integer(),
+  uploads: array(string(1, 8192), MAX_LEASE_UPLOADS),
+});
 
 /** How long a sign-in or grant has left, within its maximum lifetime. */
 const lifetime =

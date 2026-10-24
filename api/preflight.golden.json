@@ -33,5 +33,6 @@
       { "baseUrl": "https://speed.example:7249", "transport": "webtransport" },
       { "baseUrl": ".", "transport": "websocket" }
     ]
-  }
+  },
+  "lease": { "maxMeasurements": 32, "maxSessions": 8 }
 }

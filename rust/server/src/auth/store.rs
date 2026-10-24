@@ -1,4 +1,4 @@
-//! The store of logins, grants and one-use socket tickets; raw credentials go only to their issuer, keyed by SHA-256.
+//! The store of logins and grants; raw credentials go only to their issuer, keyed by SHA-256.
 
 use super::{
     AuthLease, BrowserOrigin, Holder, Principal, Via,
@@ -6,13 +6,11 @@ use super::{
 };
 use crate::lock;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use graphite_meter_proto::token::SocketTicket;
-use http::HeaderValue;
 use std::{
     collections::HashMap,
     fmt,
     sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 use subtle::ConstantTimeEq;
 use tokio::time::Instant;
@@ -22,8 +20,6 @@ pub const LOGIN_LIFETIME: Duration = Duration::from_hours(8);
 const MAX_LOGINS: usize = 1024;
 const MAX_PRINCIPAL_LOGINS: usize = 8;
 pub(super) const MAX_LOGIN_GRANTS: usize = 8;
-const MAX_LOGIN_TICKETS: usize = 8;
-const TICKET_LIFETIME: Duration = Duration::from_secs(30);
 
 pub(super) type Digest = [u8; 32];
 
@@ -112,18 +108,10 @@ struct Grant {
     revoked: CancellationToken,
 }
 
-struct Ticket {
-    lease: AuthLease,
-    target: String,
-    origin: Option<HeaderValue>,
-    deadline: Instant,
-}
-
 #[derive(Default)]
 pub(super) struct State {
     logins: HashMap<Digest, Login>,
     grants: HashMap<Digest, Grant>,
-    tickets: HashMap<Digest, Ticket>,
     pub(super) approvals: HashMap<Challenge, Approval>,
     sequence: u64,
 }
@@ -173,7 +161,7 @@ impl Store {
         })
     }
 
-    /// Ends the login, or with `every` its principal's logins, with grants and tickets; `false` when it already ended.
+    /// Ends the login, or with `every` its principal's logins, with its grants; `false` when it already ended.
     pub fn sign_out(&self, login: LoginKey, every: bool) -> bool {
         let mut state = lock(&self.0);
         let Some(principal) = state.login(&login.0).map(|login| login.principal.clone()) else {
@@ -232,70 +220,6 @@ impl Store {
     ) -> Result<GrantToken, GrantRefusal> {
         let credentials = credentials();
         lock(&self.0).grant(login, browser, credentials)
-    }
-
-    /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, briefly; `None` once it ended.
-    /// A dial that never reached the server leaves its ticket unspent, so a full login drops the one nearest expiry.
-    pub(super) fn mint(
-        &self,
-        lease: &AuthLease,
-        target: String,
-        origin: Option<HeaderValue>,
-    ) -> Option<SocketTicket> {
-        let token = format!("gmw_{}", random::<32>());
-        let now = Instant::now();
-        let mut state = lock(&self.0);
-        state.sweep(now);
-        if lease.is_ended(now) {
-            return None;
-        }
-        let held = || {
-            let tickets = state.tickets.iter();
-            tickets.filter(|(_, ticket)| ticket.lease.login == lease.login)
-        };
-        if held().count() >= MAX_LOGIN_TICKETS
-            && let Some(oldest) = held().min_by_key(|(_, ticket)| ticket.deadline)
-        {
-            let oldest = *oldest.0;
-            state.tickets.remove(&oldest);
-        }
-        let deadline = (now + TICKET_LIFETIME).min(lease.expires);
-        let expires = SystemTime::now() + (deadline - now);
-        let lease = AuthLease {
-            via: Via::Bearer(lease.browser().cloned()),
-            ..lease.clone()
-        };
-        let ticket = Ticket {
-            lease,
-            target,
-            origin,
-            deadline,
-        };
-        state.tickets.insert(digest(&token), ticket);
-        let expires = expires
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        Some(SocketTicket {
-            token,
-            expires: u64::try_from(expires).unwrap_or(u64::MAX),
-        })
-    }
-
-    /// Spends the ticket `token`, valid when presented at its `target` from its `origin` before it expired.
-    pub(super) fn redeem(
-        &self,
-        token: &str,
-        target: &str,
-        origin: Option<&HeaderValue>,
-    ) -> Option<AuthLease> {
-        let ticket = lock(&self.0).tickets.remove(&digest(token))?;
-        let now = Instant::now();
-        let valid =
-            ticket.target == target && ticket.origin.as_ref() == origin && now < ticket.deadline;
-        valid
-            .then_some(ticket.lease)
-            .filter(|lease| !lease.is_ended(now))
     }
 
     /// Whether `proof` is the login's CSRF token, compared in constant time.
@@ -395,14 +319,12 @@ impl State {
             .filter(|login| Instant::now() < login.deadline)
     }
 
-    /// Ends the login keyed `key`, revoking every lane its grants and tickets hold.
+    /// Ends the login keyed `key`, revoking every lane its grants hold.
     fn end(&mut self, key: &Digest) {
         if let Some(login) = self.logins.remove(key) {
             login.revoked.cancel();
         }
         self.grants.retain(|_, grant| grant.login.0 != *key);
-        self.tickets
-            .retain(|_, ticket| ticket.lease.login.0 != *key);
         self.approvals
             .retain(|_, approval| approval.login().is_none_or(|login| login.0 != *key));
     }
@@ -415,8 +337,6 @@ impl State {
         for key in expired.map(|(key, _)| *key).collect::<Vec<_>>() {
             self.end(&key);
         }
-        self.tickets
-            .retain(|_, ticket| now < ticket.deadline && !ticket.lease.is_ended(now));
         self.approvals.retain(|_, approval| {
             approval.forget_token(now);
             now < approval.deadline
@@ -444,7 +364,7 @@ impl Login {
     }
 }
 
-pub(super) fn digest(token: &str) -> Digest {
+pub(crate) fn digest(token: &str) -> Digest {
     let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
     digest
         .as_ref()
@@ -452,7 +372,7 @@ pub(super) fn digest(token: &str) -> Digest {
         .expect("SHA-256 digests are 32 bytes")
 }
 
-pub(super) fn random<const N: usize>() -> String {
+pub(crate) fn random<const N: usize>() -> String {
     URL_SAFE_NO_PAD.encode(crate::random::<N>())
 }
 

@@ -189,6 +189,9 @@ impl Work {
 
     async fn check(&self, config: &Config, state: &mut State) {
         self.events.send(Event::Checking(Kind::Check));
+        if let Some(previous) = state.prepared.take() {
+            previous.end().await;
+        }
         match self.prepare(config, state).await {
             Some(Ok(prepared)) => {
                 self.events.send(prepared.event());
@@ -204,10 +207,14 @@ impl Work {
         let started = Instant::now();
         self.events.send(Event::Checking(Kind::Run));
         let key = config.key();
-        let reused = state
-            .prepared
-            .take()
-            .filter(|check| check.reusable(&key, started));
+        let reused = match state.prepared.take() {
+            Some(check) if check.reusable(&key, started) => Some(check),
+            Some(stale) => {
+                stale.end().await;
+                None
+            }
+            None => None,
+        };
         let prepared = match reused {
             Some(prepared) => Some(Ok(prepared)),
             None => self.prepare(config, state).await,
@@ -216,6 +223,7 @@ impl Work {
             Some(Ok(prepared)) => {
                 self.events.send(prepared.event());
                 coordinator::run(&prepared, config, &self.events, self.stop.clone()).await;
+                prepared.end().await;
                 return;
             }
             Some(Err(failure)) => (Outcome::Failed, Some(failure)),
@@ -271,6 +279,9 @@ impl Work {
                 Ok(grant) => state.grants.insert(origin.clone(), grant),
                 Err(failure) => return Some(Err(failure)),
             };
+            if let Ok(asked) = prepared {
+                asked.end().await;
+            }
             approved.push(origin);
         }
     }
