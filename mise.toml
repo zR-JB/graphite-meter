@@ -4,7 +4,7 @@
 locked = true
 
 [tools]
-bun = "1.4.3"
+bun = "1.4.4"
 python = "3.15.0"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:astral-sh/ty" = "0.0.88"
@@ -28,7 +28,7 @@ codeql = "2.27.2"
 image_skopeo = """
 quay.io/containers/skopeo:v1.22.3-immutable\
 @sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"""
-image_bun = "docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598"
+image_bun = "docker.io/oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d"
 image_buildkit = "docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 # The image's builder (container/Dockerfile).
