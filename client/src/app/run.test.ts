@@ -16,6 +16,7 @@ function setup(
   const refusal = signal("");
   const offers: string[] = [];
   const calls: string[] = [];
+  const leases = { released: 0 };
   const peers = options.servers ?? [{ id: "self" }];
   const run = createRun({
     preferences,
@@ -26,6 +27,7 @@ function setup(
       servers: peers.map(({ id }) => prepared(id, true)),
       dropped: [],
       focus: "self",
+      release: () => leases.released++,
     }),
     fits: (ms) => options.fits?.(ms) ?? true,
     recheck: () => {},
@@ -48,7 +50,7 @@ function setup(
       ),
     clock,
   });
-  return { clock, run, preferences, refusal, offers, calls };
+  return { clock, run, preferences, refusal, offers, calls, leases };
 }
 
 const only = (

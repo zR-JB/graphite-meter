@@ -8,9 +8,10 @@ use graphite_meter_net::{ConnectError, Pool};
 use graphite_meter_proto::{
     discovery::{Probe, Protocol, ThroughputTransport},
     json,
+    lease::LeaseRequest,
     origin::Origin,
     route::Route,
-    upload::{Counters, Session},
+    upload::Counters,
 };
 use graphite_meter_testkit::Link;
 use http::Method;
@@ -87,12 +88,14 @@ async fn bidirectional_lanes_move_bytes_over_each_transport_on_pinned_runtimes()
             protocol,
         };
         let plans = topology(&path, Stage::Bidirectional, Dir { down: 2, up: 2 });
-        let minted = Request::new(Method::POST, origin, Route::UploadSession);
-        let id = client
-            .json(protocol, minted, Session::decode)
-            .await
-            .unwrap()
-            .upload_id;
+        let targets = [server.http2.clone(), server.http3.clone()];
+        let grant = LeaseRequest {
+            measurements: 8,
+            sessions: 2,
+            uploads: 0,
+        };
+        client.lease(&server.http1, &targets, grant).await.unwrap();
+        let id = client.upload_id(&server.http1).await.unwrap();
         let token = CancellationToken::new();
         let mut download = Lanes::start(
             &client,

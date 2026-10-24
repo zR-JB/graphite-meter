@@ -97,14 +97,15 @@ export function createApp() {
     }),
     authorize: servers.authorize,
     async prepare(signal, config) {
-      const ready = await servers.prepare(signal);
+      const ready = await servers.prepare(signal, config);
       // The blocker judged each limit as last read; Start holds the run to the discovery it just read.
       const limit = stageLimit(
         ready.servers.map(({ server, discovery }) => ({ name: server.name, discovery })),
       );
       const refused = stageLimitError(config, limit);
-      if (refused) throw new Error(refused);
-      return ready;
+      if (!refused) return ready;
+      ready.release();
+      throw new Error(refused);
     },
     fits: servers.fits,
     recheck: servers.recheck,

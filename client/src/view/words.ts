@@ -158,7 +158,10 @@ export function stageState({ planned, settled, phase, stalled, ended }: StageFac
 }
 
 /** Reasons earlier builds saved under the name they had then. */
-const RENAMED = new Map<string, FailureReason>([["preparation-failed", "path-failed"]]);
+const RENAMED = new Map<string, FailureReason>([
+  ["preparation-failed", "path-failed"],
+  ["server-busy", "server-capacity"],
+]);
 
 /** A reason this build does not know, as a newer build may save, reads as a measurement issue. */
 export function reasonLabel(saved: string): string {

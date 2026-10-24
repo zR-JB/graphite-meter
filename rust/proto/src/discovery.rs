@@ -64,6 +64,16 @@ pub struct Preflight {
     pub engine_version: String,
     pub generation: String,
     pub capabilities: Capabilities,
+    /// A server without it predates the lease, which its clients refuse.
+    pub lease: LeaseLimits,
+}
+
+/// The most one client's lease holds: its share of measurements, and of them WebTransport transfer sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaseLimits {
+    pub max_measurements: u32,
+    pub max_sessions: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +119,7 @@ impl Preflight {
             engine_version,
             generation,
             capabilities,
+            lease,
         } = &preflight;
         let metadata = [&server.name, &server.location, engine_version, generation];
         if generation.is_empty() || !metadata.iter().all(|text| is_metadata(text)) {
@@ -117,7 +128,16 @@ impl Preflight {
         if !STAGE_LIMITS.contains(&capabilities.stage_limit()) {
             return Err(serde_json::Error::custom("invalid stage limit"));
         }
+        if lease.max_measurements == 0 {
+            return Err(serde_json::Error::custom("invalid lease limits"));
+        }
         Ok(preflight)
+    }
+
+    /// Whether a preflight that failed to decode is an older server's, which offers no lease.
+    pub fn predates_lease(data: &[u8]) -> bool {
+        let document = serde_json::from_slice::<serde_json::Value>(data);
+        document.is_ok_and(|document| document.is_object() && document.get("lease").is_none())
     }
 
     /// Every target's base URL, throughput targets first.

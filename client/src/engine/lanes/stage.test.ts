@@ -14,6 +14,7 @@ import type {
   StageEvents,
   StageSetup,
 } from "../types";
+import type { Lease } from "../net/lease";
 import { elapse, FakeWorker, outcome, useFakeWorkers } from "./fakes.testutil";
 import { sessionClosed } from "./endings";
 import { createWorkerPool } from "./pool";
@@ -45,10 +46,18 @@ const LATENCY: LatencyTarget = {
   tls: true,
 };
 const IGNORED = new Proxy({} as ProbeChannelEvents, { get: () => () => {} });
-const testLink = (): Link => ({
+/** A server's link whose lease mints upload ids with `mint`. */
+const testLink = (mint: () => Promise<string> = async () => "u1"): Link => ({
   bus: createBusSlot(openProbeChannel, IGNORED),
   workers: createWorkerPool(),
+  lease: { upload: mint } as unknown as Lease,
 });
+/** A discovery origin over HTTP/1.1 offering the bus's WebSocket. */
+const DISCOVERY = {
+  origin: ORIGIN,
+  protocol: "http/1.1",
+  latency: new Map([[ORIGIN, { blocked: null, targets: [{ transport: "websocket" }] }]]),
+} as unknown as Discovery;
 const DOWNLOAD: Activity = { stage: "download", transfer: ["down"], loadedLatency: false };
 
 /** One server's stage over `target`, with `auth` answering its credentials, `link` as its server's and `server` overriding the rest. */
@@ -72,7 +81,7 @@ function stage(
       redirect: "error",
     }),
     fetch: async () => new Response(null),
-    ticket: () => null,
+    socket: (url) => url,
     ended: async () => (checks++, false),
     ...auth,
   };
@@ -82,6 +91,7 @@ function stage(
       auth: credentials,
       throughput: { target, fetch: target.transport === "fetch-stream" ? target : FETCH },
       latency: { target: LATENCY },
+      discovery: DISCOVERY,
       link,
       ...server,
     } as unknown as PreparedServer,
@@ -93,7 +103,6 @@ function stage(
     uploadLanes: activity.transfer.includes("up") ? 1 : 0,
     gating: { down: 2, up: 0 },
     cadence: "fast",
-    seed: "s",
     events: new Proxy({} as StageEvents, {
       get:
         (_, type: keyof StageEvents) =>
@@ -370,7 +379,6 @@ test("a session's stop waits for its worker's acknowledgement, at most 3.25 s", 
       {
         type: "download",
         url: `${ORIGIN}/wt/download?bytes=${64 * 1024 ** 3}&streams=3`,
-        ticket: null,
         datagrams: false,
         epoch: 0,
       },
@@ -578,18 +586,13 @@ test("a stage's download lanes end on the server's clock just past its planned e
   expect([cut.at, late.lanes().every(({ terminated }) => terminated)]).toEqual([1_250, true]);
 });
 
-test("a stage's first upload takes the run's id; its replacement is minted", async () => {
+test("a stage's first upload takes the run's id; its replacement is minted with the lease", async () => {
   const minted: string[] = [];
   const upload = stage(
     { stage: "upload", transfer: ["up"], loadedLatency: false },
-    {
-      fetch: async (url: string) => {
-        minted.push(url);
-        return Response.json({ uploadId: "u2" });
-      },
-    },
+    {},
     SESSION,
-    testLink(),
+    testLink(async () => (minted.push("lease"), "u2")),
     {},
     Promise.resolve("u1"),
   );
@@ -602,7 +605,7 @@ test("a stage's first upload takes the run's id; its replacement is minted", asy
   void upload.resources.replaceUpload(new AbortController().signal);
   upload.session().report({ type: "stopped" });
   await elapse(0);
-  expect(minted).toEqual([`${ORIGIN}/upload/session`]);
+  expect(minted).toEqual(["lease"]);
   upload.resources.discard();
 });
 
@@ -616,7 +619,6 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
       type: "start",
       url: "wss://peer.example/ws/ping",
       transport: "websocket",
-      ticket: null,
       intervalMs: 80,
       maxInFlight: 16,
     },
@@ -662,14 +664,18 @@ test("a feed closed by its upload's replacement while its server is asked fails 
     new Promise<Response>((_, reject) =>
       init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
     );
-  const replaced = stage(UPLOAD, {
-    fetch: async (url, init) => {
-      if (url.endsWith("/upload/session"))
-        return Response.json({ uploadId: `u${minted.push(url)}` });
-      if (url.includes("/upload/progress?id=u1")) throw new TypeError("network error");
-      return pending(init);
+  const replaced = stage(
+    UPLOAD,
+    {
+      fetch: async (url, init) => {
+        if (url.includes("/upload/progress?id=u1")) throw new TypeError("network error");
+        return pending(init);
+      },
     },
-  });
+    FETCH,
+    testLink(async () => `u${minted.push("lease")}`),
+    { discovery: { ...DISCOVERY, latency: new Map() } },
+  );
   const prepared = outcome(replaced.resources.prepare(new AbortController().signal));
   await elapse(400);
   void replaced.resources.replaceUpload(new AbortController().signal);
@@ -679,8 +685,9 @@ test("a feed closed by its upload's replacement while its server is asked fails 
   replaced.resources.discard();
 });
 
-test("a fetch upload's feed reaches only its own origin: over a WebSocket offered there for proven HTTP/1.1, else over HTTP", async () => {
+test("a fetch upload's feed reaches the discovery origin: over its WebSocket on HTTP/1.1, else over HTTP", async () => {
   const BUS = "https://bus.example";
+  const TRANSFER = "https://transfer.example";
   const socket = (origin: string): LatencyTarget => ({
     id: origin,
     origin,
@@ -695,24 +702,19 @@ test("a fetch upload's feed reaches only its own origin: over a WebSocket offere
     for (const [why, protocol, sockets, feed] of [
       [
         "HTTP/1.1 beside its WebSocket",
-        "http1",
+        "http/1.1",
         [BUS, ORIGIN],
         "wss://peer.example/ws/progress?id=u1",
       ],
       [
-        "unproven HTTP, which may ride QUIC",
-        "negotiated",
+        "an unproven protocol, which may be multiplexed",
+        null,
         [ORIGIN],
         `${ORIGIN}/upload/progress?id=u1`,
       ],
-      [
-        "HTTP/1.1 whose latency WebSocket is elsewhere",
-        "http1",
-        [BUS],
-        `${ORIGIN}/upload/progress?id=u1`,
-      ],
-      ["HTTP/2", "http2", [ORIGIN], `${ORIGIN}/upload/progress?id=u1`],
-      ["HTTP/3", "http3", [ORIGIN], `${ORIGIN}/upload/progress?id=u1`],
+      ["HTTP/1.1 without a WebSocket", "http/1.1", [BUS], `${ORIGIN}/upload/progress?id=u1`],
+      ["HTTP/2", "h2", [ORIGIN], `${ORIGIN}/upload/progress?id=u1`],
+      ["HTTP/3", "h3", [ORIGIN], `${ORIGIN}/upload/progress?id=u1`],
     ] as const) {
       const feeds: string[] = [];
       Object.assign(globalThis, {
@@ -727,17 +729,16 @@ test("a fetch upload's feed reaches only its own origin: over a WebSocket offere
         { stage: "upload", transfer: ["up"], loadedLatency: false },
         {
           fetch: async (url, init) => {
-            if (url === `${ORIGIN}/upload/session`) return Response.json({ uploadId: "u1" });
             if (url.includes("/upload/progress")) feeds.push(url);
             return new Promise((_, reject) =>
               init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
             );
           },
         },
-        { ...FETCH, protocol },
+        { ...FETCH, id: TRANSFER, origin: TRANSFER },
         testLink(),
         {
-          discovery: { latency: offered(...sockets) } as Discovery,
+          discovery: { origin: ORIGIN, protocol, latency: offered(...sockets) } as Discovery,
           latency: { target: socket(BUS) } as LatencyPath,
         },
       );
@@ -777,8 +778,8 @@ test("a later stage's lanes run in the workers an earlier stage stopped, and a w
 
 test("a stage discarded while its bus is stalled parks it with the server, whose stall closes it", async () => {
   const link: Link = {
+    ...testLink(),
     bus: createBusSlot(openProbeChannel, { ...IGNORED, stalled: () => link.bus.dispose() }),
-    workers: createWorkerPool(),
   };
   const idle = stage({ stage: "latency", transfer: [], loadedLatency: false }, {}, FETCH, link);
   outcome(idle.resources.prepare(new AbortController().signal));

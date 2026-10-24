@@ -6,8 +6,7 @@ operators start with [advertised measurement paths](../docs/DEPLOYMENT.md#advert
 
 ## Validation limits
 
-Both clients cap discovery, probe, upload-session, native approval and browser socket-ticket JSON responses at
-64 KiB of decoded bytes, including streamed and decompressed bodies. The cap bounds size only; request cancellation
+Both clients cap discovery, probe, lease and native approval JSON responses at 64 KiB of decoded bytes, including streamed and decompressed bodies. The cap bounds size only; request cancellation
 and timeouts bound how long the read may take.
 
 | Field | Limit |
@@ -17,7 +16,8 @@ and timeouts bound how long the read may take.
 | Server name, location, engine version, generation | ≤ 256 UTF-8 bytes; generation nonempty. |
 | Probe evidence | Published IP-version, source and negotiated-protocol values; IP text 1 to 64 bytes; optional `load` with integers `active` ≥ 0 and `max` ≥ 1. |
 | Token and upload ID | Nonempty strings ≤ 8192 bytes. |
-| Socket-ticket mint response | `token` plus `expires` (safe integer, epoch ms); authentication off returns `{ "token": "", "expires": 0 }`. |
+| Lease limits | `lease.maxMeasurements` ≥ 1 and `lease.maxSessions` ≥ 0, both required: a preflight without `lease` is an older server's, which clients refuse with "<server> runs an older Graphite Meter; update it". |
+| Lease answer | `token`, the `measurements` and `sessions` it holds, and at most 4 `uploads`, each an upload ID. |
 
 Engine version is metadata, not a compatibility test; unknown additive fields are ignored. Invalid discovery fails
 before its targets are published and invalid probe evidence before it reaches the caller, so a rejected body never
@@ -37,12 +37,38 @@ reason a client records when the refusal ends a server's stage; an upload's prog
 | Code | Answer | When |
 | --- | --- | --- |
 | `client-limit` | `429`, `Retry-After: 1` | The client's address or sign-in already holds its share: `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` measurements, `GM_MAX_SESSIONS_PER_CLIENT` WebTransport sessions, or its upload ids. |
-| `server-busy` | `503`, `Retry-After: 1` | The server holds `GM_MAX_ACTIVE_MEASUREMENTS` measurements, `GM_MAX_ACTIVE_SESSIONS` sessions, or all the upload ids it keeps. |
+| `server-capacity` | `503`, `Retry-After: 1` | The server holds `GM_MAX_ACTIVE_MEASUREMENTS` measurements, `GM_MAX_ACTIVE_SESSIONS` sessions, or all the upload ids it keeps. |
 | `wrong-protocol` | `409` with `Alt-Svc` | `/download` or `/upload` reached the HTTP/3 port over TCP, which serves no transfer. The client fails the path at once instead of asking again; `Alt-Svc` brings the browser back to HTTP/3 for later requests. Not `421`, which makes Firefox forget the origin's HTTP/3. |
 | `invalid`, `owner-mismatch`, `idle`, `revoked` | `400`, `403`, `408`, `403` | An upload id or lane; see the [upload contract](upload.md). |
 
 Browsers hide the status of a refused WebSocket upgrade or WebTransport CONNECT, so a page sees those refusals only as
 a dial that failed.
+
+## The lease
+
+A client takes a lease at a server's discovery origin before it measures there. The lease holds the client's
+measurements from then on, so a server without room for them says so before anything is measured, and its work is
+never refused for the client's share while the lease holds room for it.
+
+| Request | Answers |
+| --- | --- |
+| `POST /lease` `{"measurements": m, "sessions": s, "uploads": u}` | `200 {"token", "measurements", "sessions", "uploads"}`: a new lease holding `m` measurements, of them `s` WebTransport transfer sessions, within the preflight's `lease` limits, which cut a larger ask, and a client then runs no test on that server; `u` (at most 4, default 0) upload IDs minted with it. `429 client-limit` or `503 server-capacity` when the client's share or the server cannot hold it, which leaves a held lease as it was; `400` for an invalid body (`m` ≥ 1, `s` ≤ `m`). |
+| The same, with `Graphite-Meter-Lease: <token>` | Resizes that lease to `m` and `s` from now, answering the same token, or takes a new lease when that one ended. |
+| `DELETE /lease` with `Graphite-Meter-Lease: <token>` | `204`; the lease ends. Work it admitted runs on until it ends. |
+
+- **Presented by its work.** HTTP requests carry the token in `Graphite-Meter-Lease`; WebSocket and WebTransport URLs,
+  which carry no field a page can set, carry it as `lease=`. Every measurement route reads either.
+- **Admits against itself.** A lane, latency bus, progress feed or session presenting the lease takes one of its
+  measurements, a WebTransport transfer session one of its sessions too. Work past what it holds is admitted against
+  the client's share as work without a lease is, which a reopening lane may need while its old request still ends.
+- **Owns its uploads.** An upload first used with the lease belongs to it, whatever address or origin later presents
+  it; one used without a lease belongs to the sign-in or address, as before.
+- **Bound** to the sign-in that took it, which it presents for its work and ends with, and to the `Origin` that took
+  it. A request naming another `Origin`, or presenting a lease that ended or never was, as after a restart, is served
+  as one without a lease; one naming no `Origin`, as a same-origin `GET`, presents it.
+- **Lives while used.** It ends on `DELETE`, with its sign-in, or 30 s after nothing presenting it was live.
+- `POST /lease` and `DELETE /lease` are served on the discovery origin and the native HTTP/2 and HTTP/3 endpoints, not
+  on the HTTP/3 port's TCP side.
 
 ## Originating server catalog
 
@@ -72,7 +98,6 @@ Both pages show the same comparison code: the first five SHA-256 bytes of the ve
 | --- | --- |
 | Grants per login | 8, native and browser together. At capacity a native exchange replaces the login's oldest native grant; a browser exchange, or a native one when all 8 are browser grants, answers HTTP 429 without evicting one. Explicit renewal revokes the old grants and their connections. |
 | Pending approvals | 8 per login, 8 per client, 256 in total of which at most 128 opened before sign-in; each expires after 2 minutes. |
-| Socket tickets | Single use, ≤ 30 s, at most 8 outstanding per login; a ninth replaces the one nearest expiry. |
 | Repeated exchange | For 30 s after the grant was issued, the same verifier from the same origin gets the same grant again, so a requester whose answer was lost can ask again; it counts once toward the 8. Afterwards the exchange answers `410` until the approval would have expired. Once the grant is issued, the approval page and the approve action refuse. |
 
 The exchanges and the session read answer JSON; a native `expires` is an RFC 3339 time, a browser one epoch
@@ -89,5 +114,5 @@ and a `default-src 'none'` policy.
 
 Cross-origin measurement fetches omit cookies and reject redirects. An unreadable or expired grant affects only its
 server. The auth-required marker and token polling permit the bounded CORS flow without exposing protected
-discovery. Native approval keeps its own origin boundary, and sockets use destination-bound tickets; see
+discovery. Native approval keeps its own origin boundary, and sockets present the lease; see
 [socket credentials](wire.md#socket-credentials).

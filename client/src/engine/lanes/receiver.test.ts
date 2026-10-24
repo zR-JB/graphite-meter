@@ -55,7 +55,7 @@ function follow(
   {
     counters = [] as { bytes: number; nanos: number }[],
     route = "websocket" as FeedRoute,
-    ticket = (() => null) as ServerAuth["ticket"],
+    socket = ((url) => url) as ServerAuth["socket"],
     answers = [] as ((init: RequestInit) => Response)[],
   } = {},
 ) {
@@ -76,7 +76,7 @@ function follow(
       expect(url).toBe("https://peer.example/upload/progress?id=u1");
       return answers.shift()!(init);
     },
-    ticket,
+    socket,
     ended: async () => false,
   };
   const receiver = new Receiver(
@@ -170,12 +170,12 @@ test("feed refusals name their cause, an unknown id rotates, and a revoked socke
   };
   const feed = follow([
     (socket) => socket.end(),
-    refused("server-busy", "server full"),
+    refused("server-capacity", "server full"),
     refused("client-limit", "client full"),
     (socket) => {
       socket.open();
       socket.send('{"type":"ready"}');
-      refused("server-busy", "server full")(socket);
+      refused("server-capacity", "server full")(socket);
     },
     refused("invalid", "unknown upload id"),
   ]);
@@ -190,27 +190,20 @@ test("feed refusals name their cause, an unknown id rotates, and a revoked socke
     ]),
   ).toEqual([
     ["connection-lost", undefined, "progress socket closed", true, 300],
-    ["server-busy", undefined, "server full", false, 300],
+    ["server-capacity", undefined, "server full", false, 300],
     ["client-limit", undefined, "client full", false, 300],
     // The run decides the one replacement.
-    ["server-busy", undefined, "server full", false, 300],
+    ["server-capacity", undefined, "server full", false, 300],
     ["protocol-error", true, "unknown upload id", false, 300],
   ]);
   expect(FakeSocket.dialed.map(({ url }) => url)).toEqual(
     Array(5).fill("wss://peer.example/ws/progress?id=u1"),
   );
-  for (const ticket of [
-    () => {
-      throw new SignInRequired({ id: "peer", url: "https://peer.example", name: "Peer" });
-    },
-    () => null,
-  ]) {
-    const ended = follow([(socket) => socket.end(1008, "authentication required")], { ticket });
-    await settled(ended.signedIn);
-    expect(ended.endings).toEqual([]);
-  }
+  const ended = follow([(socket) => socket.end(1008, "authentication required")]);
+  await settled(ended.signedIn);
+  expect(ended.endings).toEqual([]);
   const broken = follow([], {
-    ticket: () => {
+    socket: () => {
       throw new Error("not this server's origin");
     },
   });
@@ -263,7 +256,7 @@ test("an HTTP feed reads split records until its terminal one, backs off refusal
       () =>
         new Response("refused", {
           status: 503,
-          headers: { "Graphite-Meter-Refusal": "server-busy", "Retry-After": "1" },
+          headers: { "Graphite-Meter-Refusal": "server-capacity", "Retry-After": "1" },
         }),
       ({ headers }) => {
         expect(headers).toEqual({ accept: "application/x-ndjson" });
@@ -291,7 +284,7 @@ test("an HTTP feed reads split records until its terminal one, backs off refusal
     ]),
   ).toEqual([
     ["connection-lost", undefined, "TypeError: Failed to fetch", true, 300],
-    ["server-busy", undefined, "progress returned HTTP 503", false, 1_000],
+    ["server-capacity", undefined, "progress returned HTTP 503", false, 1_000],
     ["connection-lost", undefined, "progress stream closed", false, 300],
   ]);
   expect(FakeSocket.dialed).toEqual([]);

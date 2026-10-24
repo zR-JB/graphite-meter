@@ -60,6 +60,7 @@ pub mod duration;
 pub mod flag;
 pub mod json;
 pub mod lane;
+pub mod lease;
 pub mod origin;
 pub mod reason;
 pub mod refusal;

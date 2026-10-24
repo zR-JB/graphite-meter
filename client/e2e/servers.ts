@@ -114,10 +114,11 @@ export async function launch(
       GM_MAX_OPERATION_DURATION: "20s",
       GM_MAX_SESSION_DURATION: "1m",
       ...(shared && {
-        GM_MAX_ACTIVE_MEASUREMENTS: "32",
-        GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT: "32",
-        GM_MAX_ACTIVE_SESSIONS: "12",
-        GM_MAX_SESSIONS_PER_CLIENT: "12",
+        // Each page's leases hold its runs' measurements from their start.
+        GM_MAX_ACTIVE_MEASUREMENTS: "128",
+        GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT: "128",
+        GM_MAX_ACTIVE_SESSIONS: "32",
+        GM_MAX_SESSIONS_PER_CLIENT: "32",
         // All workers' browsers share one address; Firefox neared the default 64 and hit NS_ERROR_NET_RESET.
         GM_MAX_CONNECTIONS_PER_CLIENT: "192",
       }),

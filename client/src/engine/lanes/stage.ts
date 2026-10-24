@@ -1,5 +1,4 @@
 // One server's resources for one stage; a failure or ended sign-in reaches the run once.
-import { readJSON, release, uploadSession } from "../../protocol/documents";
 import type { LaneCommand, SessionCommand } from "../../protocol/messages";
 import { ROUTES } from "../../protocol/routes";
 import { feedSocket, needsPings } from "../net/streams";
@@ -39,31 +38,20 @@ const SIGN_IN_CHECK_MS = 3_000;
 
 export const openStage: OpenStage = (setup) => new Stage(setup);
 
-/** A new upload id from the server's throughput origin; a broken request asks `signedOut` whether the sign-in ended. */
+/** An upload id minted with the server's lease; a broken request asks `signedOut` whether the sign-in ended. */
 export async function mintUpload(
-  { auth, server, throughput }: PreparedServer,
+  { link, server }: PreparedServer,
   signal: AbortSignal,
   signedOut: () => Promise<boolean> = async () => false,
 ): Promise<string> {
-  let response: Response;
   try {
-    response = await auth.fetch(`${throughput.fetch.origin}${ROUTES.uploadSession}`, {
-      method: "POST",
-      signal: AbortSignal.any([signal, AbortSignal.timeout(ESTABLISH_MS)]),
-    });
+    return await link.lease.upload(AbortSignal.any([signal, AbortSignal.timeout(ESTABLISH_MS)]));
   } catch (cause) {
     if (cause instanceof SignInRequired || signal.aborted) throw cause;
     // A broken request may be the sign-in or grant ending. The check, too, ends with the budget.
     if (await abortable(signedOut(), signal)) throw new SignInRequired(server);
-    throw new Error("upload session could not be established", { cause });
+    throw new Error("the upload id could not be minted", { cause });
   }
-  if (!response.ok) {
-    release(response);
-    throw new Error(`upload session returned HTTP ${response.status}`);
-  }
-  const { uploadId } = uploadSession(await readJSON(response));
-  signal.throwIfAborted();
-  return uploadId;
 }
 
 class Stage implements StageResources {
@@ -275,7 +263,7 @@ class Stage implements StageResources {
 
   /** Mints an upload id and opens its receiver; HTTP lanes write only once the feed is open, so it reports from the first byte. */
   async #prepareUpload(signal: AbortSignal): Promise<Receiver> {
-    const { auth, discovery, throughput } = this.#setup.server;
+    const { auth, discovery, server, throughput } = this.#setup.server;
     // The run's id serves the stage's first upload; a replacement is minted.
     const minted = this.#uploadId;
     this.#uploadId = Promise.resolve(null);
@@ -284,12 +272,9 @@ class Stage implements StageResources {
       (await mintUpload(this.#setup.server, signal, () => this.#signedOut()));
     if (this.#throughputEnded) throw new Error("throughput already ended");
     const carried = throughput.target.transport !== "fetch-stream";
-    const route = carried
-      ? "session"
-      : feedSocket(discovery, throughput.fetch)
-        ? "websocket"
-        : "http";
-    const receiver = new Receiver(this.#receiverHost, auth, throughput.fetch.origin, id, route);
+    const route = carried ? "session" : feedSocket(discovery) ? "websocket" : "http";
+    // The lease owns the upload, so its control goes to the discovery origin, whichever origin carries its lanes.
+    const receiver = new Receiver(this.#receiverHost, auth, server.url, id, route);
     this.#receiver = receiver;
     if (this.#measuring) receiver.measure();
     if (carried) this.#up = this.#carrier("up", receiver);
@@ -301,7 +286,7 @@ class Stage implements StageResources {
   /** Opens one direction's carrier and its lanes now, or none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
     if (this.#throughputEnded) return null;
-    const { server, streams, uploadLanes, gating, seed } = this.#setup;
+    const { server, streams, uploadLanes, gating } = this.#setup;
     const { auth } = server;
     const { target, fetch } = server.throughput;
     const count = streams[direction];
@@ -314,15 +299,15 @@ class Stage implements StageResources {
         lanes: count,
         gating: direction === "down" ? Math.min(count, gating?.down ?? count) : 0,
         session: false,
-        open: (lane, epoch) =>
+        open: (_, epoch) =>
           this.#signedIn((): LaneCommand => {
             if (direction === "up") {
-              const url = `${fetch.origin}${ROUTES.upload}?cb=${seed}-${lane}&${upload}`;
+              const url = `${fetch.origin}${ROUTES.upload}?${upload}`;
               const rttMs = server.latency?.rttMs ?? null;
               const request = auth.request(url, "POST");
               return { type: "upload", url, request, streams: count, sharing: uploadLanes, rttMs };
             }
-            const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}&cb=${seed}-${lane}`;
+            const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}`;
             return {
               type: "download",
               url,
@@ -351,13 +336,13 @@ class Stage implements StageResources {
         open: (_, epoch) =>
           this.#signedIn((): SessionCommand => {
             if (handshakes.throttled.peek()) throw new Error(THROTTLED);
-            const ticket = auth.ticket(target.origin, route);
-            if (direction === "down") return { type: "download", url, ticket, datagrams, epoch };
+            const leased = auth.socket(url);
+            if (direction === "down") return { type: "download", url: leased, datagrams, epoch };
             const finalize = {
               url: receiver!.feed,
               request: auth.request(receiver!.feed, "DELETE"),
             };
-            return { type: "upload", url, ticket, datagrams, streams: count, finalize };
+            return { type: "upload", url: leased, datagrams, streams: count, finalize };
           }),
       };
     }

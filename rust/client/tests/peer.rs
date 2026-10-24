@@ -9,6 +9,7 @@ use graphite_meter_net::{ConnectError, Pool, Proxy, Trust, Verify};
 use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
     json,
+    lease::LeaseRequest,
     origin::Origin,
     route::Route,
 };
@@ -27,7 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, UdpSocket},
     sync::mpsc,
 };
@@ -91,7 +92,16 @@ fn peer(
                     },
                     None => Box::new(tcp),
                 };
-                while let Some(head) = read_head(&mut stream).await {
+                while let Some(mut head) = read_head(&mut stream).await {
+                    let length = head.lines().find_map(|line| {
+                        let line = line.to_ascii_lowercase();
+                        line.strip_prefix("content-length: ")?.trim().parse().ok()
+                    });
+                    let mut body = vec![0; length.unwrap_or(0)];
+                    if stream.read_exact(&mut body).await.is_err() {
+                        return;
+                    }
+                    head.push_str(&String::from_utf8_lossy(&body));
                     let _ = heads.send((connection, head.clone()));
                     let Some(reply) = answer(requests.fetch_add(1, Ordering::SeqCst), &head) else {
                         return;
@@ -315,10 +325,16 @@ async fn upload(
         protocol: Protocol::Http1,
     };
     let (client, token) = (client(false), CancellationToken::new());
+    let grant = LeaseRequest {
+        measurements: 4,
+        sessions: 0,
+        uploads: 0,
+    };
+    client.lease(&path.origin, &[], grant).await.unwrap();
     let session = UploadSession::open(
         &client,
+        &path.origin,
         &path,
-        Protocol::Http1,
         Vec::new(),
         Duration::ZERO,
         Arc::default(),
@@ -330,7 +346,7 @@ async fn upload(
 #[tokio::test]
 async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
     let (session, mut heads) = upload(|_, head| match target(head) {
-        "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
+        "/lease" => Some(ok(LEASE)),
         "/upload/progress" if head.starts_with("GET ") => {
             Some(feed(&[r#"{"type":"ready"}"#], false))
         }
@@ -349,14 +365,18 @@ async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
     finalized.expect("the receiver was asked to finalize");
 }
 
-/// A server catalog of the peer alone, and its preflight offering HTTP/1.1 fetch streams and `extra` targets.
+const LEASE: &str = r#"{"token":"t","measurements":99,"sessions":99,"uploads":["u0"]}"#;
+
+/// A server catalog of the peer alone, its preflight offering HTTP/1.1 fetch streams and `extra` targets, and its
+/// lease.
 fn discovery(head: &str, checkpoints: bool, extra: &str) -> Option<String> {
     let preflight = format!(
-        r#"{{"server":{{"name":"Peer","location":""}},"engineVersion":"1","generation":"g","capabilities":{{"uploadCheckpoint":{checkpoints},"maxStageMs":300000,"throughput":[{{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}}{extra}],"latency":[]}}}}"#
+        r#"{{"server":{{"name":"Peer","location":""}},"engineVersion":"1","generation":"g","capabilities":{{"uploadCheckpoint":{checkpoints},"maxStageMs":300000,"throughput":[{{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}}{extra}],"latency":[]}},"lease":{{"maxMeasurements":32,"maxSessions":8}}}}"#
     );
     match target(head) {
         "/servers" => Some(ok(r#"{"servers":[{"id":"self","url":".","name":"Peer"}]}"#)),
         "/preflight" => Some(ok(&preflight)),
+        "/lease" => Some(ok(LEASE)),
         _ => None,
     }
 }
@@ -370,13 +390,12 @@ fn downloads(url: &Origin, stage: Stage) -> Config {
     }
 }
 
-/// A dial before the mint would hold the upload lanes back by its handshakes while the download lanes start.
+/// The run's receiver is minted with its lease at the discovery origin, which a transfer origin never sees.
 #[tokio::test]
-async fn a_run_mints_its_receiver_over_its_throughput_check_s_connection() {
+async fn a_run_mints_its_receiver_with_its_lease_at_the_discovery_origin() {
     let (listener, throughput) = local().await;
-    let mut heads = peer(listener, None, |_, head| match target(head) {
+    let mut transfers = peer(listener, None, |_, head| match target(head) {
         "/probe" => Some(ok(include_str!("../../../api/probe.golden.json"))),
-        "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
         _ => None,
     });
     let elsewhere = format!(
@@ -384,7 +403,7 @@ async fn a_run_mints_its_receiver_over_its_throughput_check_s_connection() {
         throughput.port()
     );
     let (listener, served) = local().await;
-    let _discovery = peer(listener, None, move |_, head| {
+    let mut discovered = peer(listener, None, move |_, head| {
         discovery(head, true, &elsewhere)
     });
     let paths = PathChoice {
@@ -398,19 +417,65 @@ async fn a_run_mints_its_receiver_over_its_throughput_check_s_connection() {
     let prepared = prepare(&config, client(false)).await.unwrap();
     let paths = prepared.servers[0].path.clone().unwrap();
     assert_eq!(paths.throughput.origin, origin("http", throughput));
-    let token = CancellationToken::new();
     let open = UploadSession::open(
         &prepared.client,
+        &prepared.servers[0].origin,
         &paths.throughput,
-        paths.control,
         Vec::new(),
         Duration::ZERO,
         Arc::default(),
-        token,
+        CancellationToken::new(),
     );
     drop(open.await.unwrap());
-    let probe = heads.recv().await.unwrap();
-    let mint = heads.recv().await.unwrap();
-    assert_eq!((probe.0, target(&probe.1)), (0, "/probe"));
-    assert_eq!((mint.0, target(&mint.1)), (0, "/upload/session"));
+    let heads: Vec<_> = std::iter::from_fn(|| discovered.try_recv().ok())
+        .map(|(_, head)| head)
+        .collect();
+    let leases: Vec<_> = heads
+        .iter()
+        .filter(|head| target(head) == "/lease")
+        .collect();
+    assert_eq!(leases.len(), 2, "{heads:?}");
+    assert!(
+        leases[0].ends_with(r#""sessions":0,"uploads":0}"#),
+        "{}",
+        leases[0]
+    );
+    assert!(
+        leases[1].contains("graphite-meter-lease: t\r\n") && leases[1].ends_with(r#""uploads":1}"#),
+        "{}",
+        leases[1]
+    );
+    assert_eq!(target(&transfers.recv().await.unwrap().1), "/probe");
+    assert!(
+        transfers.try_recv().is_err(),
+        "nothing else reached the transfer origin"
+    );
+}
+
+#[tokio::test]
+async fn a_server_without_the_lease_is_refused_by_name_and_one_cut_below_the_ask_at_the_limit() {
+    for (older, text) in [
+        (true, "Peer runs an older Graphite Meter; update it"),
+        (
+            false,
+            "the test needs more measurements at once than this server admits for one client",
+        ),
+    ] {
+        let (listener, served) = local().await;
+        let _peer = peer(listener, None, move |_, head| {
+            let found = discovery(head, true, "")?;
+            let leaseless = found.replace(r#","lease":{"maxMeasurements":32,"maxSessions":8}"#, "");
+            match target(head) {
+                "/preflight" if older => Some(ok(&leaseless[leaseless.find("\r\n\r\n")? + 4..])),
+                "/lease" => Some(ok(
+                    r#"{"token":"t","measurements":1,"sessions":0,"uploads":[]}"#,
+                )),
+                _ => Some(found),
+            }
+        });
+        let config = downloads(&origin("http", served), Stage::Download);
+        let prepared = prepare(&config, client(false)).await.unwrap();
+        let failure = prepared.servers[0].path.clone().unwrap_err();
+        assert_eq!(failure.text, text);
+    }
 }

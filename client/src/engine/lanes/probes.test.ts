@@ -17,10 +17,7 @@ function channel(
     left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     fetch,
-    ticket: (origin, route) => ({
-      url: `${origin}/ws/session?target=${route}`,
-      request: auth.request("", "POST"),
-    }),
+    socket: (url) => `${url}?lease=gml_t`,
     ended: async () => ended,
   };
   const bus = openProbeChannel(
@@ -52,12 +49,8 @@ test("outcomes cross onto page time, and a stalled bus that the sign-in check fi
   expect(worker.commands).toEqual([
     {
       type: "start",
-      url: "wss://peer.example/ws/ping",
+      url: "wss://peer.example/ws/ping?lease=gml_t",
       transport: "websocket",
-      ticket: {
-        url: "https://peer.example/ws/session?target=/ws/ping",
-        request: { headers: {}, credentials: "omit", redirect: "error" },
-      },
       intervalMs: 80,
       maxInFlight: 2,
     },

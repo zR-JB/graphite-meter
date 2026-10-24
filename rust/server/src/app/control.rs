@@ -1,7 +1,8 @@
-//! Discovery, the probe, upload sessions, checkpoints and progress control.
+//! Discovery, the probe, leases, checkpoints and progress control.
 
 use super::{App, Connection, Endpoint, authority, query, response};
 use crate::{
+    admission::{self, Grant},
     config::{ENGINE_VERSION, Listener, ListenerKind},
     exchange::Exchange,
     log::{Level, RateLimited},
@@ -10,11 +11,12 @@ use crate::{
 };
 use graphite_meter_proto::{
     discovery::{
-        Capabilities, IpFamily, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol,
-        Preflight, Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
+        Capabilities, IpFamily, LatencyTarget, LatencyTransport, LeaseLimits, Load,
+        NegotiatedProtocol, Preflight, Probe, Protocol, ServerInfo, ThroughputTarget,
+        ThroughputTransport,
     },
+    lease::{Lease, LeaseRequest},
     origin::{BaseUrl, Origin},
-    upload::Session,
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 
@@ -110,11 +112,74 @@ impl App {
             location: self.config.location().into(),
         };
         let (engine_version, generation) = (ENGINE_VERSION.into(), self.generation.clone());
+        let limits = self.config.limits;
+        let count =
+            |limit: std::num::NonZero<usize>| u32::try_from(limit.get()).unwrap_or(u32::MAX);
         Preflight {
             server,
             engine_version,
             generation,
             capabilities: offered,
+            lease: LeaseLimits {
+                max_measurements: count(limits.operations_per_client),
+                max_sessions: count(limits.sessions_per_client),
+            },
+        }
+    }
+
+    /// `POST` takes a lease, or resizes the one it presents, within the client's share; `DELETE` ends it.
+    pub(super) async fn lease<B: http_body::Body>(
+        &self,
+        request: Request<B>,
+        peer: &Peer,
+    ) -> Response<Body> {
+        let held = peer.lease().cloned();
+        if request.method() == Method::DELETE {
+            if let Some(lease) = held {
+                self.leases.end(&lease);
+            }
+            return response::empty(StatusCode::NO_CONTENT);
+        }
+        let token = admission::presented(&request);
+        let origin = request.headers().get(header::ORIGIN).cloned();
+        let body = crate::auth::body(request.into_body()).await;
+        let Some(asked) = body.and_then(|body| LeaseRequest::decode(&body).ok()) else {
+            return response::text(StatusCode::BAD_REQUEST, "invalid lease request");
+        };
+        let limits = self.config.limits;
+        let measurements = (asked.measurements as usize).min(limits.operations_per_client.get());
+        let sessions = (asked.sessions as usize)
+            .min(limits.sessions_per_client.get())
+            .min(measurements);
+        let grant = Grant {
+            measurements,
+            sessions,
+        };
+        let leased = match (held, token) {
+            (Some(lease), Some(token)) => lease.resize(&self.quotas, grant).map(|()| token),
+            _ => {
+                let Some(keys) = peer.keys() else {
+                    return response::ambiguous();
+                };
+                let created = self.leases.create(
+                    &self.quotas,
+                    keys,
+                    peer.auth(),
+                    origin.as_ref(),
+                    grant,
+                    &self.shutdown,
+                );
+                created.map(|(token, _)| token)
+            }
+        };
+        match leased {
+            Ok(token) => response::json_of(&Lease {
+                token,
+                measurements: measurements as u32,
+                sessions: sessions as u32,
+                uploads: (0..asked.uploads).map(|_| self.uploads.mint()).collect(),
+            }),
+            Err(refusal) => response::refusal(refusal),
         }
     }
 
@@ -152,16 +217,10 @@ impl App {
         }
     }
 
-    pub(super) fn upload_session(&self) -> Response<Body> {
-        response::json_of(&Session {
-            upload_id: self.uploads.mint(),
-        })
-    }
-
     /// An existing upload's counters, which never keep it alive.
     pub(super) fn checkpoint<B>(&self, request: &Request<B>, peer: &Peer) -> Response<Body> {
         let id = query::get(request.uri().query(), "id").unwrap_or_default();
-        match self.uploads.checkpoint(&id, peer.keys().as_ref()) {
+        match self.uploads.checkpoint(&id, peer.owner().as_ref()) {
             Ok(counters) => response::json_of(&counters),
             Err(refusal) => response::refusal(refusal),
         }
@@ -177,7 +236,7 @@ impl App {
     ) -> Result<Response<Body>, Response<Body>> {
         let (id, owner) = (
             query::get(request.uri().query(), "id").unwrap_or_default(),
-            peer.keys(),
+            peer.owner(),
         );
         let body = match *request.method() {
             Method::HEAD => {

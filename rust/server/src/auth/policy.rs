@@ -6,11 +6,12 @@ use crate::headers::{
     X_FORWARDED_HOST,
 };
 use crate::{
-    app::{Endpoint, authority, finalize::Access, finalize::close, query, response},
+    app::{Endpoint, authority, finalize::Access, finalize::close, response},
     config,
     peer::{Peer, single},
 };
 use graphite_meter_proto::{
+    lease::LEASE_HEADER,
     origin::{Origin, Scheme},
     refusal::SIGN_IN_HEADER,
     route::{AuthRoute, Kind, Route},
@@ -19,8 +20,9 @@ use http::{
     HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header, uri::Authority,
 };
 
-const SINGLE: [HeaderName; 6] = [
+const SINGLE: [HeaderName; 7] = [
     header::AUTHORIZATION,
+    LEASE_HEADER,
     header::ORIGIN,
     SEC_FETCH_SITE,
     X_CSRF_TOKEN,
@@ -98,6 +100,7 @@ impl Policy {
         request: &Request<B>,
         endpoint: Endpoint,
         peer: &Peer,
+        leased: Option<&AuthLease>,
     ) -> Decision {
         let headers = request.headers();
         if SINGLE
@@ -132,16 +135,10 @@ impl Policy {
         let session = endpoint == Endpoint::Quic
             && route.is_some_and(|route| route.kind() == Kind::WebTransport);
         let lease = match method == Method::CONNECT && session {
-            true => {
-                // A CONNECT spends its ticket even when a bearer grant authenticates it.
-                let ticket = self.redeem(
-                    store,
-                    request,
-                    &query::get(request.uri().query(), "token").unwrap_or_default(),
-                );
-                self.bearer(store, headers).or(ticket)
-            }
-            false => self.authenticate(store, request, route),
+            true => self.bearer(store, headers).or_else(|| leased.cloned()),
+            false => leased
+                .cloned()
+                .or_else(|| self.authenticate(store, headers)),
         };
         let Some(lease) = lease else {
             return self.required(request, endpoint, true);
@@ -198,19 +195,8 @@ impl Policy {
         }
     }
 
-    /// A socket ticket on a WebSocket route, else a bearer grant once `Authorization` is present, else the cookie.
-    fn authenticate<B>(
-        &self,
-        store: &Store,
-        request: &Request<B>,
-        route: Option<Route>,
-    ) -> Option<AuthLease> {
-        let headers = request.headers();
-        if route.is_some_and(|route| route.kind() == Kind::WebSocket)
-            && let Some(token) = query::get(request.uri().query(), "token")
-        {
-            return self.redeem(store, request, &token);
-        }
+    /// A bearer grant once `Authorization` is present, else the cookie.
+    fn authenticate(&self, store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
         if headers.contains_key(header::AUTHORIZATION) {
             return self.bearer(store, headers);
         }
@@ -220,16 +206,6 @@ impl Policy {
     fn bearer(&self, store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
         let credentials = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
         store.bearer(credentials.strip_prefix("Bearer ")?)
-    }
-
-    /// Spends the ticket `token` presented at this request's HTTPS origin and path from its `Origin`.
-    fn redeem<B>(&self, store: &Store, request: &Request<B>, token: &str) -> Option<AuthLease> {
-        let origin =
-            authority(request).and_then(|named| Origin::parse(&format!("https://{named}")).ok());
-        let target = origin
-            .map(|origin| format!("{origin}{}", request.uri().path()))
-            .unwrap_or_default();
-        store.redeem(token, &target, request.headers().get(header::ORIGIN))
     }
 
     /// Origin rules: browser grants serve only their origin's measurement routes; unsafe cookie requests prove CSRF.
@@ -300,7 +276,7 @@ impl Policy {
             (Some(route), Some(origin))
                 if secure && *origin.header() != self.origin && route != Route::Servers =>
             {
-                let names = requested(headers, &["authorization"]);
+                let names = requested(headers, &["authorization", LEASE_HEADER.as_str()]);
                 if !allowed || !names.is_some_and(|names| names.contains(&"authorization".into())) {
                     return self.forbidden(secure);
                 }
@@ -309,7 +285,12 @@ impl Policy {
             (Some(_), _)
                 if secure && headers.get(header::ORIGIN) == Some(&self.origin) && allowed =>
             {
-                if requested(headers, &["authorization", "x-csrf-token"]).is_none() {
+                if requested(
+                    headers,
+                    &["authorization", "x-csrf-token", LEASE_HEADER.as_str()],
+                )
+                .is_none()
+                {
                     return self.forbidden(secure);
                 }
                 Access::Cookie(self.origin.clone()).apply_measurement(answered);

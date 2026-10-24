@@ -73,7 +73,6 @@ fn console(palette: Palette) -> Buffer {
             transport: ThroughputTransport::FetchStream,
             protocol: Protocol::Http2,
         },
-        control: Protocol::Http2,
         latency: None,
         stage_limit: Duration::from_secs(300),
         idle_rtt: Some(Duration::from_micros(400)),

@@ -5,10 +5,10 @@ import {
   readJSON,
   release,
   safeDetail,
-  socketTicket,
   type CatalogEntry,
   type Probe,
 } from "../../protocol/documents";
+import { isRecord } from "../../lib/decode";
 import { ROUTES } from "../../protocol/routes";
 import { ESTABLISH_MS } from "../lanes/endings";
 import { midpointMedian } from "../measure/latency";
@@ -30,6 +30,7 @@ import {
   type ThroughputPath,
   type ThroughputTarget,
 } from "../types";
+import type { Lease } from "./lease";
 import type { PageConfig } from "./page";
 import {
   allowsOrigin,
@@ -67,7 +68,9 @@ export interface Failure {
 
 export interface CheckContext {
   entry: CatalogEntry;
+  /** Discovery and probes take the credentials alone; what the server admits presents the lease. */
   auth: ServerAuth;
+  lease: Lease;
   page: PageConfig;
   bus: BusSlot;
   now(): number;
@@ -234,7 +237,19 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
       await release(response);
       throw new CheckError(`${CHECK_FAILED} (HTTP ${response.status})`, "retryable");
     }
-    const document = await decoded(response, preflight, `${CHECK_FAILED} (unreadable discovery)`);
+    const document = await decoded(
+      response,
+      (value) => {
+        // A server without the lease is refused by name, as nothing it would admit could present one.
+        if (isRecord(value) && !("lease" in value))
+          throw new CheckError(
+            `${entry.name} runs an older Graphite Meter; update it`,
+            "retryable",
+          );
+        return preflight(value);
+      },
+      `${CHECK_FAILED} (unreadable discovery)`,
+    );
     const requestMs = now() - startedAt;
     const { capabilities } = document;
     if (
@@ -405,7 +420,7 @@ async function verifyThroughput(
       "retryable",
     );
   if (!proven || view.protocol === "negotiated") view.protocol = observed ?? "negotiated";
-  if (session) await verifySession(context.auth, target, signal);
+  if (session) await verifySession(context.lease, target, signal);
   return {
     target: session ? target : view,
     fetch: view,
@@ -416,24 +431,14 @@ async function verifyThroughput(
 
 /** Opening a session is not enough: the selected transfer must deliver a byte. */
 async function verifySession(
-  auth: ServerAuth,
+  lease: Lease,
   target: SessionTarget,
   signal: AbortSignal,
 ): Promise<void> {
   const datagrams = target.transport === "webtransport-datagram";
-  let url = `${target.origin}${ROUTES.wtDownload}?bytes=${SESSION_CHECK_BYTES}${datagrams ? "&datagrams=1" : ""}`;
-  const ticket = auth.ticket(target.origin, ROUTES.wtDownload);
-  if (ticket) {
-    const response = await auth.fetch(ticket.url, { method: "POST", signal });
-    if (!response.ok) {
-      await release(response);
-      throw new CheckError(`WebTransport ticket refused (HTTP ${response.status})`, "retryable");
-    }
-    const { token } = await decoded(response, socketTicket, "Unexpected WebTransport ticket");
-    // Authentication off answers an empty ticket, which the dial must not carry.
-    if (token) url += `&token=${encodeURIComponent(token)}`;
-  }
-  signal.throwIfAborted();
+  const route = `${target.origin}${ROUTES.wtDownload}?bytes=${SESSION_CHECK_BYTES}${datagrams ? "&datagrams=1" : ""}`;
+  const unhold = await lease.hold({ measurements: 1, sessions: 1 }, signal);
+  const url = lease.socket(route);
   let session: WebTransport | null = null;
   const close = () => {
     try {
@@ -465,6 +470,7 @@ async function verifySession(
     clearTimeout(deadline);
     signal.removeEventListener("abort", close);
     close();
+    unhold();
   }
 }
 
@@ -482,7 +488,7 @@ export async function checkLatency(
     // Either failing ends the other at once.
     const both = new AbortController();
     const linked = AbortSignal.any([bounded, both.signal]);
-    const collecting = collectRtt(context, target, linked);
+    const collecting = context.lease.renew(linked).then(() => collectRtt(context, target, linked));
     try {
       const [{ probe }, { rttMs, channel }] = await Promise.all([
         probeOrigin(target.origin, context.auth, linked),
@@ -548,7 +554,7 @@ function collectRtt(
     ESTABLISH_MS + ESTABLISH_MARGIN_MS,
   );
   signal.addEventListener("abort", abort, { once: true });
-  const { entry, auth } = context;
+  const { entry, lease } = context;
   const events: ProbeChannelEvents = {
     ready() {
       if (done || collecting) return;
@@ -567,7 +573,13 @@ function collectRtt(
   };
   try {
     channel = context.bus.take(
-      { target, auth, control: entry.url, intervalMs: PREPARATION_INTERVAL_MS, maxInFlight: 2 },
+      {
+        target,
+        auth: lease,
+        control: entry.url,
+        intervalMs: PREPARATION_INTERVAL_MS,
+        maxInFlight: 2,
+      },
       events,
     );
   } catch (error) {

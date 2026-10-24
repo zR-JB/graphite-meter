@@ -817,7 +817,7 @@ test("removing one server keeps the outcomes the others report in the same prepa
       {
         prepare: () =>
           new Promise((_, reject) =>
-            later(10, () => reject(new StageFailure("server-busy", "busy"))),
+            later(10, () => reject(new StageFailure("server-capacity", "busy"))),
           ),
       },
     ),
@@ -825,7 +825,7 @@ test("removing one server keeps the outcomes the others report in the same prepa
     { downloadMs: 1_000 },
   );
   preparing.start();
-  await expect(preparing.result()).rejects.toMatchObject({ reason: "server-busy" });
+  await expect(preparing.result()).rejects.toMatchObject({ reason: "server-capacity" });
 
   let b: StageEvents;
   const server = { id: "a", name: "a", url: "https://a.example" };

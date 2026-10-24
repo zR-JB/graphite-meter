@@ -6,6 +6,7 @@ import {
   CONFIG,
   FakeBuses,
   fakeNet,
+  granted,
   h,
   MARKER,
   page,
@@ -30,8 +31,9 @@ const HOME = { servers: [{ id: "self", url: ".", name: "Home" }], defaultSelecti
 async function load(
   route: (url: URL, init: RequestInit) => Answer,
   transports: Partial<TestConfig["transports"]> = {},
+  lease?: (url: URL, init: RequestInit) => Answer,
 ) {
-  net = fakeNet(route);
+  net = fakeNet(route, lease);
   const config = signal<TestConfig>({
     ...CONFIG,
     transports: { ...CONFIG.transports, ...transports },
@@ -56,7 +58,7 @@ async function load(
   await net.advance(1_000);
   /** Starts the run's preparation: its outcome once settled, or the name of the error that ended it. */
   const prepare = () =>
-    servers.prepare(new AbortController().signal).then(
+    servers.prepare(new AbortController().signal, config.peek()).then(
       ({ servers, dropped }) => ({ servers: servers.map(({ server }) => server.id), dropped }),
       (error: Error) => error.name,
     );
@@ -129,6 +131,39 @@ test("Start runs on what its checks verified however long they take, and never f
         server: { id: "self", url: page.origin, name: "Meter" },
         reason: "path-failed",
         message: "Could not check the connection",
+      },
+    ],
+  });
+});
+
+test("Start takes each lease to the run's ceilings, and a server without room leaves at capacity before measuring", async () => {
+  const asked: unknown[] = [];
+  let room = true;
+  const { prepare } = await load(
+    (url) =>
+      url.pathname === "/servers"
+        ? { body: HOME }
+        : url.pathname === "/preflight"
+          ? { body: preflight([h(".", "http1")], [ws(".")]) }
+          : { body: PROBE, hop: "http/1.1" },
+    {},
+    (_, init) => {
+      asked.push(init.body && JSON.parse(String(init.body)));
+      const busy = { status: 503, headers: { "Graphite-Meter-Refusal": "server-capacity" } };
+      return room || JSON.parse(String(init.body)).measurements === 1 ? granted(init) : busy;
+    },
+  );
+  expect(await prepare()).toEqual({ servers: ["self"], dropped: [] });
+  // Four lanes a direction, an upload's feed and finalize, beside the bus; one id for the upload stage.
+  expect(asked.at(-1)).toEqual({ measurements: 7, sessions: 0, uploads: 1 });
+  room = false;
+  expect(await prepare()).toEqual({
+    servers: [],
+    dropped: [
+      {
+        server: { id: "self", url: page.origin, name: "Meter" },
+        reason: "server-capacity",
+        message: "Server at capacity",
       },
     ],
   });

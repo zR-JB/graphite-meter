@@ -2,7 +2,6 @@
 import { release } from "../../protocol/documents";
 import type { EndReport, FeedRecord, SessionCommand, SessionReport } from "../../protocol/messages";
 import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
-import { Tickets, withToken } from "../lanes/dial";
 import { abortable } from "../run/clock";
 import { CLOSE_GRACE_MS, ESTABLISH_MS, lost, refusal, sessionClosed } from "../lanes/endings";
 import { FINAL_GRACE_MS, readRecords } from "../lanes/records";
@@ -22,7 +21,6 @@ const UNESTABLISHED: EndReport = {
 };
 
 const ignore = () => {};
-const tickets = new Tickets();
 let session: Session | null = null;
 const counter = (): ByteReports => {
   const counted = new ByteReports(
@@ -129,16 +127,9 @@ class Session {
     const { command } = this;
     const expired = AbortSignal.timeout(ESTABLISH_MS);
     const budget = AbortSignal.any([this.#closed.signal, expired]);
-    let token = "";
-    if (command.ticket) {
-      const minted = await tickets.take(command.ticket, budget);
-      if (this.#state !== "dialing") return;
-      if (minted.type !== "token") return this.#end(budget.aborted ? UNESTABLISHED : minted);
-      token = minted.token;
-    }
     let transport: WebTransport;
     try {
-      transport = new WebTransport(withToken(command.url, token), {
+      transport = new WebTransport(command.url, {
         congestionControl: "throughput",
       });
     } catch (error) {
@@ -161,9 +152,6 @@ class Session {
       await abortable(transport.ready, budget);
     } catch (error) {
       return this.#end(budget.aborted ? UNESTABLISHED : { type: "broken", detail: String(error) });
-    } finally {
-      // An answer, a refusal too, spent the ticket; a dial that lapsed may never have reached the server.
-      if (!expired.aborted) tickets.spent(token);
     }
     if (this.#state !== "dialing") return;
     this.#state = "open";

@@ -26,5 +26,5 @@ owner-mismatch | upload id belongs to another client | 403 | protocol-error
 idle | idle | 408 | timeout
 revoked | authentication required | 403 | sign-in-required
 client-limit | measurement limit for this client reached | 429 | client-limit
-server-busy | measurement capacity reached | 503 | server-busy
+server-capacity | measurement capacity reached | 503 | server-capacity
 wrong-protocol | this port serves transfers over HTTP/3, not TCP | 409 | path-failed

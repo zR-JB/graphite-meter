@@ -1,3 +1,4 @@
+import { createLease } from "./lease";
 import { expect, test } from "bun:test";
 import type { Preflight } from "../../protocol/documents";
 import { createBusSlot } from "../lanes/probes";
@@ -83,6 +84,7 @@ test("this page's policy refuses origins it cannot reach, before any request", a
       const context = {
         entry,
         auth: publicAuth(entry),
+        lease: createLease(url, publicAuth(entry)),
         page,
         bus: createBusSlot(new FakeBuses().open, {} as ProbeChannelEvents),
         now: net.now,

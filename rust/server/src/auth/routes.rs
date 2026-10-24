@@ -1,4 +1,4 @@
-//! The controller's `/login` and `/auth/` routes: sign-in, password and OIDC, approvals, session, sign-out, tickets.
+//! The controller's `/login` and `/auth/` routes: sign-in, password and OIDC, approvals, session, sign-out.
 
 use super::{
     AuthLease, Counter, Enabled, Identity, LOGIN_LIFETIME, LoginKey, Principal, Reason, Via,
@@ -17,10 +17,7 @@ use crate::{
     transport::body::Body,
 };
 use bytes::{Buf, BufMut};
-use graphite_meter_proto::{
-    origin::{Origin, Scheme},
-    route::{AuthRoute, Kind, Route},
-};
+use graphite_meter_proto::route::AuthRoute;
 use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header, request::Parts};
 use serde::Serialize;
 use std::{
@@ -89,32 +86,6 @@ pub(super) async fn handle<B: http_body::Body>(
         forms.as_ref().map(|provider| provider.origin.as_str()),
     );
     answer
-}
-
-/// A ticket for an HTTPS `target` route of `kind` on the public hostname, minted by a cookie login or a browser grant.
-pub(super) fn mint<B>(
-    auth: &Enabled,
-    request: &Request<B>,
-    lease: Option<&AuthLease>,
-    kind: Kind,
-) -> Response<Body> {
-    let Some(lease) = lease.filter(|lease| lease.via() != &Via::Bearer(None)) else {
-        return response::status(StatusCode::FORBIDDEN);
-    };
-    let target = query::get(request.uri().query(), "target").unwrap_or_default();
-    let Some((origin, path)) = Origin::split(target.strip_suffix('#').unwrap_or(&target)).ok()
-    else {
-        return response::status(StatusCode::BAD_REQUEST);
-    };
-    let route = Route::find_by(Route::path, path).filter(|route| route.kind() == kind);
-    if route.is_none() || origin.scheme != Scheme::Https || origin.host != auth.policy.public.host {
-        return response::status(StatusCode::BAD_REQUEST);
-    }
-    let requester = request.headers().get(header::ORIGIN).cloned();
-    match auth.store.mint(lease, format!("{origin}{path}"), requester) {
-        Some(ticket) => response::json_of(&ticket),
-        None => response::status(StatusCode::FORBIDDEN),
-    }
 }
 
 /// The sign-in page; its form proves a fresh token the login cookie holds.
@@ -345,7 +316,7 @@ pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Opt
 }
 
 /// A bounded request body, in one allocation zeroized when dropped.
-pub(super) async fn body<B: http_body::Body>(body: B) -> Option<Zeroizing<Vec<u8>>> {
+pub(crate) async fn body<B: http_body::Body>(body: B) -> Option<Zeroizing<Vec<u8>>> {
     let mut body = pin!(body);
     let mut bytes = Zeroizing::new(Vec::with_capacity(FORM_BYTES));
     while let Some(frame) = poll_fn(|cx| body.as_mut().poll_frame(cx)).await {

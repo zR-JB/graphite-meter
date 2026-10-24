@@ -47,9 +47,10 @@ impl Access {
     /// The headers of a measurement preflight's answer; with authentication off every route answer carries them.
     pub fn apply_measurement(&self, headers: &mut HeaderMap) {
         let allowed = match self {
-            Self::Public => "*",
-            Self::Cookie(_) => "Authorization, Content-Type, X-CSRF-Token",
-            Self::Bearer(_) => "Authorization, Content-Type",
+            // Firefox reuses no cached preflight that allowed the lease field by `*`.
+            Self::Public => "Content-Type, Graphite-Meter-Lease",
+            Self::Cookie(_) => "Authorization, Content-Type, Graphite-Meter-Lease, X-CSRF-Token",
+            Self::Bearer(_) => "Authorization, Content-Type, Graphite-Meter-Lease",
         };
         self.apply_preflight(headers, "GET, POST, DELETE, OPTIONS", allowed);
     }

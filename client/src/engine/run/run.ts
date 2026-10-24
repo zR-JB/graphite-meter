@@ -696,7 +696,6 @@ export class Run {
       ...(stage.streams.get(server.id) ?? { streams: { down: 0, up: 0 } }),
       uploadLanes: [...stage.streams.values()].reduce((sum, lanes) => sum + lanes.streams.up, 0),
       cadence: this.#cadence(activity),
-      seed: `r${Math.round(this.#clock.start)}`,
       events: this.#events(stage, seat),
       now: () => this.#clock.runMs(),
       endsIn: () => this.#endsIn(activity.stage),

@@ -45,11 +45,17 @@ interface RunEnvironment {
   refusal: Read<string>;
   /** The page's sign-in and every grant must cover `plannedMs`; throws with the words to show. */
   authorize(plannedMs: number, signal: AbortSignal): Promise<void>;
-  /** Checks the selected servers again; throws the words to show when one refuses `config`, or an AbortError when superseded. */
+  /** Checks the selected servers again and takes their leases, which `release` lowers; throws the words to show when one
+   *  refuses `config`, or an AbortError when superseded. */
   prepare(
     signal: AbortSignal,
     config: TestConfig,
-  ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
+  ): Promise<{
+    servers: PreparedServer[];
+    dropped: DroppedServer[];
+    focus: string;
+    release(): void;
+  }>;
   /** Whether a run of `totalMs` still fits the sign-in; a live change that lengthens the test must. */
   fits(totalMs: number): boolean;
   /** A server failed during the run, or with null the whole run did: a path that failed is checked again. */
@@ -309,28 +315,35 @@ export function createRun(env: RunEnvironment) {
     signal.throwIfAborted();
     preparation.set("checking");
     const ready = await env.prepare(signal, config);
-    signal.throwIfAborted();
-    if (!ready.servers.length)
-      throw new Error(
-        ready.dropped
-          .map(({ server, message }) =>
-            ready.dropped.length > 1 ? `${server.name}: ${message}` : message,
-          )
-          .join("; ") || CHECK_FAILED,
-      );
-    const focus =
-      ready.servers.find(({ server }) => server.id === ready.focus) ?? ready.servers[0]!;
-    const runPlan = adaptWarmup(config, focus.latency?.rttMs ?? 0);
-    const next = new Run({
-      servers: ready.servers,
-      focus: focus.server.id,
-      dropped: ready.dropped,
-      plan: runPlan,
-      open: env.open,
-      mint: env.mint,
-      streams: env.streams,
-      clock: env.clock,
-    });
+    let next: Run;
+    let focus: PreparedServer;
+    let runPlan: RunPlan;
+    try {
+      signal.throwIfAborted();
+      if (!ready.servers.length)
+        throw new Error(
+          ready.dropped
+            .map(({ server, message }) =>
+              ready.dropped.length > 1 ? `${server.name}: ${message}` : message,
+            )
+            .join("; ") || CHECK_FAILED,
+        );
+      focus = ready.servers.find(({ server }) => server.id === ready.focus) ?? ready.servers[0]!;
+      runPlan = adaptWarmup(config, focus.latency?.rttMs ?? 0);
+      next = new Run({
+        servers: ready.servers,
+        focus: focus.server.id,
+        dropped: ready.dropped,
+        plan: runPlan,
+        open: env.open,
+        mint: env.mint,
+        streams: env.streams,
+        clock: env.clock,
+      });
+    } catch (error) {
+      ready.release();
+      throw error;
+    }
     // The previous result clears only now: canceling earlier keeps it. One batch, so Start never looks idle.
     batch(() => {
       releaseRun();
@@ -345,6 +358,11 @@ export function createRun(env: RunEnvironment) {
     rttMs = focus.latency?.rttMs ?? 0;
     spanMs = totalMs(runPlan);
     follow(next);
+    const unfollow = release;
+    release = () => {
+      unfollow();
+      ready.release();
+    };
     next.start();
   }
 

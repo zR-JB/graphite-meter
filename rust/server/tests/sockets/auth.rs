@@ -6,6 +6,7 @@ use super::{
     webtransport_upload::{Feed, refused},
     *,
 };
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_http3::webtransport::Session;
 use graphite_meter_proto::upload::Record;
@@ -124,19 +125,23 @@ async fn an_upload_session_needs_a_grant_and_the_upload_s_owner() {
     let grant = |key| store.grant(key, None).unwrap().as_str().to_owned();
     let (owner, other) = (grant(login.key), grant(other.key));
     let connection = h3.connect(transport(None)).await;
-    let request = Request::post("https://localhost/upload/session")
-        .header("authorization", format!("Bearer {owner}"));
+    let request =
+        Request::post("https://localhost/lease").header("authorization", format!("Bearer {owner}"));
     let (mut send, mut answer) = connection
         .requests
         .send_request(request.body(()).unwrap())
         .await
         .unwrap()
         .split();
+    let body = r#"{"measurements":2,"sessions":1,"uploads":1}"#;
+    send.send_data(Bytes::from_static(body.as_bytes()))
+        .await
+        .unwrap();
     send.finish().await.unwrap();
     assert_eq!(answer.response().await.unwrap().status(), 200);
     let created: serde_json::Value =
         serde_json::from_slice(&read(&mut answer).await.unwrap()).unwrap();
-    let path = format!("/wt/upload?id={}", created["uploadId"].as_str().unwrap());
+    let path = format!("/wt/upload?id={}", created["uploads"][0].as_str().unwrap());
     let unsigned = session(&connection, &path, None)
         .await
         .err()

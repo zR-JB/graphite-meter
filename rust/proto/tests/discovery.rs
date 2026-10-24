@@ -1,12 +1,12 @@
 use graphite_meter_proto::{
     discovery::{
-        Capabilities, ClientIpSource, IpFamily, LatencyTarget, LatencyTransport, Load,
+        Capabilities, ClientIpSource, IpFamily, LatencyTarget, LatencyTransport, LeaseLimits, Load,
         NegotiatedProtocol, Preflight, Probe, Protocol, ServerInfo, ThroughputTarget,
         ThroughputTransport,
     },
+    lease::{Lease, LeaseRequest},
     origin::BaseUrl,
-    token::{self, SocketTicket},
-    upload::Session,
+    token,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -93,6 +93,10 @@ fn preflight() -> Preflight {
                 latency(tls, LatencyTransport::WebTransport),
                 latency(".", LatencyTransport::WebSocket),
             ],
+        },
+        lease: LeaseLimits {
+            max_measurements: 32,
+            max_sessions: 8,
         },
     }
 }
@@ -284,37 +288,42 @@ fn probe_evidence_holds_published_values_only() {
 }
 
 #[test]
-fn tokens_and_upload_ids_are_nonempty_and_at_most_8192_bytes() {
+fn a_lease_asks_for_measurements_and_answers_valid_tokens() {
+    let ask = |text: &str| LeaseRequest::decode(text.as_bytes());
+    assert_eq!(
+        ask(r#"{"measurements":3,"sessions":1}"#).unwrap(),
+        LeaseRequest {
+            measurements: 3,
+            sessions: 1,
+            uploads: 0
+        }
+    );
+    for refused in [
+        r#"{"measurements":0,"sessions":0}"#,
+        r#"{"measurements":1,"sessions":2}"#,
+        r#"{"measurements":4,"sessions":0,"uploads":5}"#,
+        r#"{"measurements":1}"#,
+    ] {
+        assert!(ask(refused).is_err(), "{refused}");
+    }
     assert!(token::valid("t") && token::valid(&"t".repeat(8192)));
     assert!(!token::valid("") && !token::valid(&"t".repeat(8193)));
-    for (id, valid) in [
-        (String::new(), false),
-        ("u".repeat(8192), true),
-        ("u".repeat(8193), false),
-    ] {
-        let body = serde_json::to_vec(&json!({"uploadId": id})).unwrap();
-        assert_eq!(Session::decode(&body).is_ok(), valid, "{} bytes", id.len());
-    }
-    assert!(Session::decode(br#"{"uploadId":1}"#).is_err());
-    let session = Session {
-        upload_id: "abc".into(),
+    let lease = |token: String, uploads: Vec<String>| {
+        let body = json!({"token": token, "measurements": 2, "sessions": 0, "uploads": uploads});
+        Lease::decode(&serde_json::to_vec(&body).unwrap())
     };
-    assert_eq!(
-        serde_json::to_string(&session).unwrap(),
-        r#"{"uploadId":"abc"}"#
-    );
+    assert!(lease("t".into(), vec!["u".repeat(8192)]).is_ok());
+    assert!(lease(String::new(), vec![]).is_err());
+    assert!(lease("t".into(), vec![String::new()]).is_err());
+    assert!(lease("t".into(), vec!["u".into(); 5]).is_err());
 }
 
 #[test]
-fn a_socket_ticket_without_authentication_is_empty_and_expired() {
-    let unauthenticated = serde_json::to_string(&SocketTicket::unauthenticated()).unwrap();
-    assert_eq!(unauthenticated, r#"{"token":"","expires":0}"#);
-    let ticket = SocketTicket {
-        token: "t".into(),
-        expires: 1_790_000_000_000,
-    };
-    assert_eq!(
-        serde_json::to_string(&ticket).unwrap(),
-        r#"{"token":"t","expires":1790000000000}"#
-    );
+fn a_preflight_without_lease_limits_is_an_older_servers() {
+    let older = edited(preflight(), "/lease", None);
+    assert!(Preflight::decode(&older).is_err());
+    assert!(Preflight::predates_lease(&older));
+    assert!(!Preflight::predates_lease(PREFLIGHT.as_bytes()));
+    assert!(!Preflight::predates_lease(b"[]"));
+    assert!(preflight_with("/lease/maxMeasurements", json!(0)).is_err());
 }

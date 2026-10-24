@@ -137,7 +137,6 @@ fn paths(origin: &Origin) -> Paths {
     };
     Paths {
         throughput,
-        control: Protocol::Http2,
         latency: None,
         stage_limit: SECOND * 300,
         idle_rtt: None,

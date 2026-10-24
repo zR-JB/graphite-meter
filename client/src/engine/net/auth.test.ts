@@ -76,7 +76,7 @@ test("credentials stay on their server's destinations, a grant on its HTTPS host
     [sessionAuth(self, page, session), "https://meter.example/probe", "HEAD", cookie()],
     [
       sessionAuth(self, page, session),
-      "https://meter.example/upload/session",
+      "https://meter.example/lease",
       "post",
       cookie({ "X-CSRF-Token": "a+b" }),
     ],
@@ -100,23 +100,6 @@ test("credentials stay on their server's destinations, a grant on its HTTPS host
     ],
   ] as const)
     expect(recipe(auth, url, method), `${auth.kind} ${method} ${url}`).toEqual(expected);
-});
-
-test("sockets get a ticket from the discovery origin, bound to their exact destination, unless a cookie or nothing at all suffices", () => {
-  expect(publicAuth(peer).ticket("https://peer.example", "/wt/download")).toBeNull();
-  expect(sessionAuth(self, page, session).ticket(page.origin, "/ws/ping")).toBeNull();
-  expect(
-    sessionAuth(self, page, session).ticket("https://meter.example:7249", "/wt/upload"),
-  ).toEqual({
-    url: "https://meter.example/wt/session?target=https%3A%2F%2Fmeter.example%3A7249%2Fwt%2Fupload",
-    request: cookie({ "X-CSRF-Token": "a+b" }),
-  });
-  const socket = grant(1).ticket("https://peer.example", "/ws/ping");
-  expect(socket).toEqual({
-    url: "https://peer.example/ws/session?target=https%3A%2F%2Fpeer.example%2Fws%2Fping",
-    request: bearer,
-  });
-  expect(socket?.url).not.toContain(TOKEN);
 });
 
 test("only the page's own server at the page's origin rides the page's login", () => {

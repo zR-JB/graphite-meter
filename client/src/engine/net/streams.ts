@@ -25,7 +25,12 @@ type StreamPolicy = TestConfig["transferStreams"];
 
 export interface PlanServer {
   server: { id: string; name: string };
-  discovery: { latency: ReadonlyMap<string, OriginTargets<Pick<LatencyTarget, "transport">>> };
+  /** The discovery origin and the protocol its preflight came over, where upload control goes. */
+  discovery: {
+    origin: string;
+    protocol: string | null;
+    latency: ReadonlyMap<string, OriginTargets<Pick<LatencyTarget, "transport">>>;
+  };
   throughput: {
     target: Pick<ThroughputTarget, "transport">;
     fetch: Pick<FetchTarget, "origin" | "protocol">;
@@ -40,7 +45,7 @@ export interface Lanes {
 type StreamPlan = Map<string, Record<Direction, Lanes>>;
 
 interface OriginBudget {
-  /** One connection stays free for checkpoints, socket tickets and sign-in checks; WebSockets hold none. */
+  /** One connection stays free for leases, checkpoints and sign-in checks; WebSockets hold none. */
   control: boolean;
   /** HTTP progress feeds, each holding a connection for the whole stage. */
   feeds: number;
@@ -55,13 +60,16 @@ export const normalizeStreamCount = (count: number) =>
 export const needsPings = (activity: Activity) =>
   activity.stage === "latency" || (activity.transfer.length > 0 && activity.loadedLatency);
 
-/** A fetch upload's feed must reach its own origin, where only proven HTTP/1.1 spares the pool by riding an offered WebSocket. */
-export const feedSocket = (
-  discovery: PlanServer["discovery"],
-  fetch: PlanServer["throughput"]["fetch"],
-): boolean =>
-  fetch.protocol === "http1" &&
-  !!discovery.latency.get(fetch.origin)?.targets.some(({ transport }) => transport === "websocket");
+const controlMultiplexed = ({ protocol }: PlanServer["discovery"]) =>
+  /^h[23]$/.test(protocol ?? "");
+
+/** A fetch upload's feed reaches the discovery origin, where only proven HTTP/1.1 spares the pool by riding an offered
+ *  WebSocket. */
+export const feedSocket = (discovery: PlanServer["discovery"]): boolean =>
+  discovery.protocol === "http/1.1" &&
+  !!discovery.latency
+    .get(discovery.origin)
+    ?.targets.some(({ transport }) => transport === "websocket");
 
 /** Every lane keeps one stream; the rest is dealt round-robin up to each ceiling. */
 function deal(available: number, ceilings: readonly number[]): number[] {
@@ -112,8 +120,10 @@ export function planStreams(
       http1?.lanes.push({ name: server.name, lanes: lanes[direction] });
     }
     const uploads = activity.transfer.includes("up");
-    if (needsPings(activity) || uploads) pool(throughput.fetch.origin).control = true;
-    if (http1 && uploads && !feedSocket(discovery, throughput.fetch)) http1.feeds++;
+    const control = pool(discovery.origin);
+    if (needsPings(activity) || uploads) control.control = true;
+    if (!session && uploads && !controlMultiplexed(discovery) && !feedSocket(discovery))
+      control.feeds++;
   }
   for (const { control, feeds, lanes } of pools.values()) {
     if (!lanes.length) continue;
@@ -149,7 +159,11 @@ export function planError(config: TestConfig, servers: readonly PlanServer[]): s
 // Before any path is verified, a description assumes HTTP/1.1 with a WebSocket on its origin.
 const ASSUMED: PlanServer = {
   server: { id: "", name: "" },
-  discovery: { latency: new Map([["", { blocked: null, targets: [{ transport: "websocket" }] }]]) },
+  discovery: {
+    origin: "",
+    protocol: null,
+    latency: new Map([["", { blocked: null, targets: [{ transport: "websocket" }] }]]),
+  },
   throughput: {
     target: { transport: "fetch-stream" },
     fetch: { origin: "", protocol: "http1" },
