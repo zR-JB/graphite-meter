@@ -7,7 +7,9 @@ import json
 import platform
 import re
 import subprocess
+import time
 import tomllib
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -124,16 +126,22 @@ def check_rust_manifest(installed: Path, manifest: bytes, root: Path = ROOT) -> 
 def verify_rust_toolchain(root: Path = ROOT) -> None:
     channel = rust_channel(root)
     url = f"https://static.rust-lang.org/dist/channel-rust-{channel}.toml"
-    with urllib.request.urlopen(url, timeout=60) as reply:
-        manifest = reply.read(64 * 1024 * 1024)
+    manifest = download(url, 64 * 1024 * 1024, 60)
     sysroot = subprocess.run(["rustc", f"+{channel}", "--print", "sysroot"], capture_output=True, text=True,
                              check=True).stdout.strip()
     check_rust_manifest(Path(sysroot) / "lib/rustlib/multirust-channel-manifest.toml", manifest, root)
 
 
-def download(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=30) as reply:
-        return reply.read(16 * 1024 * 1024)
+def download(url: str, limit: int = 16 * 1024 * 1024, timeout: float = 30, retries: int = 2) -> bytes:
+    # Public CDNs sometimes drop a TLS connection mid-read.
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as reply:
+            return reply.read(limit)
+    except OSError as error:
+        if not retries or isinstance(error, urllib.error.HTTPError) and error.code < 500:
+            raise
+        time.sleep(2)
+        return download(url, limit, timeout, retries - 1)
 
 
 def latest_browsers(fetch: Callable[[str], bytes] = download) -> dict[str, str]:
