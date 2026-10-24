@@ -16,6 +16,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from ..ci.github_api import confined_path
+
 ROOT = Path(__file__).resolve().parents[2]
 RUSTSEC = "github.com/rustsec/advisory-db"
 
@@ -60,9 +62,9 @@ def database(root: Path) -> Path:
 
 
 def main() -> None:
-    cargo_home = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo")
+    databases = confined_path(Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "advisory-dbs", Path.home())
     forks = json.loads((ROOT / "legal/rust-forks.json").read_text())
-    if errors := check(forks, database(cargo_home / "advisory-dbs")):
+    if errors := check(forks, database(databases)):
         sys.exit("\n".join(errors))
     print(f"every advisory {len(forks)} Cargo forks inherit has a verdict")
 
