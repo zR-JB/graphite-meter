@@ -373,8 +373,11 @@ export async function start(page: Page, fleet: Fleet) {
           // Start probes an HTTP/3 origin no fetch lane then reuses: a WebTransport path's, or a WebTransport bus's.
           const probe =
             (transport && transport !== "fetch-stream") || (bus && protocol !== "http3") ? 1 : 0;
+          // A signed-in server's lanes send cookies, so their preflights, which send none, get a connection of their own.
+          const preflights =
+            fleet.signIn && i === 0 && transport === "fetch-stream" && protocol === "http3" ? 1 : 0;
           // A run that saved nothing for the server names no paths to plan for.
-          const quicPlan = summary ? transfer * sessions + probe + bus : Infinity;
+          const quicPlan = summary ? transfer * sessions + probe + bus + preflights : Infinity;
           return { id: server.id, ...counts, quicPlan };
         }),
       };

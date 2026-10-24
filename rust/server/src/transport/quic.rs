@@ -201,7 +201,8 @@ impl Http3 {
         // A child token: polling it never takes the server-wide token's waiter lock.
         let shutdown = self.app.shutdown().child_token();
         let mut stopping = pin!(shutdown.cancelled());
-        let mut stopped = false;
+        let mut retiring = pin!(connection.retire.cancelled());
+        let (mut stopped, mut retired) = (false, false);
         loop {
             tokio::select! {
                 request = http.next() => match request? {
@@ -213,6 +214,10 @@ impl Http3 {
                 () = &mut stopping, if !stopped => {
                     stopped = true;
                     http.shutdown(LaneEnding::Shutdown.webtransport_code(), LaneEnding::Shutdown.reason());
+                }
+                () = &mut retiring, if !retired => {
+                    retired = true;
+                    http.retire();
                 }
                 _ = tuning.tick() => send_window.tune(&quic, !running.is_empty(), self.app.budget()),
             }

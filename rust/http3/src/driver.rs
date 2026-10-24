@@ -189,13 +189,24 @@ impl Driver {
     pub(crate) fn goaway(&mut self) {
         if self.goaway.is_none() && !self.ended {
             self.goaway = Some(self.next_request);
-            frame::put_header(
-                FrameType::GOAWAY,
-                varint::len(self.next_request) as u64,
-                &mut self.control.pending,
-            );
-            varint::put(self.next_request, &mut self.control.pending);
+            self.send_goaway(self.next_request);
         }
+    }
+
+    /// Server: a GOAWAY that refuses no request, as it names the highest client request stream ID.
+    pub(crate) fn retire(&mut self) {
+        if self.goaway.is_none() && !self.ended {
+            self.send_goaway(varint::MAX - 3);
+        }
+    }
+
+    fn send_goaway(&mut self, id: u64) {
+        frame::put_header(
+            FrameType::GOAWAY,
+            varint::len(id) as u64,
+            &mut self.control.pending,
+        );
+        varint::put(id, &mut self.control.pending);
     }
 
     /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and a drain bounds the rest.

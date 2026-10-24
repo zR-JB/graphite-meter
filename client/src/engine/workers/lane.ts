@@ -92,13 +92,12 @@ async function bodies(
   for (;;) {
     try {
       const sentAt = performance.now();
-      const ms = !timed
-        ? Infinity
-        : until === null
-          ? SHORT_BODY_MS
-          : Math.ceil(Math.max(SHORT_BODY_MS, until - performance.timeOrigin - sentAt));
+      const left = until === null ? null : until - performance.timeOrigin - sentAt;
+      const ms = !timed ? Infinity : Math.ceil(Math.max(SHORT_BODY_MS, left ?? 0));
       bodyEnd = timed ? sentAt + ms : null;
-      const response = await fetch(timed ? `${url}&ms=${ms}` : url, init);
+      // A body that ends with its stage retires an HTTP/3 connection, so the next stage's is fresh.
+      const last = left !== null && left >= SHORT_BODY_MS ? "&last=" : "";
+      const response = await fetch(timed ? `${url}&ms=${ms}${last}` : url, init);
       if (!response.ok || !response.body) {
         release(response);
         reports.flush();

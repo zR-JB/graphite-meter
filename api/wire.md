@@ -94,6 +94,10 @@ The plain `GET /download` also takes `ms=`, a positive whole number of milliseco
 comes first, `bytes` or that long after the server began it, without a `Content-Length` (HTTP/1.1 frames it chunked),
 so a lane ends on the server's clock and its connection stays reusable. HEAD and `bytes=0` answer no body either way.
 The browser client sends it over HTTP/2 and HTTP/3 only, as a proxy may re-chunk an HTTP/1.1 body without a length.
+A download marked `last=` (presence-based, like `datagrams=`), as the browser marks each body that ends with its
+stage, retires its HTTP/3 connection as it ends, at its deadline or cut: the server sends a `GOAWAY` that refuses no
+request, so the client takes the next stage's requests to a fresh connection whose congestion control starts over.
+Chrome's upload otherwise reuses the download's connection, whose Cubic sender left slow start during the download.
 
 `datagrams=` is presence-based: the bare `datagrams=` spelled above is the request, and so is
 any value the server cannot read. A spelling of zero or false (`0`, `false`, `off`, `no`, matched
@@ -128,11 +132,11 @@ A server-ended bus or session names its cause ([laneendings.txt](laneendings.txt
 reconnect. The browser acts only on `authentication required` (it asks for sign-in); the native client also redials
 idle and lifetime endings. The server ends a session with its `WT_CLOSE_SESSION` capsule and FIN, and stops reading
 the CONNECT stream (`STOP_SENDING` `WT_SESSION_GONE`) only after the peer's FIN or a second without it: Chromium and
-Firefox drop the code of a close whose `STOP_SENDING` arrives first. The server never closes an idle QUIC connection
-and answers no packet for one it has forgotten: it ends silently at the 30 s QUIC idle timeout, because Firefox forgets
-an origin's HTTP/3 on a graceful close or a stateless reset. At shutdown the server sends `GOAWAY`, gives connections up
-to 5 s to close on their own (a second after it ended their last session, so the session's code arrives first), then
-closes every remaining QUIC connection with `H3_NO_ERROR`.
+Firefox drop the code of a close whose `STOP_SENDING` arrives first. The server never closes an idle QUIC connection,
+retired or not, and answers no packet for one it has forgotten: it ends silently at the 30 s QUIC idle timeout,
+because Firefox forgets an origin's HTTP/3 on a graceful close or a stateless reset. At shutdown the server sends
+`GOAWAY`, gives connections up to 5 s to close on their own (a second after it ended their last session, so the
+session's code arrives first), then closes every remaining QUIC connection with `H3_NO_ERROR`.
 
 | Cause                        | WebSocket close                | WebTransport close          |
 | ---------------------------- | ------------------------------ | --------------------------- |

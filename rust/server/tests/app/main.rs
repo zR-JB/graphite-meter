@@ -16,7 +16,6 @@ use graphite_meter_server::{
     app::{App, Connection, Endpoint, Outcome},
     config::{self, Config, Loaded},
     exchange::Exchange,
-    lane::Work,
     transport::body::Body,
 };
 use http::{Request, Response, request::Builder};
@@ -62,11 +61,7 @@ fn empty(builder: Builder) -> Request<http_body_util::Full<Bytes>> {
 }
 
 fn connection(endpoint: Endpoint, peer: &str) -> Connection {
-    Connection {
-        endpoint,
-        peer: peer.parse().unwrap(),
-        work: Work::default(),
-    }
+    Connection::new(endpoint, peer.parse().unwrap())
 }
 
 async fn outcome<B: http_body::Body>(

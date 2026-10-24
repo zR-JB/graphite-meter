@@ -102,9 +102,9 @@ pub fn streams(query: Option<&str>) -> usize {
     })
 }
 
-/// `datagrams=` asks for datagrams unless it spells zero or false.
-pub fn datagrams(query: Option<&str>) -> bool {
-    let Some(value) = get(query, "datagrams") else {
+/// A presence-based switch such as `datagrams=`: set unless it spells zero or false.
+pub fn flag(query: Option<&str>, name: &str) -> bool {
+    let Some(value) = get(query, name) else {
         return false;
     };
     let value = value.trim();
@@ -185,7 +185,7 @@ mod tests {
             (Some("datagrams=Off"), false),
             (Some("datagrams=no"), false),
         ] {
-            assert_eq!(datagrams(query), asked, "{query:?}");
+            assert_eq!(flag(query, "datagrams"), asked, "{query:?}");
         }
     }
 }

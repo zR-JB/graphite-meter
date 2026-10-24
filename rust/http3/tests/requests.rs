@@ -296,6 +296,33 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
 }
 
 #[tokio::test]
+async fn a_retired_connection_serves_what_the_peer_still_sends_and_shuts_down_as_before()
+-> Result<(), TestError> {
+    let Served {
+        peers,
+        stop,
+        retire,
+        ..
+    } = pair(PLAIN).await?.serve(respond);
+    let (_driver, requests) = client(&peers);
+    retire.notify_one();
+    while !requests.going_away() {
+        yields().await;
+    }
+    // A raw request stream passes the client's own going-away check.
+    peers.get().await?;
+    jump(Duration::from_secs(60)).await;
+    yields().await;
+    assert!(
+        peers.client.close_reason().is_none(),
+        "a retired connection gets no close"
+    );
+    stop.notify_one();
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+    Ok(())
+}
+
+#[tokio::test]
 async fn stale_heads_end_and_idle_connections_get_no_close() -> Result<(), TestError> {
     let Served { peers, serving, .. } = pair(PLAIN).await?.serve(|_, _| async {});
     let (driver, _requests) = client(&peers);
