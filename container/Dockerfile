@@ -10,10 +10,10 @@ ARG PROFILE=release
 # Empty builds every TUI platform; CI and release requests build one per runner.
 ARG TUI_PLATFORM
 
-FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.0-slim-trixie@sha256:d802f03223b9e00604cd54574bcac1a4638914c43683d3f0afd6ebee35f25313 AS python
+FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.1-slim-trixie@sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51 AS python
 
 # The reviewed builder: legal/rust-platform-debian-trixie.json records what it links into each target.
-FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.1-trixie@sha256:7e9eb23ac694dda816c76933ab63b2703e6becbf3b10da90970124656788d47b AS rust-amd64
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.1-trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS rust-amd64
 COPY --from=python /usr/local /usr/local
 ENV LD_LIBRARY_PATH=/usr/local/lib \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
@@ -93,7 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=14.2.0-19+27+b1 mingw-w64-x86-64-dev=12.0.0-5 \
     && rm -rf /var/lib/apt/lists/*
 # Windows arm64 links with llvm-mingw, appended to PATH so Debian's cross tools keep their names.
-ADD --checksum=sha256:5f9c6ed95b2d4bdb2869a488c5fd5857fbdabcf288a0aa3eb1da43f6a08d8ab4 https://github.com/mstorsjo/llvm-mingw/releases/download/20261006/llvm-mingw-20261006-ucrt-ubuntu-22.04-x86_64.tar.xz /tmp/llvm-mingw.tar.xz
+ADD --checksum=sha256:55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335 https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64.tar.xz /tmp/llvm-mingw.tar.xz
 RUN mkdir /opt/llvm-mingw && tar -xJf /tmp/llvm-mingw.tar.xz --strip-components=1 -C /opt/llvm-mingw \
     && rm /tmp/llvm-mingw.tar.xz
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
