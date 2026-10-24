@@ -6,7 +6,7 @@ import { downloadRefused, REVOKED, refusal, restartMs, sessionClosed } from "./e
 test("every pinned refusal ends with its pinned reason, by code over HTTP and on a stream", async () => {
   const refusals = (await rows("refusals.txt")) as [string, string, string, FailureReason][];
   for (const [code, message, status, reason] of refusals) {
-    const retry = ["client-limit", "server-busy", "timeout"].includes(reason);
+    const retry = ["client-limit", "server-capacity", "timeout"].includes(reason);
     const expected = {
       reason,
       retry,
@@ -32,7 +32,7 @@ test("without a known code the status decides, and a stream refusal without one 
   expect([401, 429, 503, 0, 408, 500, 502, 400, 403, 409].map((status) => reason(status))).toEqual([
     "protocol-error",
     "client-limit",
-    "server-busy",
+    "server-capacity",
     "connection-lost",
     "connection-lost",
     "connection-lost",
@@ -42,7 +42,7 @@ test("without a known code the status decides, and a stream refusal without one 
     "protocol-error",
   ]);
   expect(reason(null)).toBe("protocol-error");
-  expect(reason(503, "constructor")).toBe("server-busy");
+  expect(reason(503, "constructor")).toBe("server-capacity");
   expect(downloadRefused(new Response(null, { status: 502 })).reason).toBe("protocol-error");
 });
 

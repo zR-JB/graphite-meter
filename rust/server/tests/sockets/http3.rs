@@ -133,13 +133,6 @@ impl Connection {
         serde_json::from_slice(&read(&mut body).await.unwrap()).unwrap()
     }
 
-    pub(super) async fn upload_id(&self) -> String {
-        self.json("POST", "/upload/session").await["uploadId"]
-            .as_str()
-            .unwrap()
-            .into()
-    }
-
     /// The code the server closed the connection with, if it did within `bound` of real time.
     pub(super) async fn closed_within(&self, bound: Duration) -> Option<Code> {
         match tokio::time::timeout(bound, self.quic.closed()).await {
@@ -257,7 +250,7 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
 async fn cancelling_an_idle_progress_stream_releases_its_handler() {
     let h3 = H3::start(&[]).await;
     let connection = h3.connect(transport(None)).await;
-    let id = connection.upload_id().await;
+    let id = h3.server.upload_id().await;
     let (progress, mut feed) = connection
         .send("GET", &format!("/upload/progress?id={id}"), b"")
         .await;
@@ -334,5 +327,31 @@ async fn connection_credit_reaches_the_reply_that_waited_longest() {
             .unwrap()
             .status(),
         200
+    );
+}
+
+#[tokio::test]
+async fn a_download_ends_on_the_server_s_clock_without_a_length() {
+    let h3 = H3::start(&[]).await;
+    let connection = h3.connect(transport(None)).await;
+    let started = std::time::Instant::now();
+    let (answer, mut body) = connection
+        .send("GET", &format!("{ENDLESS}&ms=50"), b"")
+        .await;
+    let read = read(&mut body).await.unwrap().len();
+    let elapsed = started.elapsed();
+    assert_eq!(
+        (answer.status(), answer.headers().get("content-length")),
+        (http::StatusCode::OK, None)
+    );
+    assert!(
+        read > 0 && elapsed >= Duration::from_millis(50) && elapsed < Duration::from_secs(2),
+        "{read} bytes in {elapsed:?}"
+    );
+    let (probe, _) = connection.send("GET", "/probe", b"").await;
+    assert_eq!(
+        probe.status(),
+        200,
+        "the connection serves the next request"
     );
 }

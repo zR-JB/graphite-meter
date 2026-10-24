@@ -5,8 +5,8 @@ This spec governs the message-based channels: the WebSocket latency bus (`/ws/pi
 datagram bus (`/wt/ping`), plus the WebTransport session routes, defined by their CONNECT URL (see [WebTransport
 routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also open a
 receiver-progress stream. The plain request/response HTTP endpoints (`/servers`, `/preflight`, `/probe`,
-`/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here:
-they use normal HTTP (query params, status codes, streaming bodies).
+`/lease`, `/download`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here, except
+where `/download` shares a query rule below: they use normal HTTP (query params, status codes, streaming bodies).
 
 The Rust server and terminal client and the TypeScript browser client share the conformance corpus
 `api/wire.testvectors.txt`.
@@ -68,8 +68,8 @@ network RTT. See [measurement definitions](../docs/MEASUREMENTS.md) for populati
 `GET /upload/progress` without its newline, and a heartbeat as an empty message. It has that route's owner check,
 reader replacement and records, and the socket credentials of `/ws/ping`; the peer sends nothing. A refused id, or
 a client at capacity, gets its `error` record as the only message. The socket closes normally after the terminal record. It holds none of the
-browser's HTTP/1.1 connections to the origin, which carry upload data instead. The browser opens it only on the
-upload's own origin, and only over confirmed HTTP/1.1, so the upload's client reads it.
+browser's HTTP/1.1 connections to the origin. The browser opens it on the server's discovery origin, with the lease
+that owns the upload, and only when discovery answered over confirmed HTTP/1.1.
 
 ## WebTransport routes
 
@@ -79,9 +79,9 @@ content it defines. Streams are raw bytes end to end.
 
 | Route          | Query                               | Streams                                                                                                                                                                                                                    | Datagrams                                                                                                                                  |
 | -------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/wt/ping`     | `token=`                            | none                                                                                                                                                                                                                       | the message bus above, one frame per datagram                                                                                              |
-| `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check                     | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
-| `/wt/upload`   | `id=&datagrams=&token=`             | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is refused, not served. The server opens one unidirectional stream on establishment carrying the progress feed      | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained                               |
+| `/wt/ping`     | `lease=`                            | none                                                                                                                                                                                                                       | the message bus above, one frame per datagram                                                                                              |
+| `/wt/download` | `bytes=&streams=&datagrams=&lease=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check                     | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
+| `/wt/upload`   | `id=&datagrams=&lease=`             | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is refused, not served. The server opens one unidirectional stream on establishment carrying the progress feed      | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained                               |
 
 `streams=` and `bytes=` are clamped, never rejected: a missing, non-numeric, or sub-1 `streams`
 is read as 1 and one above 16 as 16; a missing, non-numeric or negative `bytes` is read as 25 MiB
@@ -90,20 +90,24 @@ enforces the stream ceiling from the receiving side: the server stops reading th
 client stream with `STOP_SENDING` code 0, without an error frame, since a byte stream carries no
 channel to report one on.
 
+The plain `GET /download` also takes `ms=`, a positive whole number of milliseconds. Its body then ends at whichever
+comes first, `bytes` or that long after the server began it, without a `Content-Length` (HTTP/1.1 frames it chunked),
+so a lane ends on the server's clock and its connection stays reusable. HEAD and `bytes=0` answer no body either way.
+The browser client sends it over HTTP/2 and HTTP/3 only, as a proxy may re-chunk an HTTP/1.1 body without a length.
+
 `datagrams=` is presence-based: the bare `datagrams=` spelled above is the request, and so is
 any value the server cannot read. A spelling of zero or false (`0`, `false`, `off`, `no`, matched
 case-insensitively with surrounding whitespace ignored) is a request for no datagrams and is
 served none, the same rule `bytes=0` follows.
 
 Under authentication a CONNECT must present a credential before the upgrade:
-a socket ticket carried as `?token=`, or an `Authorization: Bearer` grant for native
-clients. See [socket credentials](#socket-credentials).
+its lease as `lease=`, or an `Authorization: Bearer` grant for native clients. See
+[socket credentials](#socket-credentials).
 
-The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
-over HTTP; only the measured bytes ride the session. The HTTP/3 origin's TCP side also answers these
-control routes, `/upload/checkpoint` and `/wt/session`, since a browser may fetch them there before it
-uses QUIC; it serves no transfer, and refuses one with `409 wrong-protocol` ([refusals](discovery.md#refusals)). The progress feed carries the same NDJSON
-records as `GET /upload/progress`; see the [upload contract](upload.md).
+The upload `id` is minted with the [lease](discovery.md#the-lease) and finalized by `DELETE /upload/progress?id=`
+over HTTP; only the measured bytes ride the session. The HTTP/3 origin's TCP side serves no control route and no
+transfer, and refuses a transfer with `409 wrong-protocol` ([refusals](discovery.md#refusals)). The progress feed
+carries the same NDJSON records as `GET /upload/progress`; see the [upload contract](upload.md).
 
 ### Lane endings
 
@@ -141,22 +145,11 @@ closes every remaining QUIC connection with `H3_NO_ERROR`.
 
 ## Socket credentials
 
-`POST /wt/session?target=<encoded HTTPS origin and /wt/ route>` mints a
-WebTransport ticket. `POST /ws/session?target=<encoded HTTPS origin and /ws/ route>`
-mints a WebSocket ticket; the target uses HTTPS even though the eventual socket
-URL uses WSS. Targets contain no user information, query, or fragment and must use
-the issuing server's configured hostname. The ticket binds the precise origin,
-port, route, requesting Origin header, principal and grant lifetime.
+A browser cannot set a field on a WebSocket or WebTransport dial, so its sockets carry the
+[lease](discovery.md#the-lease) as `lease=`, which admits them and, under authentication, signs them in as the
+sign-in that took the lease. The page's session or its measurement grant takes the lease; the reusable grant
+itself never enters a URL. A lease presented from another requesting `Origin` than the one that took it signs in
+nothing. It ends with its sign-in, and logout cancels the work it admitted.
 
-Both return `{ "token": "…", "expires": <epoch milliseconds> }`. Tickets are single-use
-and short-lived ([limits](discovery.md#browser-measurement-authorization)). Any presentation
-spends a ticket; one presented at another destination or from another requesting origin is
-refused. Logout cancels associated work. With authentication off,
-minting returns exactly `{ "token": "", "expires": 0 }`.
-
-The existing same-origin browser session or an authorized browser measurement grant
-may mint a ticket. Cross-origin mint requests use the grant in an Authorization
-header with cookies omitted. The reusable grant never enters a URL. Browser socket
-constructors carry only the one-use ticket in `?token=`. Native bearer grants remain
-eligible for direct authenticated socket connections, under their existing origin
-rules; they do not use the browser-grant mint path.
+Native bearer grants remain eligible for direct authenticated socket connections, under their existing origin rules,
+with the lease in the `Graphite-Meter-Lease` field.

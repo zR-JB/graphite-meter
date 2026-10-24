@@ -64,7 +64,17 @@ export const preflight = (throughput: object[], latency: object[] = []) => ({
   engineVersion: "1.0.0",
   generation: "g1",
   capabilities: { throughput, latency, uploadCheckpoint: true, maxStageMs: 300_000 },
+  lease: { maxMeasurements: 32, maxSessions: 8 },
 });
+
+let leases = 0;
+/** A lease granting what was asked, with as many upload ids. */
+export function granted(init: RequestInit): Exclude<Answer, string> {
+  if (init.method === "DELETE") return { status: 204 };
+  const { measurements, sessions, uploads } = JSON.parse(String(init.body));
+  const ids = Array.from({ length: uploads }, () => `gmu_${++leases}`);
+  return { body: { token: "gml_t", measurements, sessions, uploads: ids } };
+}
 
 /** One answer: a JSON body after `afterMs` with the hop the browser reports (h2 unless named, null for none), a hang, or unreachable. */
 export type Answer =
@@ -82,8 +92,12 @@ const settle = async () => {
   for (let turn = 0; turn < 4; turn++) await new Promise((resolve) => setImmediate(resolve));
 };
 
-/** Fake timers from page time 0 and a network answering each request as `route` says, both until `restore`. */
-export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
+/** Fake timers from page time 0 and a network answering each request as `route` says, and leases as `lease` does,
+ *  both until `restore`. */
+export function fakeNet(
+  route: (url: URL, init: RequestInit) => Answer,
+  lease: (url: URL, init: RequestInit) => Answer = (_, init) => granted(init),
+) {
   jest.useFakeTimers();
   Object.assign(globalThis, { BUILD: { clientVersion: "v9.9.9" } });
   const requests: { url: URL; init: RequestInit; at: number }[] = [];
@@ -94,7 +108,7 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
     const signal = init.signal ?? new AbortController().signal;
     signal.throwIfAborted();
     requests.push({ url, init, at: performance.now() });
-    const answer = route(url, init);
+    const answer = (url.pathname === "/lease" ? lease : route)(url, init);
     if (answer === "unreachable") throw new TypeError("Failed to fetch");
     if (answer === "hang")
       return new Promise<never>((_, reject) =>
@@ -152,8 +166,8 @@ export class FakeBuses {
       timer = setTimeout(() => {
         const rttMs = this.rttMs;
         if (rttMs === null) return;
-        if (first) events.ready();
-        events.outcomes([
+        if (first) bus.events.ready();
+        bus.events.outcomes([
           {
             rttMs,
             timedOut: false,
@@ -174,6 +188,12 @@ export class FakeBuses {
       dispose() {
         bus.disposed = true;
         clearTimeout(timer);
+      },
+      renew() {},
+      adopt(next) {
+        if (bus.disposed) return false;
+        bus.events = next;
+        return true;
       },
     };
   };

@@ -1,6 +1,7 @@
 //! Query parameters and URL-encoded forms; transfer parameters clamped (`api/wire.md#webtransport-routes`).
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use std::time::Duration;
 
 /// The transfer size when `bytes=` is missing or unreadable.
 const DEFAULT_TRANSFER_BYTES: u64 = 25 << 20;
@@ -87,6 +88,12 @@ pub fn transfer_bytes(query: Option<&str>) -> u64 {
     }
 }
 
+/// `ms=`: a positive whole number of milliseconds, else none.
+pub fn transfer_ms(query: Option<&str>) -> Option<Duration> {
+    let ms = get(query, "ms").as_deref().and_then(integer)?;
+    (ms > 0).then(|| Duration::from_millis(ms as u64))
+}
+
 /// `streams=`: missing, non-numeric or below one reads as one, and above the cap as the cap.
 pub fn streams(query: Option<&str>) -> usize {
     let streams = get(query, "streams").as_deref().and_then(integer);
@@ -125,7 +132,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn transfer_sizes_and_stream_counts_are_clamped_never_refused() {
+    fn transfer_sizes_durations_and_stream_counts_are_clamped_never_refused() {
         for (query, bytes) in [
             (None, DEFAULT_TRANSFER_BYTES),
             (Some("bytes="), DEFAULT_TRANSFER_BYTES),
@@ -138,6 +145,15 @@ mod tests {
             (Some("bytes=68719476737"), MAX_TRANSFER_BYTES),
         ] {
             assert_eq!(transfer_bytes(query), bytes, "{query:?}");
+        }
+        for (query, ms) in [
+            (None, None),
+            (Some("ms=0"), None),
+            (Some("ms=-5"), None),
+            (Some("ms=soon"), None),
+            (Some("ms=50"), Some(Duration::from_millis(50))),
+        ] {
+            assert_eq!(transfer_ms(query), ms, "{query:?}");
         }
         for (query, streams) in [
             (None, 1),

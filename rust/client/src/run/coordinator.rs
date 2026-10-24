@@ -502,8 +502,8 @@ impl Participant {
                 let child = token.child_token();
                 let session = UploadSession::open(
                     client,
+                    &server.origin,
                     path,
-                    paths.control,
                     plans,
                     spacing(Direction::Up),
                     replaced,

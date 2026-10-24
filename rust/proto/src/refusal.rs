@@ -21,7 +21,7 @@ table! {
         Idle => ("idle", "idle", StatusCode::REQUEST_TIMEOUT, FailureReason::Timeout),
         Revoked => ("revoked", "authentication required", StatusCode::FORBIDDEN, FailureReason::SignInRequired),
         ClientLimit => ("client-limit", "measurement limit for this client reached", StatusCode::TOO_MANY_REQUESTS, FailureReason::ClientLimit),
-        ServerBusy => ("server-busy", "measurement capacity reached", StatusCode::SERVICE_UNAVAILABLE, FailureReason::ServerBusy),
+        ServerCapacity => ("server-capacity", "measurement capacity reached", StatusCode::SERVICE_UNAVAILABLE, FailureReason::ServerCapacity),
         WrongProtocol => ("wrong-protocol", "this port serves transfers over HTTP/3, not TCP", StatusCode::CONFLICT, FailureReason::PathFailed),
     }
 }

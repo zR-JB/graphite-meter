@@ -19,7 +19,7 @@ async fn an_http3_upload_is_not_bound_by_the_floor_window_on_a_delayed_link() {
         .await
         .unwrap();
     let connection = h3.connect_via(link.address, transport(None)).await;
-    let id = connection.upload_id().await;
+    let id = h3.server.upload_id().await;
     let size = 4 * KIB * KIB;
     let granted = connection.quic.stats().frame_rx.max_data;
     let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;

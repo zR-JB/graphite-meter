@@ -5,7 +5,6 @@ import type { FeedRecord } from "../../protocol/messages";
 import { checkpoint as counters } from "../../protocol/progress";
 import { ROUTES } from "../../protocol/routes";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
-import { Tickets, withToken } from "./dial";
 import { lost, refusal, refused, restartMs, REVOKED, socketBound } from "./endings";
 import { FINAL_GRACE_MS, parse, readRecords } from "./records";
 import { abortable, delay } from "../run/clock";
@@ -56,7 +55,6 @@ export class Receiver {
   readonly #feed: string;
   readonly #checkpoint: string;
   readonly #carried: boolean;
-  readonly #tickets = new Tickets();
   readonly #closed = new AbortController();
   readonly #opened = Promise.withResolvers<void>();
   /** Aborted by a terminal record that passed the guard. */
@@ -235,17 +233,9 @@ export class Receiver {
   async #listen(signal: AbortSignal): Promise<End | null> {
     let socket: WebSocket;
     try {
-      const ticket = this.#auth.ticket(this.#origin, ROUTES.wsProgress);
-      const minted = ticket ? await this.#tickets.take(ticket, signal) : null;
-      if (signal.aborted) return null;
-      if (minted?.type === "ended") return { ending: minted.ending, broken: false };
-      if (minted?.type === "broken") return { ending: lost(minted.detail), broken: true };
       const feed = `${this.#origin.replace(/^http/, "ws")}${ROUTES.wsProgress}?id=${encodeURIComponent(this.id)}`;
-      socket = new WebSocket(withToken(feed, minted?.token ?? ""));
-      // However a WebSocket dial ends, it may have reached the server.
-      if (minted) this.#tickets.spent(minted.token);
+      socket = new WebSocket(this.#auth.socket(feed));
     } catch (error) {
-      if (error instanceof SignInRequired) return { ending: SIGNED_OUT, broken: false };
       return {
         ending: { reason: "protocol-error", retry: false, detail: String(error) },
         broken: false,

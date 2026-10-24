@@ -26,6 +26,7 @@ import {
   type Role,
   type ServerAuth,
   type TestConfig,
+  SignInRequired,
 } from "../types";
 import {
   ApprovalLimitError,
@@ -36,6 +37,7 @@ import {
   type Grant,
 } from "./auth";
 import { CHECK_FAILED } from "./checks";
+import { LeaseRefused, type Need } from "./lease";
 import {
   createConnection,
   FRESH_MS,
@@ -46,7 +48,7 @@ import {
 import { createLimiter } from "./limiter";
 import { CoverageError, type PageConfig, type PageSession } from "./page";
 import { allowsOrigin, parseSelection, portable, selectionText } from "./paths";
-import { describeStreams, needsPings, planError, type PlanServer } from "./streams";
+import { describeStreams, needsPings, planError, planStreams, type PlanServer } from "./streams";
 
 interface ServersEnv {
   page: PageConfig;
@@ -56,6 +58,7 @@ interface ServersEnv {
   setTransports(transports: TestConfig["transports"]): void;
   /** Checks and their timers may run: the app is booted and visible, and no run or start is pending. */
   active: Read<boolean>;
+  hidden: Read<boolean>;
   online: Read<boolean>;
   /** The server whose latency the console pins, if any. */
   latencyPin: Read<string | null>;
@@ -113,18 +116,25 @@ export interface Servers {
   showMetadata(open: boolean): void;
   /** The page's sign-in and every selected grant must cover `requiredMs`; a CoverageError carries the words to show. */
   authorize(requiredMs: number, signal: AbortSignal): Promise<void>;
-  /** Re-reads every selected server's discovery and re-checks stale paths; an AbortError means a reload or approval replaced a connection. */
-  prepare(
-    signal: AbortSignal,
-  ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
+  /** Re-reads every selected server's discovery, re-checks stale paths and takes each lease to the run's ceilings,
+   *  which `release` lowers again; an AbortError means a reload or approval replaced a connection. */
+  prepare(signal: AbortSignal, plan: TestConfig): Promise<Prepared>;
   /** Whether a run lasting `totalMs` from now ends before every sign-in `authorize` checked. */
   fits(totalMs: number): boolean;
-  /** A run failed on one server, or as a whole with null: a refused sign-in is required again, other failed paths are re-checked. */
+  /** A run failed on one server, or as a whole with null: a refused sign-in is required again, a path that failed is checked at the next start. */
   recheck(
     failure: { serverId: string; scope: Role; reason: FailureReason; message: string } | null,
   ): void;
+  proved(serverId: string, roles: readonly Role[]): void;
   resume(): void;
   dispose(): void;
+}
+
+export interface Prepared {
+  servers: PreparedServer[];
+  dropped: DroppedServer[];
+  focus: string;
+  release(): void;
 }
 
 const IDLE: Approval = { state: "idle" };
@@ -213,6 +223,32 @@ function reserveWindow(signal: AbortSignal): { navigate(url: string): void; clos
   };
 }
 
+/** The most a run holds at once on each server: a stage's lanes, or a session per direction, and an upload's feed and
+ *  finalize; the lease holds the bus beside it. */
+function ceilings(config: TestConfig, servers: readonly PreparedServer[]): Map<string, Need> {
+  const most = new Map<string, Need>(
+    servers.map(({ server }) => [server.id, { measurements: 0, sessions: 0 }]),
+  );
+  for (const activity of stageActivities(config)) {
+    if (!activity.transfer.length) continue;
+    const plan = planStreams(servers, activity, config.transferStreams);
+    for (const { server, throughput } of servers) {
+      const lanes = plan.get(server.id)!;
+      const session = throughput.target.transport !== "fetch-stream";
+      const sessions = session ? activity.transfer.length : 0;
+      const carried = activity.transfer.reduce(
+        (sum, direction) => sum + lanes[direction].planned,
+        0,
+      );
+      const control = activity.transfer.includes("up") ? 2 : 0;
+      const need = most.get(server.id)!;
+      need.measurements = Math.max(need.measurements, (session ? sessions : carried) + control);
+      need.sessions = Math.max(need.sessions, sessions);
+    }
+  }
+  return most;
+}
+
 export function stageLimit(servers: readonly { name: string; discovery: Discovery | null }[]) {
   let limit = { ms: MAX_STAGE_LIMIT_MS, server: null as string | null };
   for (const { name, discovery } of servers)
@@ -272,6 +308,7 @@ export function createServers(env: ServersEnv): Servers {
     limiter,
     openProbeChannel: env.openProbeChannel,
     active: computed(() => env.active() && !loading()),
+    hidden: env.hidden,
     online: env.online,
     metadata,
     latencyServer,
@@ -369,6 +406,11 @@ export function createServers(env: ServersEnv): Servers {
     if (loadError.peek() && !loading.peek() && env.active.peek()) void load();
   };
   let wasOnline = env.online.peek();
+  // A page leaving ends its leases at once, so another tab behind its address need not wait out their 30 s.
+  const leave = () => {
+    for (const connection of connections.peek().values()) connection.link.lease.end();
+  };
+  addEventListener("pagehide", leave);
   const stopOnline = effect(() => {
     const online = env.online();
     if (online && !wasOnline) untrack(reloadFailed);
@@ -513,8 +555,10 @@ export function createServers(env: ServersEnv): Servers {
     signInEnd = earliest;
   }
 
-  async function prepare(signal: AbortSignal) {
+  async function prepare(signal: AbortSignal, plan: TestConfig) {
     const chosen = chosenConnections();
+    // A check at Start adopts the renewed bus too, so the run dials one connection.
+    for (const connection of chosen) connection.link.bus.renew();
     // One judgment of freshness: what the checks keep is what the run may use, however long they take.
     const since = now() - FRESH_MS;
     await Promise.all(chosen.map((connection) => connection.check({ since, signal })));
@@ -534,8 +578,41 @@ export function createServers(env: ServersEnv): Servers {
       // Evidence lost while the checks ran, as to a network change, leaves no message of its own.
       dropped.push({ server: view.server, reason, message: view.message ?? CHECK_FAILED });
     }
-    const shown = servers.find(({ server }) => server.id === latencyServer.peek()) ?? servers[0];
-    return { servers, dropped, focus: shown?.server.id ?? "" };
+    // The run's admission is taken now, so a server without room for it leaves before anything is measured.
+    const needs = ceilings(plan, servers);
+    const uploads = stageActivities(plan).filter(({ transfer }) => transfer.includes("up")).length;
+    const releases: (() => void)[] = [];
+    const release = () => {
+      for (const each of releases.splice(0)) each();
+    };
+    const leased = await Promise.all(
+      servers.map(async (ready) => {
+        try {
+          releases.push(await ready.link.lease.hold(needs.get(ready.server.id)!, signal, uploads));
+          return ready;
+        } catch (error) {
+          if (signal.aborted) return null;
+          const reason: FailureReason =
+            error instanceof LeaseRefused
+              ? error.reason
+              : error instanceof SignInRequired
+                ? "sign-in-required"
+                : "path-failed";
+          if (reason === "sign-in-required")
+            connections.peek().get(ready.server.id)?.requireSignIn();
+          const message = error instanceof Error ? error.message : CHECK_FAILED;
+          dropped.push({ server: ready.server, reason, message });
+          return null;
+        }
+      }),
+    );
+    if (signal.aborted) {
+      release();
+      signal.throwIfAborted();
+    }
+    const kept = leased.filter((ready) => ready !== null);
+    const shown = kept.find(({ server }) => server.id === latencyServer.peek()) ?? kept[0];
+    return { servers: kept, dropped, focus: shown?.server.id ?? "", release };
   }
 
   return {
@@ -600,20 +677,24 @@ export function createServers(env: ServersEnv): Servers {
     fits: (totalMs) => signInEnd === null || now() + totalMs <= signInEnd,
     recheck(failure) {
       if (!failure) {
-        for (const connection of chosenConnections()) connection.invalidate(ROLES);
+        for (const connection of chosenConnections()) connection.invalidate(ROLES, true);
         return;
       }
       const connection = connections.peek().get(failure.serverId);
       if (failure.reason === "sign-in-required")
         connection?.requireSignIn(failure.message || undefined);
-      else connection?.invalidate([failure.scope]);
+      // A channel that worked and then broke says nothing against its path; the discovery re-read watches the server.
+      else if (failure.reason === "path-failed" || failure.reason === "protocol-error")
+        connection?.invalidate([failure.scope], true);
     },
+    proved: (serverId, roles) => connections.peek().get(serverId)?.proved(roles),
     resume() {
       reloadFailed();
       for (const connection of connections.peek().values()) connection.resume();
     },
     dispose() {
       stopOnline();
+      removeEventListener("pagehide", leave);
       lifetime.abort();
       loadRequest?.abort();
       cancelSignIn();

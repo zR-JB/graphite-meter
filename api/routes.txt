@@ -7,7 +7,7 @@
 #   path = the exact path the server mounts and the client requests
 #   kind = http | ws | wt | auth, the transport that reaches the route. A wt
 #          route is an HTTP/3 extended-CONNECT session; under authentication it
-#          carries a bearer grant or a single-use token minted at /wt/session.
+#          carries a bearer grant or its lease's token.
 #          An auth route is a sign-in route, answered at the public HTTPS origin
 #          only while authentication is on.
 #
@@ -22,10 +22,8 @@ preflight | /preflight | http
 probe | /probe | http
 download | /download | http
 upload | /upload | http
-uploadSession | /upload/session | http
 uploadProgress | /upload/progress | http
-wtSession | /wt/session | http
-wsSession | /ws/session | http
+lease | /lease | http
 ping | /ws/ping | ws
 wsProgress | /ws/progress | ws
 wtDownload | /wt/download | wt

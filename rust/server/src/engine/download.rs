@@ -4,6 +4,7 @@ use super::{Meter, Transfer};
 use crate::limits::{Budget, Lease};
 use bytes::Bytes;
 use std::sync::Arc;
+use tokio::time::Instant;
 
 /// The block is this large, as is the largest chunk a source hands out.
 pub const BLOCK_BYTES: usize = 256 << 10;
@@ -38,6 +39,7 @@ impl Block {
             block: self.bytes.clone(),
             remaining: bytes,
             transfer,
+            until: None,
         }
     }
 
@@ -46,15 +48,24 @@ impl Block {
     }
 }
 
-/// A source hands out one download's remaining payload as slices of the block without copying.
+/// A source hands out one download's remaining payload as slices of the block without copying, until its deadline.
 #[derive(Debug, Clone)]
 pub struct DownloadSource {
     block: Bytes,
     remaining: u64,
     transfer: Option<Arc<Transfer>>,
+    until: Option<Instant>,
 }
 
 impl DownloadSource {
+    /// Hands out nothing from `until` on, so the download ends there on the server's clock.
+    pub fn ending_at(self, until: Instant) -> Self {
+        Self {
+            until: Some(until),
+            ..self
+        }
+    }
+
     pub fn next(&mut self, max: usize) -> Option<Bytes> {
         let chunk = self.peek(max)?;
         self.remaining -= chunk.len() as u64;
@@ -63,6 +74,9 @@ impl DownloadSource {
     }
 
     pub fn peek(&self, max: usize) -> Option<Bytes> {
+        if self.ended() {
+            return None;
+        }
         let remaining = usize::try_from(self.remaining).unwrap_or(usize::MAX);
         let length = remaining.min(max).min(self.block.len());
         (length > 0).then(|| self.block.slice(..length))
@@ -77,6 +91,15 @@ impl DownloadSource {
 
     pub fn remaining(&self) -> u64 {
         self.remaining
+    }
+
+    pub fn ended(&self) -> bool {
+        self.remaining == 0 || self.until.is_some_and(|until| Instant::now() >= until)
+    }
+
+    /// The exact length, unless a deadline may end it sooner.
+    pub fn length(&self) -> Option<u64> {
+        self.until.is_none().then_some(self.remaining)
     }
 }
 

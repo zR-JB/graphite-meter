@@ -3,7 +3,7 @@
 
 use std::{process::Stdio, time::Duration};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     process::{Child, Command},
     time::timeout,
@@ -46,12 +46,24 @@ async fn finished(child: Child) -> (Option<i32>, String, String) {
     )
 }
 
+/// A request's path, its body read past.
 async fn path(stream: &mut TcpStream) -> Option<String> {
-    graphite_meter_testkit::read_head(stream)
-        .await?
-        .split(' ')
-        .nth(1)
-        .map(str::to_owned)
+    let head = graphite_meter_testkit::read_head(stream).await?;
+    let length = head.lines().find_map(|line| {
+        let line = line.to_ascii_lowercase();
+        line.strip_prefix("content-length: ")?.trim().parse().ok()
+    });
+    stream
+        .read_exact(&mut vec![0; length.unwrap_or(0)])
+        .await
+        .ok()?;
+    let target = head.split(' ').nth(1)?;
+    Some(
+        target
+            .split_once('?')
+            .map_or(target, |(path, _)| path)
+            .to_owned(),
+    )
 }
 
 /// A peer at the returned URL answering each request by its path: a 200 JSON body, or `refusal`.
@@ -102,8 +114,10 @@ async fn refusing_downloads() -> String {
             r#"{"server":{"name":"A","location":""},"engineVersion":"1","generation":"1","#,
             r#""capabilities":{"uploadCheckpoint":true,"maxStageMs":300000,"#,
             r#""throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"#,
-            r#""latency":[{"baseUrl":".","transport":"websocket"}]}}"#
+            r#""latency":[{"baseUrl":".","transport":"websocket"}]},"#,
+            r#""lease":{"maxMeasurements":32,"maxSessions":8}}"#
         ),
+        "/lease" => r#"{"token":"t","measurements":99,"sessions":99,"uploads":[]}"#,
         "/probe" => {
             r#"{"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}"#
         }

@@ -8,7 +8,10 @@ import { handshakes, THROTTLED } from "../net/webtransport";
 import { answered } from "./endings";
 import {
   SignInRequired,
+  type BusSlot,
   type LatencyBus,
+  type LatencyTarget,
+  type OpenProbeChannel,
   type ProbeChannelEvents,
   type ProbeChannelOptions,
 } from "../types";
@@ -17,7 +20,7 @@ import {
 const STOP_MARGIN_MS = 250;
 
 export function openProbeChannel(
-  { target, auth, intervalMs, maxInFlight }: ProbeChannelOptions,
+  { target, auth, control, intervalMs, maxInFlight }: ProbeChannelOptions,
   events: ProbeChannelEvents,
 ): LatencyBus {
   const websocket = target.transport === "websocket";
@@ -26,6 +29,8 @@ export function openProbeChannel(
   /** A window is open or draining, so cutting the bus off leaves its population incomplete. */
   let measured = false;
   let drain: { promise: Promise<void>; acknowledged: AbortController } | null = null;
+  let remeasured = false;
+  let stops = 0;
   /** A new owner is told at once that the bus answers on its connection, or why it stalled. */
   let answering = false;
   let stall: string | null = null;
@@ -45,7 +50,7 @@ export function openProbeChannel(
     redials--;
     waiting = true;
     // Asking over HTTP dials nothing, so a restarting server is asked until it answers.
-    await answered(target.origin, auth, released.signal);
+    await answered(control, auth, released.signal);
     waiting = false;
     if (stall !== null && !released.signal.aborted) {
       dialing = !websocket;
@@ -103,8 +108,13 @@ export function openProbeChannel(
         dialing = false;
         return data.opened || handshakes.failed();
       case "drained":
-        measured = false;
+        if (data.id !== stops) return;
+        if (!remeasured) measured = false;
         return drain?.acknowledged.abort();
+      case "renewing":
+        answering = false;
+        dialing = !websocket;
+        return;
     }
   };
   worker.onerror = ({ message }) => {
@@ -115,13 +125,11 @@ export function openProbeChannel(
   try {
     if (!websocket && handshakes.throttled.peek()) throw new Error(THROTTLED);
     const url = `${websocket ? target.origin.replace(/^http/, "ws") : target.origin}${route}`;
-    const ticket = auth.ticket(target.origin, route);
     dialing = !websocket;
     worker.postMessage({
       type: "start",
-      url,
+      url: auth.socket(url),
       transport: target.transport,
-      ticket,
       intervalMs,
       maxInFlight,
     } satisfies ProbeCommand);
@@ -135,6 +143,7 @@ export function openProbeChannel(
     measure() {
       if (released.signal.aborted) return;
       measured = true;
+      remeasured = drain !== null;
       worker.postMessage({ type: "measure" } satisfies ProbeCommand);
     },
     pace(intervalMs, maxInFlight) {
@@ -143,12 +152,14 @@ export function openProbeChannel(
     },
     stop() {
       if (released.signal.aborted) return Promise.resolve();
-      if (drain) return drain.promise;
-      worker.postMessage({ type: "stop" } satisfies ProbeCommand);
+      if (drain && !remeasured) return drain.promise;
+      drain?.acknowledged.abort();
+      remeasured = false;
+      worker.postMessage({ type: "stop", id: ++stops } satisfies ProbeCommand);
       const acknowledged = new AbortController();
       const bound = AbortSignal.any([released.signal, acknowledged.signal]);
       const promise = delay(DEADLINE_CEILING_MS + STOP_MARGIN_MS, bound).then(() => {
-        drain = null;
+        if (drain?.promise === promise) drain = null;
         if (!bound.aborted) cutOff();
       });
       drain = { promise, acknowledged };
@@ -158,6 +169,9 @@ export function openProbeChannel(
       if (released.signal.aborted) return;
       if (incomplete) cutOff();
       else release();
+    },
+    renew() {
+      if (!released.signal.aborted) worker.postMessage({ type: "renew" } satisfies ProbeCommand);
     },
     adopt(next) {
       if (released.signal.aborted) return false;
@@ -170,4 +184,44 @@ export function openProbeChannel(
       return true;
     },
   };
+}
+
+export const IDLE_INTERVAL_MS = 1_000;
+
+export function createBusSlot(open: OpenProbeChannel, parked: ProbeChannelEvents): BusSlot {
+  let held: { target: LatencyTarget; bus: LatencyBus } | null = null;
+  const slot: BusSlot = {
+    adopt(target, events) {
+      if (held?.target.id !== target.id) return null;
+      if (held.bus.adopt(events)) return held.bus;
+      held = null;
+      return null;
+    },
+    take(options, events) {
+      const adopted = slot.adopt(options.target, events);
+      if (adopted) {
+        adopted.pace(options.intervalMs, options.maxInFlight);
+        return adopted;
+      }
+      slot.dispose();
+      const bus = open(options, events);
+      held = { target: options.target, bus };
+      return bus;
+    },
+    renew: () => held?.bus.renew(),
+    park() {
+      const bus = held?.bus;
+      if (!bus) return;
+      if (!bus.adopt(parked)) return void (held = null);
+      if (held?.bus !== bus) return;
+      void bus.stop();
+      bus.pace(IDLE_INTERVAL_MS, 2);
+    },
+    dispose(bus = held?.bus) {
+      if (!held || held.bus !== bus) return;
+      held.bus.dispose();
+      held = null;
+    },
+  };
+  return slot;
 }

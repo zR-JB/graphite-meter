@@ -1,5 +1,6 @@
 // Fakes for driving a real run: page time that moves only when a test says so, and servers reporting at a fixed rate.
 import type {
+  Link,
   Checkpoint,
   Discovery,
   FetchTarget,
@@ -68,6 +69,7 @@ export interface Peer {
   latency?: boolean;
   silent?(activity: Activity, measuredMs: number, dir: "down" | "up"): boolean;
   prepare?(activity: Activity, events: StageEvents): void | Promise<void>;
+  replanned?(): void;
   measure?(events: StageEvents, activity: Activity): void;
   finish?(events: StageEvents): void | Promise<void>;
   discard?(events: StageEvents, incomplete: boolean): void;
@@ -107,6 +109,7 @@ export function prepared(id: string, latency: boolean, signedOut = false): Prepa
     server: { id, url: origin, name: id },
     auth: { ended: async () => signedOut } as Partial<ServerAuth> as ServerAuth,
     discovery: { engineVersion: "test" } as Discovery,
+    link: { bus: { park() {}, renew() {} }, workers: {} } as unknown as Link,
     throughput: { target: fetch, fetch, probe, browserProtocol: "http/1.1", ...verified },
     latency: latency
       ? {
@@ -149,6 +152,9 @@ export function resources(
     async prepare() {
       calls.push(`begin:${tag}`);
       await peer.prepare?.(activity, events);
+    },
+    replanned() {
+      peer.replanned?.();
     },
     measure() {
       measuring = true;

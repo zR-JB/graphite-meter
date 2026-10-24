@@ -111,7 +111,7 @@ fn routes_match_whole_paths_only() {
 
 #[test]
 fn routes_dispatch_their_methods_and_leave_head_and_options_to_the_router() {
-    let methods: [(&[&str], &[&str]); 4] = [
+    let methods: [(&[&str], &[&str]); 5] = [
         (
             &["GET"],
             &[
@@ -123,17 +123,9 @@ fn routes_dispatch_their_methods_and_leave_head_and_options_to_the_router() {
                 "/ws/progress",
             ],
         ),
-        (
-            &["POST"],
-            &[
-                "/upload",
-                "/upload/session",
-                "/upload/checkpoint",
-                "/wt/session",
-                "/ws/session",
-            ],
-        ),
+        (&["POST"], &["/upload", "/upload/checkpoint"]),
         (&["GET", "DELETE"], &["/upload/progress"]),
+        (&["POST", "DELETE"], &["/lease"]),
         (&["CONNECT"], &["/wt/download", "/wt/upload", "/wt/ping"]),
     ];
     for (methods, paths) in methods {

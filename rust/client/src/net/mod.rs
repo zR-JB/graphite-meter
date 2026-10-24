@@ -14,11 +14,13 @@ pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 
 pub const UNREACHABLE: &str = "Could not reach this test server";
 
+use bytes::Bytes;
 use conn::{Answer, Failed};
 use graphite_meter_net::{Connector, Pool, Proxy, Verify, lock};
 use graphite_meter_proto::{
     discovery::{IpFamily, Probe, Protocol},
     lane::LaneEnding,
+    lease::{LEASE_HEADER, Lease, LeaseRequest},
     origin::{Origin, Scheme},
     refusal::Refusal,
     route::Route,
@@ -34,7 +36,7 @@ use std::{
 };
 use tokio::{
     runtime::Handle,
-    time::{Instant, timeout_at},
+    time::{Instant, timeout, timeout_at},
 };
 
 /// How long a control request may take, its answer's body included, and a session or bus to open.
@@ -51,7 +53,15 @@ struct Shared {
     connector: Connector,
     verify: Verify,
     grants: Mutex<Grants>,
+    leases: Mutex<Leases>,
     runtimes: Arc<Pool>,
+}
+
+/// Each server's lease and what it holds, and the server whose lease each of its targets is presented.
+#[derive(Default)]
+struct Leases {
+    held: HashMap<Origin, (HeaderValue, LeaseRequest)>,
+    servers: HashMap<Origin, Origin>,
 }
 
 /// Each signed-in server's grant, and the server whose grant each enrolled target takes.
@@ -74,6 +84,7 @@ pub struct Request {
     pub origin: Origin,
     pub route: Route,
     pub query: Vec<(&'static str, String)>,
+    pub body: Bytes,
 }
 
 impl Request {
@@ -83,6 +94,7 @@ impl Request {
             origin: origin.clone(),
             route,
             query: Vec::new(),
+            body: Bytes::new(),
         }
     }
 }
@@ -108,6 +120,7 @@ impl Client {
             connector,
             verify,
             grants: Mutex::default(),
+            leases: Mutex::default(),
             runtimes,
         });
         Self {
@@ -200,6 +213,83 @@ impl Client {
         }
     }
 
+    /// Takes or resizes `server`'s lease at its discovery origin, presented from then on to it and `targets`; answers
+    /// what it holds and the upload IDs `grant` asks to mint.
+    pub async fn lease(
+        &self,
+        server: &Origin,
+        targets: &[Origin],
+        grant: LeaseRequest,
+    ) -> Result<Lease, Fault> {
+        {
+            let mut leases = lock(&self.shared.leases);
+            for target in targets.iter().chain([server]) {
+                leases.servers.insert(target.clone(), server.clone());
+            }
+        }
+        let body = serde_json::to_vec(&grant).expect("lease requests serialize");
+        let request = Request {
+            body: body.into(),
+            ..Request::new(Method::POST, server, Route::Lease)
+        };
+        let lease = self
+            .json(Protocol::Negotiated, request, Lease::decode)
+            .await?;
+        let mut token = HeaderValue::from_str(&lease.token)
+            .map_err(|_| Fault::Malformed("the lease token fits no header".into()))?;
+        token.set_sensitive(true);
+        let held = LeaseRequest {
+            uploads: 0,
+            ..grant
+        };
+        lock(&self.shared.leases)
+            .held
+            .insert(server.clone(), (token, held));
+        Ok(lease)
+    }
+
+    /// A new upload ID, minted with `server`'s lease, which keeps what it holds.
+    pub async fn upload_id(&self, server: &Origin) -> Result<String, Fault> {
+        let held = lock(&self.shared.leases)
+            .held
+            .get(server)
+            .map(|held| held.1);
+        let grant = held.ok_or_else(|| Fault::Malformed("no lease to mint an upload ID".into()));
+        let grant = grant?;
+        let minted = self
+            .lease(
+                server,
+                &[],
+                LeaseRequest {
+                    uploads: 1,
+                    ..grant
+                },
+            )
+            .await?;
+        let id = minted.uploads.into_iter().next();
+        id.ok_or_else(|| Fault::Malformed("the lease minted no upload ID".into()))
+    }
+
+    /// Ends every lease this client holds, each within a second.
+    pub async fn end_leases(&self) {
+        let servers: Vec<_> = lock(&self.shared.leases).held.keys().cloned().collect();
+        let ended = servers.into_iter().map(|server| async move {
+            let request = Request::new(Method::DELETE, &server, Route::Lease);
+            let _ = timeout(
+                Duration::from_secs(1),
+                self.control(Protocol::Negotiated, request),
+            )
+            .await;
+            lock(&self.shared.leases).held.remove(&server);
+        });
+        futures_util::future::join_all(ended).await;
+    }
+
+    /// Whether this client holds a lease, which `end_leases` would end.
+    pub fn leased(&self) -> bool {
+        !lock(&self.shared.leases).held.is_empty()
+    }
+
     async fn exchange<T>(
         &self,
         via: Protocol,
@@ -216,7 +306,7 @@ impl Client {
         exchanged.unwrap_or(Err(Fault::TimedOut("control response")))
     }
 
-    /// The request's head with an absolute URI, uncacheable, with its server's grant over verified HTTPS.
+    /// The request's head with an absolute URI, uncacheable, with its server's grant over verified HTTPS and its lease.
     fn head(&self, request: &Request) -> Result<http::Request<()>, Fault> {
         let mut target = format!("{}{}", request.origin, request.route.path());
         if !request.query.is_empty() {
@@ -227,14 +317,21 @@ impl Client {
             .method(request.method.clone())
             .uri(target)
             .header(header::CACHE_CONTROL, "no-store");
+        let verified = matches!(self.shared.verify, Verify::Trusted(_))
+            && request.origin.scheme == Scheme::Https;
         let grants = lock(&self.shared.grants);
         let token = grants.tokens.get(grants.issuer(&request.origin));
-        if let Some(token) = token.filter(|_| {
-            matches!(self.shared.verify, Verify::Trusted(_))
-                && request.origin.scheme == Scheme::Https
-        }) {
+        if let Some(token) = token.filter(|_| verified) {
             head = head.header(header::AUTHORIZATION, token.clone());
         }
+        let leases = lock(&self.shared.leases);
+        let server = leases.servers.get(&request.origin);
+        // A lease taken with a grant signs in as it, so it goes only where the grant may.
+        let held = server.filter(|server| verified || !grants.tokens.contains_key(*server));
+        if let Some((token, _)) = held.and_then(|server| leases.held.get(server)) {
+            head = head.header(LEASE_HEADER, token.clone());
+        }
+        drop((leases, grants));
         head.body(())
             .map_err(|error| Fault::Malformed(error.to_string()))
     }
@@ -369,7 +466,11 @@ impl Connections {
             serial,
             reused,
         } = taken?.map_err(|fault| (fault, false))?;
-        match timeout_at(deadline, conn.send(head, Payload::empty())).await {
+        let payload = match request.body.is_empty() {
+            true => Payload::empty(),
+            false => Payload::once(request.body.clone()),
+        };
+        match timeout_at(deadline, conn.send(head, payload)).await {
             Ok(Ok(answer)) => Ok(slot.keep(conn, answer)),
             Ok(Err(Failed { fault, again })) => {
                 if again {

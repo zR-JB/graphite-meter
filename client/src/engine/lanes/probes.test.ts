@@ -17,10 +17,7 @@ function channel(
     left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     fetch,
-    ticket: (origin, route) => ({
-      url: `${origin}/ws/session?target=${route}`,
-      request: auth.request("", "POST"),
-    }),
+    socket: (url) => `${url}?lease=gml_t`,
     ended: async () => ended,
   };
   const bus = openProbeChannel(
@@ -33,6 +30,7 @@ function channel(
         tls: true,
       },
       auth,
+      control: "https://peer.example",
       intervalMs: 80,
       maxInFlight: 2,
     },
@@ -51,12 +49,8 @@ test("outcomes cross onto page time, and a stalled bus that the sign-in check fi
   expect(worker.commands).toEqual([
     {
       type: "start",
-      url: "wss://peer.example/ws/ping",
+      url: "wss://peer.example/ws/ping?lease=gml_t",
       transport: "websocket",
-      ticket: {
-        url: "https://peer.example/ws/session?target=/ws/ping",
-        request: { headers: {}, credentials: "omit", redirect: "error" },
-      },
       intervalMs: 80,
       maxInFlight: 2,
     },
@@ -83,8 +77,8 @@ test("a window's drain waits at most the longest deadline and a margin; acknowle
     const { bus, events, worker } = channel(false);
     bus.measure();
     const drained = outcome(bus.stop());
-    expect(worker.commands.slice(1)).toEqual([{ type: "measure" }, { type: "stop" }]);
-    if (acknowledged) worker.report({ type: "drained" });
+    expect(worker.commands.slice(1)).toEqual([{ type: "measure" }, { type: "stop", id: 1 }]);
+    if (acknowledged) worker.report({ type: "drained", id: 1 });
     await elapse(DEADLINE_CEILING_MS + 245);
     expect(drained.at).toBe(acknowledged ? 0 : undefined);
     await elapse(5);

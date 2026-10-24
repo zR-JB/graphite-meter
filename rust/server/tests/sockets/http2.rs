@@ -98,13 +98,6 @@ impl Connection {
         )
         .unwrap()
     }
-
-    async fn upload_id(&mut self) -> String {
-        self.json("POST", "/upload/session").await["uploadId"]
-            .as_str()
-            .unwrap()
-            .into()
-    }
 }
 
 /// A whole body, releasing its window as it arrives; a reset ends it with the reason.
@@ -155,7 +148,7 @@ async fn only_an_admitted_upload_opens_the_connection_window() {
     ];
     let h2 = H2::start(&env).await;
     let mut admitted = h2.connect(65_535).await;
-    let id = admitted.upload_id().await;
+    let id = h2.server.upload_id().await;
     let (answer, mut upload) = admitted.open("POST", &format!("/upload?id={id}")).await;
     assert!(
         window_opens(&mut upload, Duration::from_secs(5)).await,
@@ -218,7 +211,7 @@ async fn under_pressure_a_running_upload_keeps_its_window_after_the_one_that_rai
     let budget = h2.server.budget.clone();
     let idle = super::quic::settled(&budget).await;
     let mut connection = h2.connect(65_535).await;
-    let id = connection.upload_id().await;
+    let id = h2.server.upload_id().await;
     let (raised, mut raiser) = connection.open("POST", &format!("/upload?id={id}")).await;
     assert!(window_opens(&mut raiser, Duration::from_secs(5)).await);
     let pressure = budget.lease(budget.usage().limit / 4 * 3).unwrap();
@@ -255,7 +248,7 @@ async fn under_pressure_a_running_upload_keeps_its_window_after_the_one_that_rai
 async fn an_upload_keeps_a_large_window_nearly_full() {
     let h2 = H2::start(&[]).await;
     let mut connection = h2.connect(65_535).await;
-    let id = connection.upload_id().await;
+    let id = h2.server.upload_id().await;
     let (answer, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
     assert!(window_opens(&mut upload, Duration::from_secs(5)).await);
     let sent = 15 << 19;
@@ -384,4 +377,33 @@ async fn a_connection_announces_250_streams_and_64_kib_frames_and_waits_ten_seco
     let closed =
         tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut Vec::new())).await;
     assert!(closed.is_ok(), "the connection closed");
+}
+
+#[tokio::test]
+async fn a_download_ends_on_the_server_s_clock_without_a_length() {
+    let h2 = H2::start(&[]).await;
+    let mut connection = h2.connect(1 << 20).await;
+    let started = std::time::Instant::now();
+    let answer = connection.get("GET", &format!("{ENDLESS}&ms=50")).await;
+    assert_eq!(
+        (answer.status(), answer.headers().get("content-length")),
+        (http::StatusCode::OK, None)
+    );
+    let (mut body, mut read) = (answer.into_body(), 0);
+    while let Some(chunk) = body.data().await {
+        let chunk = chunk.unwrap();
+        read += chunk.len();
+        body.flow_control().release_capacity(chunk.len()).unwrap();
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        read > 0 && elapsed >= Duration::from_millis(50) && elapsed < Duration::from_secs(2),
+        "{read} bytes in {elapsed:?}"
+    );
+    let probe = connection.get("GET", "/probe").await;
+    assert_eq!(
+        probe.status(),
+        200,
+        "the connection serves the next request"
+    );
 }

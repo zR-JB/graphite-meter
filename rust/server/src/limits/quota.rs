@@ -51,7 +51,7 @@ impl From<Full> for Refusal {
     fn from(full: Full) -> Self {
         match full {
             Full::Client => Self::ClientLimit,
-            Full::Total => Self::ServerBusy,
+            Full::Total => Self::ServerCapacity,
         }
     }
 }

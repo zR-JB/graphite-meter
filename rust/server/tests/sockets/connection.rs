@@ -195,3 +195,34 @@ async fn a_feed_the_peer_stops_reading_holds_no_backlog_of_stale_records() {
         .count();
     assert!(records < 120, "{records} records were waiting");
 }
+
+#[tokio::test]
+async fn a_download_that_ends_on_the_server_s_clock_leaves_its_connection_for_the_next_request() {
+    let server = start(&[]).await;
+    let mut client = server.connect().await;
+    let started = Instant::now();
+    client
+        .send(&format!(
+            "GET {ENDLESS}&ms=100 HTTP/1.1\r\nHost: test\r\n\r\n"
+        ))
+        .await;
+    let head = client.head().await.unwrap();
+    let mut bytes = 0;
+    while let Some(chunk) = client.chunk().await {
+        bytes += chunk.len();
+    }
+    let elapsed = started.elapsed();
+    assert_eq!(
+        (
+            head.status,
+            head.header("content-length"),
+            head.header("transfer-encoding")
+        ),
+        (200, None, Some("chunked"))
+    );
+    assert!(
+        bytes > 0 && elapsed >= Duration::from_millis(100) && elapsed < Duration::from_secs(2),
+        "{bytes} bytes in {elapsed:?}"
+    );
+    assert_eq!(client.request("GET /probe", "").await.status, 200);
+}

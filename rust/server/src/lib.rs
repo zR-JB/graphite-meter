@@ -3,6 +3,7 @@
     reason = "refusals are responses, no larger than the outcomes they replace"
 )]
 
+pub mod admission;
 pub mod app;
 pub mod assets;
 pub mod auth;

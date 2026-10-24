@@ -7,14 +7,16 @@ import type {
   SessionCommand,
   SessionReport,
 } from "../../protocol/messages";
-import { workerScript } from "../../lib/trusted";
-import type { Ending } from "../types";
+import type { Ending, WorkerPool } from "../types";
 import { delay, fromEpoch } from "../run/clock";
-import { lost, restartMs } from "./endings";
+import { CLOSE_GRACE_MS, lost, restartMs } from "./endings";
+import { FINAL_GRACE_MS } from "./records";
 import { handshakes } from "../net/webtransport";
 
-/** A stopping session gets this long to finalize and acknowledge. */
-const STOP_GRACE_MS = 2_500;
+/** A stopping session finalizes within twice the final grace and closes within its close grace; then it is terminated. */
+const STOP_GRACE_MS = 2 * FINAL_GRACE_MS + CLOSE_GRACE_MS + 1_000;
+/** A stopping download lane gets this long for its body to end on the server's clock; past it the body is cut. */
+const DRAIN_MS = 1_000;
 /** A flush waits at most this long for its lanes' answers. */
 const FLUSH_MS = 250;
 /** Lanes open at most this far apart and within this spread, so their connections do not start in one burst. */
@@ -38,6 +40,7 @@ export interface CarrierHost {
 }
 
 export interface CarrierPlan {
+  pool: WorkerPool;
   worker: string;
   lanes: number;
   /** Lanes that must deliver before the carrier is ready. */
@@ -63,6 +66,7 @@ interface Lane {
   cut: boolean;
   /** A session's WebTransport dial is out, so ending the worker now abandons it, which Chrome counts as a failure. */
   dialing: boolean;
+  stopped: PromiseWithResolvers<boolean>;
 }
 
 export class Carrier {
@@ -71,7 +75,7 @@ export class Carrier {
   readonly #lanes: Lane[] = [];
   /** No lane reopens once the carrier is stopping or released. */
   readonly #done = new AbortController();
-  readonly #acknowledged = new AbortController();
+  #released = false;
   #epoch = 0;
 
   constructor(plan: CarrierPlan, host: CarrierHost) {
@@ -82,7 +86,7 @@ export class Carrier {
     for (let index = 0; index < plan.lanes; index++) {
       const lane: Lane = {
         index,
-        worker: new Worker(workerScript(plan.worker), { type: "module" }),
+        worker: plan.pool.take(plan.worker),
         delivered: false,
         proven: false,
         counted: 0,
@@ -90,16 +94,20 @@ export class Carrier {
         asked: [],
         cut: false,
         dialing: false,
+        stopped: Promise.withResolvers(),
       };
       lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) =>
         this.#report(lane, data);
       // Our workers report every ending they can, so an error event means one cannot run at all.
-      lane.worker.onerror = ({ message }) =>
+      lane.worker.onerror = ({ message }) => {
+        // A worker that cannot run cannot acknowledge a stop either.
+        lane.stopped.resolve(false);
         void this.#ended(lane, {
           reason: "connection-lost",
           retry: false,
           detail: `worker failed: ${message}`,
         });
+      };
       this.#lanes.push(lane);
       if (index) void delay(index * stagger, this.#done.signal).then(() => this.#open(lane));
       else this.#open(lane);
@@ -110,6 +118,12 @@ export class Carrier {
     let delivered = 0;
     for (const lane of this.#lanes) if (lane.delivered) delivered++;
     return delivered >= this.#plan.gating;
+  }
+
+  /** Download bodies requested from now on end by epoch ms `until`. */
+  ends(until: number): void {
+    if (this.#plan.session) return;
+    for (const { worker } of this.#lanes) worker.postMessage({ type: "until", until });
   }
 
   /** Starts a new epoch at page time `at`: download bytes counted before it no longer count. */
@@ -175,25 +189,43 @@ export class Carrier {
     return all;
   }
 
-  /** A session finalizes and acknowledges within its grace. Fetch lanes end at once. */
+  /** A session finalizes, and download lanes let their bodies end, each stopping in its worker within its grace. */
   async stop(): Promise<void> {
     this.#done.abort();
-    const session = this.#plan.session && this.#lanes[0];
-    if (session) {
-      session.worker.postMessage({ type: "stop" } satisfies SessionCommand);
-      await delay(STOP_GRACE_MS, this.#acknowledged.signal);
-    }
-    this.release();
+    await this.#retire();
+    this.#released = true;
   }
 
-  release(): void {
+  release(): Promise<void> {
     this.#done.abort();
-    this.#acknowledged.abort();
-    for (const { worker, dialing } of this.#lanes.splice(0)) {
-      if (dialing) handshakes.failed();
-      worker.onmessage = worker.onerror = null;
-      worker.terminate();
-    }
+    this.#released = true;
+    return this.#retire();
+  }
+
+  async #retire(): Promise<void> {
+    const lanes = this.#lanes.splice(0);
+    for (const { worker } of lanes) worker.postMessage({ type: "stop" });
+    const settled = new AbortController();
+    const grace = delay(this.#plan.session ? STOP_GRACE_MS : DRAIN_MS, settled.signal);
+    // A fetch lane still waiting for its body is cut, which it acknowledges at once.
+    const waiting = new Set(lanes);
+    const cut = grace.then(() => {
+      if (this.#plan.session) return false;
+      for (const { worker } of waiting) worker.postMessage({ type: "stop" });
+      return delay(CLOSE_GRACE_MS, settled.signal).then(() => false);
+    });
+    await Promise.all(
+      lanes.map(async (lane) => {
+        const stopped = await Promise.race([lane.stopped.promise, cut]);
+        waiting.delete(lane);
+        const { worker } = lane;
+        worker.onmessage = worker.onerror = null;
+        if (stopped) return this.#plan.pool.give(this.#plan.worker, worker);
+        if (lane.dialing) handshakes.failed();
+        worker.terminate();
+      }),
+    );
+    settled.abort();
   }
 
   #open(lane: Lane): void {
@@ -205,6 +237,12 @@ export class Carrier {
   }
 
   #report(lane: Lane, report: LaneReport | SessionReport): void {
+    if (report.type === "stopped") return lane.stopped.resolve(true);
+    if (report.type === "handshake") {
+      lane.dialing = false;
+      return void (report.opened || handshakes.failed());
+    }
+    if (this.#released) return;
     switch (report.type) {
       case "bytes":
         this.#delivered(lane);
@@ -218,11 +256,6 @@ export class Carrier {
       case "record":
         this.#delivered(lane);
         return this.#host.record(report.record);
-      case "stopped":
-        return this.#acknowledged.abort();
-      case "handshake":
-        lane.dialing = false;
-        return void (report.opened || handshakes.failed());
       case "flushed":
         return lane.asked.shift()?.(report);
       case "ended":
@@ -247,6 +280,7 @@ export class Carrier {
 
   async #ended(lane: Lane, ending: Ending, broken = false): Promise<void> {
     lane.delivered = false;
+    if (this.#done.signal.aborted) return;
     if (lane.proven && ending.reason === "path-failed" && ending.retry)
       ending = { ...ending, reason: "connection-lost" };
     if (await this.#host.ended(lane.index, ending, broken, restartMs(ending), this.#done.signal))

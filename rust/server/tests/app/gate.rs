@@ -13,14 +13,12 @@ fn each_endpoint_mounts_the_routes_of_its_listener() {
             .collect::<Vec<_>>()
             .join(" ")
     };
-    let ui = "/preflight /probe /download /upload /upload/session /upload/progress /wt/session /ws/session /ws/ping \
-              /ws/progress /servers /upload/checkpoint";
-    let h2 =
-        "/probe /download /upload /upload/session /upload/progress /wt/session /upload/checkpoint";
-    let companion =
-        "/probe /download /upload /upload/session /upload/progress /wt/session /upload/checkpoint";
-    let quic = "/probe /download /upload /upload/session /upload/progress /wt/session /wt/download /wt/upload \
-                /wt/ping /upload/checkpoint";
+    let ui = "/preflight /probe /download /upload /upload/progress /lease /ws/ping /ws/progress /servers \
+              /upload/checkpoint";
+    let h2 = "/probe /download /upload /upload/progress /lease /upload/checkpoint";
+    let companion = "/probe /download /upload";
+    let quic = "/probe /download /upload /upload/progress /lease /wt/download /wt/upload /wt/ping \
+                /upload/checkpoint";
     let expected = [ui, ui, h2, companion, quic];
     assert_eq!(Endpoint::ALL.map(mounted), expected);
     assert_eq!(
@@ -152,7 +150,10 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
                 "Graphite-Meter-Refusal, Retry-After",
             ),
             ("access-control-allow-methods", "GET, POST, DELETE, OPTIONS"),
-            ("access-control-allow-headers", "*"),
+            (
+                "access-control-allow-headers",
+                "Content-Type, Graphite-Meter-Lease",
+            ),
             ("access-control-max-age", "7200"),
         ];
         for (name, value) in cors {
@@ -166,7 +167,7 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
 async fn a_method_a_route_does_not_answer_is_refused_with_the_methods_it_does() {
     let app = app(&ALL_LISTENERS);
     for (method, path, allow) in [
-        ("PUT", "/upload/progress", "DELETE, GET, HEAD, OPTIONS"),
+        ("GET", "/upload", "OPTIONS, POST"),
         ("POST", "/probe", "GET, HEAD, OPTIONS"),
     ] {
         let response = send(&app, Endpoint::H2, empty(request(method, path))).await;
@@ -182,10 +183,8 @@ async fn a_method_a_route_does_not_answer_is_refused_with_the_methods_it_does() 
 #[tokio::test]
 async fn head_answers_an_upload_feed_s_head_alike_on_every_listener() {
     let app = app(&ALL_LISTENERS);
-    for endpoint in [Endpoint::H1, Endpoint::H2] {
-        let minted =
-            json(send(&app, endpoint, empty(request("POST", "/upload/session"))).await).await;
-        let id = minted["uploadId"].as_str().unwrap();
+    for endpoint in [Endpoint::H1, Endpoint::H1Tls] {
+        let id = mint(&app).await;
         let head = send(
             &app,
             endpoint,

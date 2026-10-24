@@ -139,10 +139,12 @@ test("a download counts bytes into the epoch they were read in, from the time it
   });
   lane.send({
     type: "download",
-    url: "https://peer.example/download",
+    url: "https://peer.example/download?bytes=1",
     request: RECIPE,
     epoch: 0,
     streams: 1,
+    timed: true,
+    until: 0,
   });
   await elapse(0);
   body.push("warmup");
@@ -165,6 +167,87 @@ test("a download counts bytes into the epoch they were read in, from the time it
   ]);
 });
 
+test("a download's bodies end on the server's clock at the lane's latest end; a stop waits only for one ending soon", async () => {
+  const bodies = [source(), source(), source(), source(), source(), source()];
+  const asked: string[] = [];
+  const bootLane = () =>
+    boot<LaneCommand>("./lane.ts", {
+      fetch: async (url: string, init: RequestInit) => {
+        asked.push(url);
+        const body = bodies[asked.length - 1]!;
+        init.signal!.addEventListener("abort", () => body.controller().error(init.signal!.reason));
+        return new Response(body.stream);
+      },
+    });
+  const at = (ms: number) => performance.timeOrigin + performance.now() + ms;
+  const download = (until: number | null): LaneCommand => ({
+    type: "download",
+    url: "https://peer.example/download?bytes=1",
+    request: RECIPE,
+    epoch: 0,
+    streams: 1,
+    timed: true,
+    until: until === null ? null : at(until),
+  });
+  const lane = await bootLane();
+  lane.send(download(5_000));
+  await elapse(0);
+  // The stage's end moved: the next body follows it.
+  lane.send({ type: "until", until: at(6_400) });
+  await elapse(5_000);
+  bodies[0]!.controller().close();
+  await elapse(1_000);
+  lane.send({ type: "stop" });
+  await elapse(0);
+  expect(lane.types()).toEqual([]);
+  bodies[1]!.controller().close();
+  await elapse(0);
+  expect([asked, lane.types()]).toEqual([
+    [
+      "https://peer.example/download?bytes=1&ms=5000",
+      "https://peer.example/download?bytes=1&ms=1400",
+    ],
+    ["stopped"],
+  ]);
+  // A body far from its end, as an early finish leaves, is not waited for.
+  const cut = await bootLane();
+  cut.send(download(5_000));
+  await elapse(0);
+  cut.send({ type: "stop" });
+  await elapse(0);
+  expect(cut.types()).toEqual(["stopped"]);
+  // One that ends early and short came from something else; before the stage's end is known, bodies are short.
+  const early = await bootLane();
+  early.send(download(null));
+  await elapse(0);
+  expect(asked.at(-1)).toBe("https://peer.example/download?bytes=1&ms=250");
+  bodies[3]!.controller().close();
+  await elapse(0);
+  expect(early.posted).toEqual([
+    {
+      type: "ended",
+      ending: { reason: "connection-lost", retry: true, detail: "the download ended early" },
+    },
+  ]);
+  // An HTTP/1.1 body keeps its length, which no proxy re-chunks, and a stop cuts it.
+  const sized = await bootLane();
+  sized.send({ ...download(5_000), timed: false } as LaneCommand);
+  await elapse(0);
+  expect(asked.at(-1)).toBe("https://peer.example/download?bytes=1");
+  sized.send({ type: "stop" });
+  await elapse(0);
+  expect(sized.types()).toEqual(["stopped"]);
+  const waited = await bootLane();
+  waited.send(download(300));
+  await elapse(0);
+  waited.send({ type: "stop" });
+  await elapse(0);
+  expect(waited.types()).toEqual([]);
+  waited.send({ type: "stop" });
+  await elapse(0);
+  expect(waited.types()).toEqual(["stopped"]);
+});
+
 test("a flush reports the bytes counted so far before it answers", async () => {
   const body = source();
   const lane = await boot<LaneCommand>("./lane.ts", {
@@ -172,10 +255,12 @@ test("a flush reports the bytes counted so far before it answers", async () => {
   });
   lane.send({
     type: "download",
-    url: "https://peer.example/download",
+    url: "https://peer.example/download?bytes=1",
     request: RECIPE,
     epoch: 1,
     streams: 1,
+    timed: true,
+    until: 0,
   });
   await elapse(0);
   body.push("counted");
@@ -187,6 +272,43 @@ test("a flush reports the bytes counted so far before it answers", async () => {
   expect(lane.posted).toEqual([{ type: "bytes", bytes: 7, epoch: 1 }, flushed, flushed]);
 });
 
+test("a stopped lane aborts its request, falls silent, acknowledges, and carries its next lane from a fresh count", async () => {
+  const bodies = [source(), source()];
+  let fetches = 0;
+  const lane = await boot<LaneCommand>("./lane.ts", {
+    fetch: async (_: string, init: RequestInit) => {
+      const body = bodies[fetches++]!;
+      init.signal!.addEventListener("abort", () => body.controller().error(init.signal!.reason));
+      return new Response(body.stream);
+    },
+  });
+  const download = {
+    type: "download",
+    url: "https://peer.example/download",
+    request: RECIPE,
+    epoch: 1,
+    streams: 1,
+    timed: false,
+    until: null,
+  } as const;
+  lane.send(download);
+  await elapse(0);
+  bodies[0]!.push("first");
+  lane.send({ type: "stop" });
+  await elapse(0);
+  expect(lane.types()).toEqual(["stopped"]);
+  lane.send(download);
+  await elapse(0);
+  bodies[1]!.push("next");
+  await elapse(0);
+  const at = performance.timeOrigin + performance.now();
+  lane.send({ type: "flush", at });
+  expect(lane.posted.slice(1)).toEqual([
+    { type: "bytes", bytes: 4, epoch: 1 },
+    { type: "flushed", total: 4, at },
+  ]);
+});
+
 test("a download whose answer ends short ends the lane, so its owner paces the reopen", async () => {
   let fetches = 0;
   const lane = await boot<LaneCommand>("./lane.ts", {
@@ -194,10 +316,12 @@ test("a download whose answer ends short ends the lane, so its owner paces the r
   });
   lane.send({
     type: "download",
-    url: "https://peer.example/download",
+    url: "https://peer.example/download?bytes=1",
     request: RECIPE,
     epoch: 0,
     streams: 1,
+    timed: true,
+    until: 0,
   });
   await elapse(0);
   expect(fetches).toBe(1);
@@ -298,7 +422,6 @@ test("a session's stop finalizes its upload id, then acknowledges on the termina
   const upload: SessionCommand = {
     type: "upload",
     url: "https://peer.example/wt/upload?id=u1",
-    ticket: null,
     datagrams: false,
     streams: 2,
     finalize: { url: feed, request: RECIPE },
@@ -334,7 +457,6 @@ test("a session relays a flood of receiver progress as its newest record every 5
   session.send({
     type: "upload",
     url: "https://peer.example/wt/upload?id=u1",
-    ticket: null,
     datagrams: false,
     streams: 1,
     finalize: { url: "https://peer.example/upload/progress?id=u1", request: RECIPE },
@@ -364,7 +486,6 @@ const datagrams = async (epoch: number) => {
   session.send({
     type: "download",
     url: "https://peer.example/wt/download?datagrams=1",
-    ticket: null,
     datagrams: true,
     epoch,
   });
@@ -404,6 +525,37 @@ test("a final flush counts the datagrams read by its cutoff and none after, howe
   });
 });
 
+test("a session reopened in its epoch keeps the epoch's count, and a stopped one falls silent for the next lane", async () => {
+  const { session, transport } = await datagrams(3);
+  transport.datagram(1_000);
+  await task();
+  transport.reset();
+  await elapse(300);
+  session.send({
+    type: "download",
+    url: "https://peer.example/wt/download?datagrams=1",
+    datagrams: true,
+    epoch: 3,
+  });
+  const reopened = FakeWebTransport.dialed.at(-1)!;
+  reopened.accept();
+  await elapse(0);
+  reopened.datagram(500);
+  await task();
+  const flushed = () => session.posted.findLast(({ type }) => type === "flushed");
+  session.send({ type: "flush", at: performance.timeOrigin + performance.now() });
+  expect(flushed()).toMatchObject({ total: 1_500 });
+  session.send({ type: "stop" });
+  await elapse(300);
+  expect(session.types().at(-1)).toBe("stopped");
+  const before = session.posted.length;
+  reopened.datagram(700);
+  await task();
+  expect(session.posted.length).toBe(before);
+  session.send({ type: "flush", at: performance.timeOrigin + performance.now() });
+  expect(flushed()).toMatchObject({ total: 0 });
+});
+
 test("a slow datagram download reports each datagram as it arrives", async () => {
   // It gets its own epoch, since an earlier test's loop may still post into the shared port.
   const { session, transport } = await datagrams(7);
@@ -427,7 +579,6 @@ test("a session whose streams broke waits for its close: a revocation asks for s
   const download: SessionCommand = {
     type: "download",
     url: "https://peer.example/wt/download?streams=1",
-    ticket: null,
     datagrams: false,
     epoch: 0,
   };
@@ -457,16 +608,11 @@ test("a session whose streams broke waits for its close: a revocation asks for s
   ]);
 });
 
-test("a session's refused dial spends its ticket, one that lapsed unanswered reuses it, and both report a failed handshake", async () => {
-  let minted = 0;
-  const session = await boot<SessionCommand>("./session.ts", {
-    WebTransport: FakeWebTransport,
-    fetch: async () => Response.json({ token: `t${++minted}`, expires: Date.now() + 30_000 }),
-  });
+test("a session's refused dial and one that lapsed unanswered both report a failed handshake, and redial its lease", async () => {
+  const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
   const download: SessionCommand = {
     type: "download",
-    url: "https://peer.example/wt/download?streams=1",
-    ticket: { url: "https://peer.example/wt/session?target=wt", request: RECIPE },
+    url: "https://peer.example/wt/download?streams=1&lease=gml_t",
     datagrams: false,
     epoch: 0,
   };
@@ -478,10 +624,10 @@ test("a session's refused dial spends its ticket, one that lapsed unanswered reu
   await elapse(3_000);
   session.send(download);
   await elapse(0);
-  expect(FakeWebTransport.dialed.map(({ url }) => new URL(url).searchParams.get("token"))).toEqual([
-    "t1",
-    "t2",
-    "t2",
+  expect(FakeWebTransport.dialed.map(({ url }) => new URL(url).searchParams.get("lease"))).toEqual([
+    "gml_t",
+    "gml_t",
+    "gml_t",
   ]);
   expect(session.posted).toEqual([
     { type: "handshake", opened: false },
@@ -520,22 +666,17 @@ class FakeWebSocket {
   }
 }
 
-const bus = (transport: "websocket" | "webtransport", ticket: boolean): ProbeCommand => ({
+const bus = (transport: "websocket" | "webtransport"): ProbeCommand => ({
   type: "start",
-  url: transport === "websocket" ? "wss://peer.example/ws/ping" : "https://peer.example/wt/ping",
+  url: `${transport === "websocket" ? "wss://peer.example/ws/ping" : "https://peer.example/wt/ping"}?lease=gml_t`,
   transport,
-  ticket: ticket ? { url: "https://peer.example/ws/session?target=wss", request: RECIPE } : null,
   intervalMs: 80,
   maxInFlight: 2,
 });
 
-test("a WebSocket dial past its budget stays, reported as an outage until it answers; a refused one spends its ticket and waits for the owner", async () => {
-  let minted = 0;
-  const probe = await boot<ProbeCommand>("./probe.ts", {
-    WebSocket: FakeWebSocket,
-    fetch: async () => Response.json({ token: `t${++minted}`, expires: Date.now() + 30_000 }),
-  });
-  probe.send(bus("websocket", true));
+test("a WebSocket dial past its budget stays, reported as an outage until it answers; a refused one waits for the owner", async () => {
+  const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
+  probe.send(bus("websocket"));
   // The browser queues the handshake, so closing it would only delay the next one.
   await elapse(3_500);
   expect(probe.types()).toEqual(["stalled"]);
@@ -543,23 +684,23 @@ test("a WebSocket dial past its budget stays, reported as an outage until it ans
   FakeWebSocket.opened.at(-1)!.onopen!();
   await elapse(0);
   expect(probe.types()).toEqual(["stalled", "ready", "resumed"]);
-  // A refused upgrade presented its ticket, so the server spent it whatever it answered; only the owner redials.
+  // Only the owner redials a refused upgrade.
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1006, reason: "" });
   await elapse(5_000);
   expect(FakeWebSocket.opened).toHaveLength(1);
   probe.send({ type: "dial" });
   await elapse(0);
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1008, reason: "authentication required" });
-  expect(FakeWebSocket.opened.map(({ url }) => new URL(url).searchParams.get("token"))).toEqual([
-    "t1",
-    "t2",
+  expect(FakeWebSocket.opened.map(({ url }) => new URL(url).searchParams.get("lease"))).toEqual([
+    "gml_t",
+    "gml_t",
   ]);
   expect(probe.types().slice(3)).toEqual(["stalled", "sign-in"]);
 });
 
 test("an owner's dial during a lapsed WebSocket dial follows that dial's end", async () => {
   const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
-  probe.send(bus("websocket", false));
+  probe.send(bus("websocket"));
   await elapse(3_500);
   expect(probe.types()).toEqual(["stalled"]);
   probe.send({ type: "dial" });
@@ -570,9 +711,36 @@ test("an owner's dial during a lapsed WebSocket dial follows that dial's end", a
   expect(FakeWebSocket.opened).toHaveLength(2);
 });
 
+test("a bus at the server's lifetime bound, or renewed, dials again on its own without an outage, unless it ended at once", async () => {
+  const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
+  probe.send(bus("websocket"));
+  const first = FakeWebSocket.opened.at(-1)!;
+  first.onopen!();
+  await elapse(3_000);
+  first.onclose!({ code: 4002, reason: "lifetime" });
+  await elapse(0);
+  const second = FakeWebSocket.opened.at(-1)!;
+  expect(second).not.toBe(first);
+  second.onopen!();
+  await elapse(100);
+  probe.send({ type: "renew" });
+  await elapse(0);
+  expect([second.closes, FakeWebSocket.opened.length]).toEqual([1, 3]);
+  expect(probe.types().filter((type) => type === "stalled" || type === "renewing")).toEqual([
+    "renewing",
+    "renewing",
+  ]);
+  const third = FakeWebSocket.opened.at(-1)!;
+  third.onopen!();
+  third.onclose!({ code: 4002, reason: "lifetime" });
+  await elapse(0);
+  expect(probe.types().at(-1)).toBe("stalled");
+  expect(FakeWebSocket.opened).toHaveLength(3);
+});
+
 test("a WebTransport bus whose datagrams failed waits for its close: a revocation asks for sign-in", async () => {
   const probe = await boot<ProbeCommand>("./probe.ts", { WebTransport: FakeWebTransport });
-  probe.send(bus("webtransport", false));
+  probe.send(bus("webtransport"));
   await elapse(0);
   const transport = FakeWebTransport.dialed.at(-1)!;
   transport.accept();

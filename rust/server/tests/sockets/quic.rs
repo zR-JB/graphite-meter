@@ -227,7 +227,7 @@ async fn under_pressure_an_admitted_upload_reserves_no_receive_credit() {
     let h3 = H3::start(&[]).await;
     let budget = h3.server.budget.clone();
     let connection = h3.connect(transport(None)).await;
-    let id = connection.upload_id().await;
+    let id = h3.server.upload_id().await;
     let pressure = budget.lease(budget.usage().limit / 4 * 3).unwrap();
     let before = settled(&budget).await;
     let mut answer = connection

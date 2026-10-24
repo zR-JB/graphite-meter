@@ -19,7 +19,8 @@
         { "baseUrl": "https://speed.example:7252", "transport": "quic-datagram" },
         { "baseUrl": ".", "transport": "websocket", "pingInterval": 250 }
       ]
-    }
+    },
+    "lease": { "maxMeasurements": 32, "maxSessions": 8, "maxUploads": 4 }
   },
   "decoded": {
     "throughput": [
