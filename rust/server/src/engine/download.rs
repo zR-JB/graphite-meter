@@ -5,6 +5,7 @@ use crate::limits::{Budget, Lease};
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// The block is this large, as is the largest chunk a source hands out.
 pub const BLOCK_BYTES: usize = 256 << 10;
@@ -40,6 +41,7 @@ impl Block {
             remaining: bytes,
             transfer,
             until: None,
+            ended: None,
         }
     }
 
@@ -55,15 +57,16 @@ pub struct DownloadSource {
     remaining: u64,
     transfer: Option<Arc<Transfer>>,
     until: Option<Instant>,
+    ended: Option<CancellationToken>,
 }
 
 impl DownloadSource {
-    /// Hands out nothing from `until` on, so the download ends there on the server's clock.
-    pub fn ending_at(self, until: Instant) -> Self {
-        Self {
-            until: Some(until),
-            ..self
-        }
+    /// Hands out nothing from `until` on, so the download ends there on the server's clock; `ended` is cancelled once
+    /// it is dropped past then.
+    pub fn ending_at(mut self, until: Instant, ended: Option<CancellationToken>) -> Self {
+        self.until = Some(until);
+        self.ended = ended;
+        self
     }
 
     pub fn next(&mut self, max: usize) -> Option<Bytes> {
@@ -100,6 +103,16 @@ impl DownloadSource {
     /// The exact length, unless a deadline may end it sooner.
     pub fn length(&self) -> Option<u64> {
         self.until.is_none().then_some(self.remaining)
+    }
+}
+
+impl Drop for DownloadSource {
+    fn drop(&mut self) {
+        if let Some(ended) = &self.ended
+            && self.until.is_some_and(|until| Instant::now() >= until)
+        {
+            ended.cancel();
+        }
     }
 }
 

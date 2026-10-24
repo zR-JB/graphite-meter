@@ -26,6 +26,12 @@ impl Connection {
         Ok(self.0.next().await?.map(Request))
     }
 
+    /// Sends GOAWAY: the peer takes later requests to a new connection, and this one, unless shut down, ends silently at
+    /// the idle timeout once quiet.
+    pub fn retire(&mut self) {
+        self.0.goaway();
+    }
+
     /// Also ends the session with `code` and `reason`, even later ones; the connection closes as others end or at the drain bound.
     pub fn shutdown(&mut self, code: u32, reason: &str) {
         self.0.shutdown(code, reason);

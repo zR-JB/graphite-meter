@@ -98,7 +98,9 @@ async function bodies(
           ? SHORT_BODY_MS
           : Math.ceil(Math.max(SHORT_BODY_MS, until - performance.timeOrigin - sentAt));
       bodyEnd = timed ? sentAt + ms : null;
-      const response = await fetch(timed ? `${url}&ms=${ms}` : url, init);
+      // A body that ends with its stage asks the server to retire an HTTP/3 connection, so the next direction's is fresh.
+      const query = until === null ? `&ms=${ms}` : `&ms=${ms}&last=`;
+      const response = await fetch(timed ? url + query : url, init);
       if (!response.ok || !response.body) {
         release(response);
         reports.flush();

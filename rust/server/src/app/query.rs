@@ -104,7 +104,12 @@ pub fn streams(query: Option<&str>) -> usize {
 
 /// `datagrams=` asks for datagrams unless it spells zero or false.
 pub fn datagrams(query: Option<&str>) -> bool {
-    let Some(value) = get(query, "datagrams") else {
+    flag(query, "datagrams")
+}
+
+/// A presence-based switch: set unless it spells zero or false.
+pub fn flag(query: Option<&str>, name: &str) -> bool {
+    let Some(value) = get(query, name) else {
         return false;
     };
     let value = value.trim();

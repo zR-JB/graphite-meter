@@ -204,8 +204,8 @@ test("a download's bodies end on the server's clock at the lane's latest end; a 
   await elapse(0);
   expect([asked, lane.types()]).toEqual([
     [
-      "https://peer.example/download?bytes=1&ms=5000",
-      "https://peer.example/download?bytes=1&ms=1400",
+      "https://peer.example/download?bytes=1&ms=5000&last=",
+      "https://peer.example/download?bytes=1&ms=1400&last=",
     ],
     ["stopped"],
   ]);

@@ -95,6 +95,8 @@ pub struct Connection {
     pub endpoint: Endpoint,
     pub peer: IpAddr,
     pub work: Work,
+    /// Cancelled when a stage's last download over QUIC ends, so the next direction gets a fresh connection.
+    pub retire: CancellationToken,
 }
 
 impl Connection {
@@ -103,6 +105,7 @@ impl Connection {
             endpoint,
             peer,
             work: Work::default(),
+            retire: CancellationToken::new(),
         }
     }
 }
@@ -452,8 +455,8 @@ impl App {
         Ok(Outcome::WebSocket(accepted, socket))
     }
 
-    /// `bytes=` payload bytes, ending at `ms=` on the server's clock without a length; HEAD and an empty download drop
-    /// their lane at once.
+    /// `bytes=` payload bytes, ending at `ms=` on the server's clock without a length, then retiring an HTTP/3
+    /// connection after `last=`; HEAD and an empty download drop their lane at once.
     fn download<B>(
         &self,
         request: &Request<B>,
@@ -469,8 +472,9 @@ impl App {
             true => Body::empty(),
             false => {
                 let source = self.block.source(bytes);
+                let last = connection.endpoint == Endpoint::Quic && query::flag(query, "last");
                 let source = match until {
-                    Some(until) => source.ending_at(until),
+                    Some(until) => source.ending_at(until, last.then(|| connection.retire.clone())),
                     None => source,
                 };
                 Body::download(source).with_lane(lane)

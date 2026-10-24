@@ -355,3 +355,35 @@ async fn a_download_ends_on_the_server_s_clock_without_a_length() {
         "the connection serves the next request"
     );
 }
+
+#[tokio::test]
+async fn a_stage_s_last_download_retires_its_connection_without_a_close() {
+    let h3 = H3::start(&[]).await;
+    let connection = h3.connect(transport(None)).await;
+    let (_, mut body) = connection
+        .send("GET", &format!("{ENDLESS}&ms=50&last="), b"")
+        .await;
+    read(&mut body).await.unwrap();
+    let retired = async {
+        while !connection.requests.going_away() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(2), retired)
+        .await
+        .expect("GOAWAY follows the body's end");
+    let refused = connection.requests.send_request(
+        http::Request::get("https://localhost/probe")
+            .body(())
+            .unwrap(),
+    );
+    assert!(
+        matches!(refused.await, Err(Error::GoingAway)),
+        "a later request takes a new connection"
+    );
+    assert_eq!(
+        connection.closed_within(Duration::from_millis(300)).await,
+        None,
+        "nothing closes it out loud"
+    );
+}

@@ -185,7 +185,7 @@ impl Driver {
         }
     }
 
-    /// Server: sends GOAWAY; later requests are refused, and the connection closes once the others end.
+    /// Server: sends GOAWAY; later requests are refused, and the connection ends silently at the idle timeout.
     pub(crate) fn goaway(&mut self) {
         if self.goaway.is_none() && !self.ended {
             self.goaway = Some(self.next_request);
@@ -273,12 +273,12 @@ impl Driver {
         }
     }
 
-    /// When this server connection closes with H3_NO_ERROR: once going away, never for being idle.
+    /// When this server connection closes with H3_NO_ERROR: once shut down, never for being idle.
     fn close_at(&self, now: Instant) -> Option<Instant> {
         if self.shared.role == Role::Client || self.shared.live.load(Ordering::Relaxed) > 0 {
             return self.drain;
         }
-        let done = self.goaway.map(|_| self.sessions.linger.unwrap_or(now));
+        let done = self.drain.map(|_| self.sessions.linger.unwrap_or(now));
         [self.drain, done].into_iter().flatten().min()
     }
 
