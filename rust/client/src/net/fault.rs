@@ -31,6 +31,8 @@ pub enum Fault {
     SignIn(Origin),
     /// The peer broke the protocol or answered what this client refuses.
     Malformed(String),
+    /// The peer speaks another API protocol, named in these words.
+    Incompatible(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,7 @@ impl Fault {
             }
             Self::Status { status, .. } if busy(*status) => FailureReason::ServerCapacity,
             Self::Status { .. } | Self::Malformed(_) => FailureReason::ProtocolError,
+            Self::Incompatible(_) => FailureReason::PathFailed,
             Self::Refused(refusal) => refusal.failure_reason(),
         }
     }
@@ -80,7 +83,8 @@ impl Fault {
             | Self::Refused(_)
             | Self::SignIn(_)
             | Self::Ended(LaneEnding::Revoked)
-            | Self::Malformed(_) => Class::Final,
+            | Self::Malformed(_)
+            | Self::Incompatible(_) => Class::Final,
             Self::Connect(_) | Self::Lost | Self::TimedOut(_) | Self::Ended(_) => Class::Redial,
         }
     }
@@ -182,6 +186,7 @@ impl fmt::Display for Fault {
                 DETAIL_CHARS,
             )),
             Self::TimedOut(what) => write!(formatter, "{} timed out", capitalized(what)),
+            Self::Incompatible(text) => formatter.write_str(text),
             Self::Lost => formatter.write_str(self.reason().label()),
         }
     }

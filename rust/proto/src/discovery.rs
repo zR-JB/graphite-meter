@@ -62,6 +62,9 @@ named! {
 pub struct Preflight {
     pub server: ServerInfo,
     pub engine_version: String,
+    /// The envelope's wire protocol, which a 0.13.5 server did not send yet.
+    #[serde(default = "leased")]
+    pub protocol: u64,
     pub generation: String,
     pub capabilities: Capabilities,
     /// A server without it predates the lease, which its clients refuse.
@@ -120,6 +123,7 @@ impl Preflight {
             generation,
             capabilities,
             lease,
+            ..
         } = &preflight;
         let metadata = [&server.name, &server.location, engine_version, generation];
         if generation.is_empty() || !metadata.iter().all(|text| is_metadata(text)) {
@@ -131,13 +135,10 @@ impl Preflight {
         if lease.max_measurements == 0 {
             return Err(serde_json::Error::custom("invalid lease limits"));
         }
+        if preflight.protocol == 0 {
+            return Err(serde_json::Error::custom("invalid protocol"));
+        }
         Ok(preflight)
-    }
-
-    /// Whether a preflight that failed to decode is an older server's, which offers no lease.
-    pub fn predates_lease(data: &[u8]) -> bool {
-        let document = serde_json::from_slice::<serde_json::Value>(data);
-        document.is_ok_and(|document| document.is_object() && document.get("lease").is_none())
     }
 
     /// Every target's base URL, throughput targets first.
@@ -160,6 +161,10 @@ impl Capabilities {
     pub fn stage_limit(&self) -> Duration {
         Duration::from_millis(self.max_stage_ms)
     }
+}
+
+fn leased() -> u64 {
+    crate::envelope::LEASED
 }
 
 pub(crate) fn is_metadata(metadata: &str) -> bool {
@@ -289,6 +294,11 @@ impl<'de> Deserialize<'de> for IpFamily {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Probe {
+    /// The envelope (`Envelope::probe`), which older servers do not send in a probe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<u64>,
     pub client_ip: String,
     pub client_ip_version: IpFamily,
     pub client_ip_source: ClientIpSource,
@@ -313,6 +323,16 @@ impl Probe {
         }
         if probe.load.is_some_and(|load| load.max == 0) {
             return Err(serde_json::Error::custom("invalid probe occupancy"));
+        }
+        if probe
+            .engine_version
+            .as_deref()
+            .is_some_and(|version| !is_metadata(version))
+        {
+            return Err(serde_json::Error::custom("invalid probe engine version"));
+        }
+        if probe.protocol == Some(0) {
+            return Err(serde_json::Error::custom("invalid probe protocol"));
         }
         Ok(probe)
     }

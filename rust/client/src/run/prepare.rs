@@ -1,6 +1,7 @@
 //! Path checks: the catalog at `--url`, each selected server's preflight, then throughput and latency paths, by one deadline.
 use super::select;
 use crate::{
+    VERSION,
     config::{Config, PrepKey},
     events::Event,
     format,
@@ -14,6 +15,7 @@ use graphite_meter_proto::{
     discovery::{
         Capabilities, IpFamily, LatencyTransport, Preflight, Protocol, ThroughputTransport,
     },
+    envelope::Envelope,
     lease::LeaseRequest,
     origin::Origin,
     reason::FailureReason,
@@ -29,8 +31,6 @@ use tokio::time::{self, timeout};
 /// Why a server is refused whose lease holds less than its run would.
 const TOO_MANY: &str =
     "the test needs more measurements at once than this server admits for one client";
-/// Why a server is refused whose preflight offers no lease, after its name.
-pub const OLDER: &str = "runs an older Graphite Meter; update it";
 /// How long a path check may take, the catalog and every server included.
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long a run may take its check's paths and connections.
@@ -150,13 +150,13 @@ async fn check(
     let request = Request::new(Method::GET, &served, Route::Preflight);
     let document = client.json(Protocol::Negotiated, request, |data| Ok(data.to_vec()));
     let document = document.await.map_err(|fault| fault.failure())?;
-    let preflight =
-        Preflight::decode(&document).map_err(|error| {
-            match Preflight::predates_lease(&document) {
-                true => refused(format!("{} {OLDER}", server.name)),
-                false => Fault::Malformed(error.to_string()).failure(),
-            }
-        })?;
+    // The envelope comes first, so a server of another protocol is named whatever the rest of its document holds.
+    let envelope = Envelope::preflight(&document);
+    if let Some(mismatch) = envelope.and_then(|envelope| envelope.mismatch(&server.name, VERSION)) {
+        return Err(Fault::Incompatible(mismatch).failure());
+    }
+    let preflight = Preflight::decode(&document);
+    let preflight = preflight.map_err(|error| Fault::Malformed(error.to_string()).failure())?;
     if !preflight.server.name.is_empty() {
         server.name.clone_from(&preflight.server.name);
     }
@@ -204,19 +204,22 @@ async fn check(
     })
 }
 
-/// The first of `candidates` whose check passes, moving on unless a server asks for sign-in; else the last fault.
+/// The first of `candidates` whose check passes, moving on unless a server asks for sign-in; else the first port of
+/// another protocol, which only an update clears, or the last fault.
 async fn first<P: Clone, T, F>(candidates: &[P], check: impl Fn(P) -> F) -> Result<T, Fault>
 where
     F: Future<Output = Result<T, Fault>>,
 {
-    let mut result = Err(Fault::Malformed("no path to check".into()));
+    let (mut last, mut incompatible) = (Fault::Malformed("no path to check".into()), None);
     for candidate in candidates {
-        result = check(candidate.clone()).await;
-        if matches!(result, Ok(_) | Err(Fault::SignIn(_))) {
-            break;
+        match check(candidate.clone()).await {
+            Err(Fault::Incompatible(text)) if incompatible.is_none() => incompatible = Some(text),
+            Err(fault @ Fault::SignIn(_)) => return Err(fault),
+            Err(fault) => last = fault,
+            passed => return passed,
         }
     }
-    result
+    Err(incompatible.map_or(last, Fault::Incompatible))
 }
 
 /// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol.
@@ -316,4 +319,27 @@ fn late() -> Failure {
         format::stage_time(PREPARATION_TIMEOUT)
     );
     refused(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_port_of_another_release_is_named_whichever_candidate_it_is() {
+        let other = || Fault::Incompatible("S2 runs Graphite Meter 0.15.0".into());
+        for order in [[true, false], [false, true]] {
+            let found = first(&order, |incompatible| async move {
+                Err::<(), _>(if incompatible {
+                    other()
+                } else {
+                    Fault::Malformed("lost".into())
+                })
+            });
+            assert!(
+                matches!(found.await, Err(Fault::Incompatible(_))),
+                "{order:?}"
+            );
+        }
+    }
 }

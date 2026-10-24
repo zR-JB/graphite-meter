@@ -69,6 +69,7 @@ fn preflight() -> Preflight {
             location: "fra".into(),
         },
         engine_version: "0.1.0-test".into(),
+        protocol: 2,
         generation: "test-generation".into(),
         capabilities: Capabilities {
             upload_checkpoint: true,
@@ -103,6 +104,8 @@ fn preflight() -> Preflight {
 
 fn probe() -> Probe {
     Probe {
+        engine_version: Some("0.1.0-test".into()),
+        protocol: Some(2),
         client_ip: "198.51.100.4".into(),
         client_ip_version: IpFamily::V4,
         client_ip_source: ClientIpSource::Socket,
@@ -319,11 +322,13 @@ fn a_lease_asks_for_measurements_and_answers_valid_tokens() {
 }
 
 #[test]
-fn a_preflight_without_lease_limits_is_an_older_servers() {
-    let older = edited(preflight(), "/lease", None);
-    assert!(Preflight::decode(&older).is_err());
-    assert!(Preflight::predates_lease(&older));
-    assert!(!Preflight::predates_lease(PREFLIGHT.as_bytes()));
-    assert!(!Preflight::predates_lease(b"[]"));
+fn lease_limits_are_required_and_admit_a_measurement() {
+    assert!(Preflight::decode(&edited(preflight(), "/lease", None)).is_err());
     assert!(preflight_with("/lease/maxMeasurements", json!(0)).is_err());
+    let unversioned = edited(preflight(), "/protocol", None);
+    assert_eq!(
+        Preflight::decode(&unversioned).unwrap().protocol,
+        2,
+        "a 0.13.5 server's"
+    );
 }

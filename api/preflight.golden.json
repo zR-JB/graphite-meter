@@ -1,6 +1,7 @@
 {
   "server": { "name": "graphite-meter", "location": "fra" },
   "engineVersion": "0.1.0-test",
+  "protocol": 2,
   "generation": "test-generation",
   "capabilities": {
     "uploadCheckpoint": true,

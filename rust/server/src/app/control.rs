@@ -15,6 +15,7 @@ use graphite_meter_proto::{
         NegotiatedProtocol, Preflight, Probe, Protocol, ServerInfo, ThroughputTarget,
         ThroughputTransport,
     },
+    envelope::PROTOCOL,
     lease::{Lease, LeaseRequest},
     origin::{BaseUrl, Origin},
 };
@@ -43,6 +44,8 @@ impl App {
             Endpoint::H1 | Endpoint::H1Tls | Endpoint::H3Companion => NegotiatedProtocol::Http1,
         };
         response::json_of(&Probe {
+            engine_version: Some(ENGINE_VERSION.into()),
+            protocol: Some(PROTOCOL),
             client_ip: address.ip().to_string(),
             client_ip_version: IpFamily::of(address.ip()),
             client_ip_source: source,
@@ -118,6 +121,7 @@ impl App {
         Preflight {
             server,
             engine_version,
+            protocol: PROTOCOL,
             generation,
             capabilities: offered,
             lease: LeaseLimits {

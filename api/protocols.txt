@@ -1,0 +1,14 @@
+# Graphite Meter API protocol pin, shared by the Rust workspace and the browser client.
+#
+# Format (one protocol per non-comment, non-blank line):
+#   <protocol> | <first release>
+#
+#   protocol      = the integer a server's preflight and probe carry as `protocol` (api/discovery.md, The envelope)
+#   first release = the first Graphite Meter release that speaks it
+#
+# A server raises the protocol with each change older clients cannot read. Servers up to 0.13.5 sent no
+# `protocol`; clients read a preflight without `protocol` and without `lease` as protocol 1, and one with `lease` as 2.
+# Read by rust/proto/tests/envelope.rs and client/src/protocol/pins.test.ts.
+
+1 | 0.1.0
+2 | 0.13.5

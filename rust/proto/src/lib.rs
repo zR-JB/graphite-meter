@@ -57,6 +57,7 @@ pub mod bus;
 pub mod catalog;
 pub mod discovery;
 pub mod duration;
+pub mod envelope;
 pub mod flag;
 pub mod json;
 pub mod lane;

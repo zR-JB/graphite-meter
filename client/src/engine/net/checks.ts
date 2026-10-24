@@ -8,7 +8,7 @@ import {
   type CatalogEntry,
   type Probe,
 } from "../../protocol/documents";
-import { isRecord } from "../../lib/decode";
+import { envelope, mismatch } from "../../protocol/envelope";
 import { ROUTES } from "../../protocol/routes";
 import { ESTABLISH_MS } from "../lanes/endings";
 import { midpointMedian } from "../measure/latency";
@@ -59,6 +59,9 @@ export class CheckError extends Error {
     super(message, options);
   }
 }
+
+/** A server that speaks another API protocol, which only an update clears. */
+class Incompatible extends CheckError {}
 
 export interface Failure {
   message: string;
@@ -167,13 +170,26 @@ function watchProtocol(url: string) {
   };
 }
 
+/** The body of a preflight or probe as `decode` reads it, once its envelope names a protocol this page speaks; a
+ *  server of another protocol is named and waits for the user. */
 async function decoded<T>(
   response: Response,
+  name: string,
   decode: (value: unknown) => T,
   message: string,
+  isPreflight = false,
 ): Promise<T> {
+  let value: unknown;
   try {
-    return decode(await readJSON(response));
+    value = await readJSON(response);
+  } catch (cause) {
+    throw new CheckError(message, "retryable", { cause });
+  }
+  const found = envelope(value, isPreflight);
+  const refused = found && mismatch(name, found, BUILD.clientVersion.replace(/^v/, ""));
+  if (refused) throw new Incompatible(refused, "needs-user");
+  try {
+    return decode(value);
   } catch (cause) {
     throw new CheckError(message, "retryable", { cause });
   }
@@ -239,16 +255,10 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
     }
     const document = await decoded(
       response,
-      (value) => {
-        // A server without the lease is refused by name, as nothing it would admit could present one.
-        if (isRecord(value) && !("lease" in value))
-          throw new CheckError(
-            `${entry.name} runs an older Graphite Meter; update it`,
-            "retryable",
-          );
-        return preflight(value);
-      },
+      entry.name,
+      preflight,
       `${CHECK_FAILED} (unreadable discovery)`,
+      true,
     );
     const requestMs = now() - startedAt;
     const { capabilities } = document;
@@ -293,7 +303,7 @@ async function probeOrigin(origin: string, auth: ServerAuth, signal: AbortSignal
         `Probe answered HTTP ${response.status}${await refusal(response)}`,
         "retryable",
       );
-    const probe: Probe = await decoded(response, probeDocument, "Unexpected probe answer");
+    const probe: Probe = await decoded(response, origin, probeDocument, "Unexpected probe answer");
     return { probe, protocol: await timing.read(signal) };
   } catch (error) {
     return settled(error, auth, signal, `Could not reach ${origin}`);
@@ -337,6 +347,7 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   verify: (target: T, signal: AbortSignal, fallback: string | undefined) => Promise<P>,
 ): Promise<P> {
   let failure: unknown;
+  let incompatible: Incompatible | undefined;
   let retryable = false;
   for (const target of targets) {
     // Sockets add their establishment to the HTTP/3 bootstrap's wall time; each inner bound keeps its margin.
@@ -354,10 +365,12 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
       signal.throwIfAborted();
       if (signsIn(error)) throw error;
       failure ??= error;
+      if (error instanceof Incompatible) incompatible ??= error;
       retryable ||= !(error instanceof CheckError) || error.retry === "retryable";
     }
   }
-  // While any target may still answer, time can clear the role, whatever the preferred one said.
+  // Only an update clears a port of another release; while any other target may still answer, time can clear the role.
+  if (incompatible) throw incompatible;
   if (retryable && failure instanceof CheckError && failure.retry !== "retryable")
     throw new CheckError(failure.message, "retryable", { cause: failure });
   throw failure;

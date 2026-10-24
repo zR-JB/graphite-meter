@@ -1,4 +1,6 @@
 {
+  "engineVersion": "0.1.0-test",
+  "protocol": 2,
   "clientIp": "198.51.100.4",
   "clientIpVersion": 4,
   "clientIpSource": "socket",

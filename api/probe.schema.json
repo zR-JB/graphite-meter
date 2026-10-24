@@ -5,8 +5,10 @@
   "description": "Connection-specific evidence returned by GET /probe on a selected target.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["clientIp", "clientIpVersion", "clientIpSource", "protocolNegotiated"],
+  "required": ["engineVersion", "protocol", "clientIp", "clientIpVersion", "clientIpSource", "protocolNegotiated"],
   "properties": {
+    "engineVersion": { "type": "string", "maxLength": 256, "description": "The envelope: the server's release; servers up to 0.13.5 send none." },
+    "protocol": { "type": "integer", "minimum": 1, "description": "The envelope: the API protocol (protocols.txt); servers up to 0.13.5 send none." },
     "clientIp": { "type": "string", "minLength": 1, "maxLength": 64 },
     "clientIpVersion": { "type": "integer", "enum": [4, 6] },
     "clientIpSource": { "type": "string", "enum": ["socket", "forwarded"] },

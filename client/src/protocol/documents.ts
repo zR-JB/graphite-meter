@@ -111,21 +111,25 @@ function targets<T extends Record<string, Decoder<string | null>>>(
   };
 }
 
-export const preflight = object({
-  server: object({ name: displayText(256) }, { location: displayText(256) }),
-  engineVersion: displayText(256),
-  generation: string(1, 256),
-  capabilities: object({
-    throughput: targets({
-      transport: mechanism("fetch-stream", "webtransport", "webtransport-datagram"),
-      protocol: mechanism("http1", "http2", "http3", "negotiated"),
+// `protocol` is optional, as a 0.13.5 server sends none; the envelope (protocol/envelope.ts) is read before this.
+export const preflight = object(
+  {
+    server: object({ name: displayText(256) }, { location: displayText(256) }),
+    engineVersion: displayText(256),
+    generation: string(1, 256),
+    capabilities: object({
+      throughput: targets({
+        transport: mechanism("fetch-stream", "webtransport", "webtransport-datagram"),
+        protocol: mechanism("http1", "http2", "http3", "negotiated"),
+      }),
+      latency: targets({ transport: mechanism("websocket", "webtransport") }),
+      uploadCheckpoint: oneOf(true),
+      maxStageMs: integer(1_000, MAX_STAGE_LIMIT_MS),
     }),
-    latency: targets({ transport: mechanism("websocket", "webtransport") }),
-    uploadCheckpoint: oneOf(true),
-    maxStageMs: integer(1_000, MAX_STAGE_LIMIT_MS),
-  }),
-  lease: object({ maxMeasurements: integer(1), maxSessions: integer() }),
-});
+    lease: object({ maxMeasurements: integer(1), maxSessions: integer() }),
+  },
+  { protocol: integer(1) },
+);
 export type Preflight = Decoded<typeof preflight>;
 
 export const probe = object(
@@ -135,7 +139,11 @@ export const probe = object(
     clientIpSource: oneOf("socket", "forwarded"),
     protocolNegotiated: oneOf("http/1.1", "h2", "h3"),
   },
-  { load: object({ active: integer(), max: integer(1) }) },
+  {
+    load: object({ active: integer(), max: integer(1) }),
+    engineVersion: displayText(256),
+    protocol: integer(1),
+  },
 );
 export type Probe = Decoded<typeof probe>;
 

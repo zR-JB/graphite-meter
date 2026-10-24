@@ -453,21 +453,40 @@ async fn a_run_mints_its_receiver_with_its_lease_at_the_discovery_origin() {
 }
 
 #[tokio::test]
-async fn a_server_without_the_lease_is_refused_by_name_and_one_cut_below_the_ask_at_the_limit() {
-    for (older, text) in [
-        (true, "Peer runs an older Graphite Meter; update it"),
+async fn a_server_of_another_protocol_is_named_either_way_and_a_lease_cut_below_the_ask_at_the_limit()
+ {
+    const LIMITS: &str = r#","lease":{"maxMeasurements":32,"maxSessions":8}"#;
+    let newer = format!(
+        "Peer runs Graphite Meter 0.15.0, newer than this client ({}); update this client.",
+        graphite_meter_client::VERSION
+    );
+    for (shape, text) in [
+        // A 0.13.4 server's: no protocol and no lease.
         (
-            false,
+            "older",
+            "Peer runs Graphite Meter 0.13.4 (protocol 1); this client needs protocol 2, from 0.13.5. Update Peer.",
+        ),
+        ("newer", newer.as_str()),
+        (
+            "cut",
             "the test needs more measurements at once than this server admits for one client",
         ),
     ] {
         let (listener, served) = local().await;
         let _peer = peer(listener, None, move |_, head| {
             let found = discovery(head, true, "")?;
-            let leaseless = found.replace(r#","lease":{"maxMeasurements":32,"maxSessions":8}"#, "");
-            match target(head) {
-                "/preflight" if older => Some(ok(&leaseless[leaseless.find("\r\n\r\n")? + 4..])),
-                "/lease" => Some(ok(
+            let body = &found[found.find("\r\n\r\n")? + 4..];
+            let older = body
+                .replace(LIMITS, "")
+                .replace(r#""engineVersion":"1""#, r#""engineVersion":"0.13.4""#);
+            let newer = body.replace(
+                r#""engineVersion":"1""#,
+                r#""engineVersion":"0.15.0","protocol":3"#,
+            );
+            match (target(head), shape) {
+                ("/preflight", "older") => Some(ok(&older)),
+                ("/preflight", "newer") => Some(ok(&newer)),
+                ("/lease", _) => Some(ok(
                     r#"{"token":"t","measurements":1,"sessions":0,"uploads":[]}"#,
                 )),
                 _ => Some(found),
@@ -476,6 +495,30 @@ async fn a_server_without_the_lease_is_refused_by_name_and_one_cut_below_the_ask
         let config = downloads(&origin("http", served), Stage::Download);
         let prepared = prepare(&config, client(false)).await.unwrap();
         let failure = prepared.servers[0].path.clone().unwrap_err();
-        assert_eq!(failure.text, text);
+        assert_eq!(failure.text, text, "{shape}");
     }
+}
+
+#[tokio::test]
+async fn a_transfer_port_whose_probe_names_another_protocol_is_named() {
+    let (listener, served) = local().await;
+    let _peer = peer(listener, None, |_, head| match target(head) {
+        "/probe" => Some(ok(
+            r#"{"engineVersion":"0.15.0","protocol":3,"clientIp":"127.0.0.1","futureShape":[]}"#,
+        )),
+        "/lease" => Some(ok(LEASE)),
+        _ => discovery(head, true, ""),
+    });
+    let at = origin("http", served);
+    let prepared = prepare(&downloads(&at, Stage::Download), client(false))
+        .await
+        .unwrap();
+    let failure = prepared.servers[0].path.clone().unwrap_err();
+    assert_eq!(
+        failure.text,
+        format!(
+            "{at} runs Graphite Meter 0.15.0, newer than this client ({}); update this client.",
+            graphite_meter_client::VERSION
+        )
+    );
 }
