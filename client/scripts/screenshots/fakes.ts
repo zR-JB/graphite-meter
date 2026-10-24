@@ -115,6 +115,8 @@ const TICK_MS = 20;
 const RECEIVER_MS = 100;
 const PROBE_MS = 10;
 
+export const mintUpload = async (): Promise<string> => "gmu_screenshot";
+
 export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
   const plan = scenario();
   // The rate holds each level a while, as a link's does, and each level's mirror follows it, so the mean stays the scenario's.
