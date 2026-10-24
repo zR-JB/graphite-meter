@@ -13,8 +13,10 @@ mod store;
 
 pub use policy::BrowserOrigin;
 use policy::Policy;
+pub(crate) use routes::body;
 pub use store::{Identity, NewLogin, Store};
 use store::{LOGIN_LIFETIME, LoginKey};
+pub(crate) use store::{digest, random};
 
 use crate::{
     app::{Endpoint, Outcome, finalize::Access, response},
@@ -23,10 +25,7 @@ use crate::{
     peer::{ClientKeys, Peer},
     transport::body::Body,
 };
-use graphite_meter_proto::{
-    route::{Kind, Route},
-    token::SocketTicket,
-};
+use graphite_meter_proto::route::Route;
 use http::{HeaderMap, Request, Response, StatusCode};
 use oidc::Oidc;
 use page::protect;
@@ -165,11 +164,19 @@ impl Auth {
         self.0.as_ref().map(|auth| &auth.security)
     }
 
-    /// The policy every request passes, decided from its head alone.
-    pub fn authorize<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Decision {
+    /// The policy every request passes, decided from its head and the sign-in of the lease it presents.
+    pub fn authorize<B>(
+        &self,
+        request: &Request<B>,
+        endpoint: Endpoint,
+        peer: &Peer,
+        leased: Option<&AuthLease>,
+    ) -> Decision {
         match &self.0 {
             None => Ok(None),
-            Some(auth) => auth.policy.authorize(&auth.store, request, endpoint, peer),
+            Some(auth) => auth
+                .policy
+                .authorize(&auth.store, request, endpoint, peer, leased),
         }
     }
 
@@ -204,18 +211,6 @@ impl Auth {
             Some(auth) => auth.policy.access(lease?, headers),
         }
     }
-
-    pub(crate) fn ticket<B>(
-        &self,
-        request: &Request<B>,
-        lease: Option<&AuthLease>,
-        kind: Kind,
-    ) -> Response<Body> {
-        match &self.0 {
-            None => response::json_of(&SocketTicket::unauthenticated()),
-            Some(auth) => routes::mint(auth, request, lease, kind),
-        }
-    }
 }
 
 struct SignIn {
@@ -247,7 +242,7 @@ pub enum Holder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Via {
     Cookie,
-    /// A grant's bearer token or a socket ticket, with the browser origin a browser grant serves.
+    /// A grant's bearer token or a lease, with the browser origin a browser grant serves.
     Bearer(Option<BrowserOrigin>),
 }
 
@@ -276,6 +271,14 @@ impl AuthLease {
 
     pub fn login(&self) -> LoginKey {
         self.login
+    }
+
+    /// The same sign-in, presented through `via`.
+    pub(crate) fn presented(&self, via: Via) -> Self {
+        Self {
+            via,
+            ..self.clone()
+        }
     }
 
     /// The holder, then its principal at twice the share: admission keys and the owner of uploads it creates.

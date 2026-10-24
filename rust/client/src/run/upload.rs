@@ -1,4 +1,5 @@
-//! An upload session (`api/upload.md`): minted receiver, lanes, feed, checkpoints, one replacement per server and run.
+//! An upload session (`api/upload.md`): a receiver minted with the lease, lanes, feed, checkpoints, one replacement per
+//! server and run.
 use crate::{
     measure::aggregate::{Fed, Receiver},
     model::LaneHealth,
@@ -15,7 +16,7 @@ use graphite_meter_proto::{
     origin::Origin,
     refusal::Refusal,
     route::Route,
-    upload::{Counters, MAX_RECORD_BYTES, Record, Session as Minted},
+    upload::{Counters, MAX_RECORD_BYTES, Record},
 };
 use http::Method;
 use std::{
@@ -70,7 +71,7 @@ struct Progress {
     ended: Option<Fault>,
 }
 
-/// Where control requests go: the throughput check's connection, or on an HTTP/3 path the session's own connections.
+/// Where control requests go: the server's discovery origin, which its lease and the upload's owner answer at.
 #[derive(Clone)]
 struct Control {
     client: Client,
@@ -79,24 +80,21 @@ struct Control {
 }
 
 impl UploadSession {
-    /// Mints a receiver over `via`, starting its feed and lanes `stagger` apart; `replaced` is the server's this run.
+    /// Mints a receiver with `server`'s lease, starting its feed and lanes `stagger` apart; `replaced` is the server's
+    /// this run.
     pub async fn open(
         client: &Client,
+        server: &Origin,
         path: &ThroughputPath,
-        via: Protocol,
         plans: Vec<GroupPlan>,
         stagger: Duration,
         replaced: Arc<AtomicBool>,
         token: CancellationToken,
     ) -> Result<Self, Fault> {
-        let connections = match path.protocol {
-            Protocol::Http3 => client.apart(),
-            _ => client.clone(),
-        };
         let control = Control {
-            client: connections,
-            via,
-            origin: path.origin.clone(),
+            client: client.clone(),
+            via: Protocol::Negotiated,
+            origin: server.clone(),
         };
         let webtransport = path.transport == ThroughputTransport::WebTransport;
         let start = Start {
@@ -228,9 +226,7 @@ impl UploadSession {
 impl Start {
     async fn upload(self, number: u32) -> Result<Upload, Fault> {
         let control = &self.control;
-        let request = || control.request(Method::POST, Route::UploadSession, None);
-        let mint = || control.client.json(control.via, request(), Minted::decode);
-        let id = retrying(mint).await?.upload_id;
+        let id = retrying(|| control.client.upload_id(&control.origin)).await?;
         let token = self.token.child_token();
         let work = Work::Upload(id.clone());
         let lanes = Lanes::start(

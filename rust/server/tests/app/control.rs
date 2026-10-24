@@ -1,4 +1,4 @@
-//! Tests discovery, the probe, downloads, handler limits and socket tickets.
+//! Tests discovery, the probe, downloads, handler limits.
 
 use super::*;
 use graphite_meter_proto::{
@@ -171,7 +171,7 @@ async fn full_handler_pools_and_client_shares_name_their_refusal_and_ask_for_a_r
         ),
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            Some("server-busy"),
+            Some("server-capacity"),
             Some("1")
         )
     );

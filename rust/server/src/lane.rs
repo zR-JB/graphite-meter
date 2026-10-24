@@ -1,6 +1,6 @@
 //! An admitted request's time bounds, the one place a lane's ending is decided, and a connection's admitted work.
 
-use crate::{auth::AuthLease, limits::Hold, lock};
+use crate::{admission::Admission, auth::AuthLease, lock};
 use graphite_meter_proto::lane::{IDLE_BOUND, LaneEnding};
 use std::{
     future,
@@ -27,14 +27,14 @@ struct State {
     decided: CancellationToken,
     shutdown: CancellationToken,
     auth: Option<AuthLease>,
-    _hold: Hold,
+    _admission: Admission,
     _work: WorkGuard,
 }
 
 impl Lane {
-    /// A lane holding `hold` until its `lifetime` ends, on `shutdown` or on revocation of the request's sign-in.
+    /// A lane holding `admission` until its `lifetime` ends, on `shutdown` or on revocation of the request's sign-in.
     pub(crate) fn start(
-        hold: Hold,
+        admission: Admission,
         lifetime: Duration,
         work: &Work,
         shutdown: &CancellationToken,
@@ -50,7 +50,7 @@ impl Lane {
             // A child token: polling it never takes the server-wide token's waiter lock.
             shutdown: shutdown.child_token(),
             auth: auth.cloned(),
-            _hold: hold,
+            _admission: admission,
             _work: work.start(),
         }))
     }

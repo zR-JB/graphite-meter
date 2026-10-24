@@ -5,7 +5,7 @@ export const FAILURE_REASONS = {
   timeout: "Stopped delivering data",
   "sign-in-required": "Sign-in required",
   "client-limit": "Limit reached for your address or sign-in",
-  "server-busy": "Server at capacity",
+  "server-capacity": "Server at capacity",
   "protocol-error": "Unexpected server response",
   "insufficient-evidence": "Too little measured time",
 } as const;

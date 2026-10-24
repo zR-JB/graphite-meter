@@ -85,7 +85,7 @@ async fn client_streams_count_beside_http_and_the_feed_completes_after_finalizat
     let h3 = H3::start(&[]).await;
     let idle = settled(&h3.server.budget).await;
     let control = h3.connect(transport(None)).await;
-    let id = control.upload_id().await;
+    let id = h3.server.upload_id().await;
     let connection = h3.connect(transport(None)).await;
     let session = connection.session(&format!("/wt/upload?id={id}")).await;
     let mut feed = Feed::of(&session).await;
@@ -130,7 +130,7 @@ async fn datagrams_count_only_when_asked_and_their_lane_leaves_once_finalized() 
     let h3 = H3::start(&[]).await;
     let control = h3.connect(transport(None)).await;
     for (query, bytes) in [("datagrams", 310), ("datagrams=0", 10)] {
-        let id = control.upload_id().await;
+        let id = h3.server.upload_id().await;
         let connection = h3.connect(transport(None)).await;
         let session = connection
             .session(&format!("/wt/upload?id={id}&{query}"))
@@ -158,7 +158,7 @@ async fn a_session_keeps_its_credit_beside_an_http_upload_and_returns_it_when_it
     let h3 = H3::start(&[]).await;
     let idle = settled(&h3.server.budget).await;
     let control = h3.connect(transport(None)).await;
-    let id = control.upload_id().await;
+    let id = h3.server.upload_id().await;
     let connection = h3.connect(transport(None)).await;
     let session = connection.session(&format!("/wt/upload?id={id}")).await;
     let mut feed = Feed::of(&session).await;

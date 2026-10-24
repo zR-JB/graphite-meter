@@ -220,9 +220,10 @@ async fn a_cookie_login_measures_from_the_public_origin_and_proves_csrf_for_writ
             ("vary", Some("Origin")),
         ],
     );
-    let session = tls(&app, empty(signed("POST", "/upload/session", &login))).await;
-    assert_eq!(session.status(), StatusCode::OK);
-    let mut unproved = signed("POST", "/upload/session", &login);
+    let checkpoint = "/upload/checkpoint?id=gmu_x";
+    let session = tls(&app, empty(signed("POST", checkpoint, &login))).await;
+    assert_eq!(header(&session, "graphite-meter-refusal"), Some("invalid"));
+    let mut unproved = signed("POST", checkpoint, &login);
     unproved.headers_mut().unwrap().remove("x-csrf-token");
     assert_eq!(
         tls(&app, empty(unproved)).await.status(),
@@ -297,16 +298,6 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
             .await
             .status(),
         StatusCode::OK
-    );
-    let mint = bearer(
-        "POST",
-        "/ws/session?target=https://meter.example/ws/ping",
-        &native,
-    );
-    assert_eq!(
-        tls(&app, empty(mint)).await.status(),
-        StatusCode::FORBIDDEN,
-        "native grants open sockets directly"
     );
     assert!(store(&app).sign_out(login.key, false));
     let ended = tls(&app, empty(bearer("GET", "/probe", &native))).await;

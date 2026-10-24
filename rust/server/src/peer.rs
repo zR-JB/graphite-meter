@@ -1,11 +1,15 @@
 //! Names a request's client by socket or trusted-proxy address and sign-in, and the client keys limits and uploads use.
 
+use crate::admission::Lease;
 use crate::auth::{AuthLease, Holder, Principal};
 use crate::log::{Level, RateLimited};
 use graphite_meter_proto::discovery::ClientIpSource;
 use http::{HeaderMap, HeaderName};
 use ipnet::{IpNet, Ipv6Net};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+};
 
 /// A misconfigured proxy refuses every request it forwards, so one line a minute names the fault.
 static REFUSALS: RateLimited = RateLimited::new(
@@ -114,6 +118,7 @@ fn is_trusted(ip: IpAddr, trusted: &[IpNet]) -> bool {
 pub struct Peer {
     address: Address,
     auth: Option<AuthLease>,
+    lease: Option<Arc<Lease>>,
 }
 
 impl Peer {
@@ -121,11 +126,20 @@ impl Peer {
         Self {
             address,
             auth: None,
+            lease: None,
         }
     }
 
     pub fn with_auth(self, auth: Option<AuthLease>) -> Self {
         Self { auth, ..self }
+    }
+
+    pub fn with_lease(self, lease: Option<Arc<Lease>>) -> Self {
+        Self { lease, ..self }
+    }
+
+    pub fn lease(&self) -> Option<&Arc<Lease>> {
+        self.lease.as_ref()
     }
 
     pub fn address(&self) -> Address {
@@ -142,7 +156,15 @@ impl Peer {
         !matches!(self.address, Address::Socket(_)) && matches!(proto, Some("https" | "wss"))
     }
 
-    /// Limits charge, and uploads belong to, the sign-in or else the address. Ambiguous proxy evidence gives `None`.
+    /// Uploads belong to the lease presented, else to the client `keys` names.
+    pub fn owner(&self) -> Option<ClientKeys> {
+        match &self.lease {
+            Some(lease) => Some(ClientKeys::Lease(lease.id())),
+            None => self.keys(),
+        }
+    }
+
+    /// Limits charge the sign-in or else the address. Ambiguous proxy evidence gives `None`.
     pub fn keys(&self) -> Option<ClientKeys> {
         match (&self.auth, self.address) {
             (Some(auth), _) => Some(auth.keys()),
@@ -158,6 +180,7 @@ pub enum ClientKey {
     V6(Ipv6Net),
     Holder(Holder),
     Principal(Principal),
+    Lease(u64),
 }
 
 /// Lists a client's keys, narrowest first. Each holds twice the share of the one before it.
@@ -170,6 +193,8 @@ pub enum ClientKeys {
     V6(Ipv6Addr),
     /// A login or grant comes first, then the principal it belongs to.
     Auth(Holder, Principal),
+    /// Work presenting a lease, which holds its admission already.
+    Lease(u64),
 }
 
 impl ClientKeys {
@@ -211,6 +236,7 @@ impl ClientKeys {
                 Some(ClientKey::Principal(principal.clone())),
                 None,
             ],
+            Self::Lease(id) => [Some(ClientKey::Lease(*id)), None, None],
         };
         keys.into_iter().flatten()
     }

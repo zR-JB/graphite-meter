@@ -1,6 +1,5 @@
 // One latency bus (api/wire.md); each connection has its own controller, so a replaced one cannot act.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
-import { Tickets, withToken } from "../lanes/dial";
 import { abortable } from "../run/clock";
 import {
   CLOSE_GRACE_MS,
@@ -16,7 +15,6 @@ type Send = (text: string) => void | Promise<void>;
 /** Says how a connection ended, with a detail for a reconnect, or null when the server revoked the sign-in; at the server's idle or lifetime bound it dials again at once. */
 type End = (detail: string | null, bound?: boolean) => void;
 
-const tickets = new Tickets();
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 let prober: Prober;
@@ -32,7 +30,7 @@ self.onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
   if (data.type === "start") start(data);
   else if (data.type === "dial") {
     if (connection) queued = true;
-    else void dial(command);
+    else dial(command);
   } else if (data.type === "renew") renew();
   else if (data.type === "measure") prober.measure();
   else if (data.type === "pace") prober.pace(data.intervalMs, data.maxInFlight);
@@ -51,7 +49,7 @@ function start(started: Start): void {
     disarm: () => clearTimeout(timer),
   };
   prober = new Prober(command, clock, {
-    dial: () => void dial(command),
+    dial: () => dial(command),
     send: (text) => send!(text),
     hangUp() {
       connection?.abort();
@@ -72,20 +70,17 @@ function renew(): void {
 function redial(): void {
   prober.renewing();
   postMessage({ type: "renewing" } satisfies ProbeReport);
-  void dial(command);
+  dial(command);
 }
 
-async function dial({ url, transport, ticket }: Start): Promise<void> {
+function dial({ url, transport }: Start): void {
   const own = new AbortController();
   connection = own;
   const expired = AbortSignal.timeout(ESTABLISH_MS);
   const budget = AbortSignal.any([own.signal, expired]);
-  let token = "";
   let openedAt = Infinity;
   const end: End = (detail, bound = false) => {
     if (own.signal.aborted) return;
-    // Any answer spent the ticket; a WebTransport dial ended at its budget may never have reached the server, unlike a WebSocket one.
-    if (transport === "websocket" || !expired.aborted) tickets.spent(token);
     own.abort();
     if (connection === own) connection = send = null;
     if (detail === null) return prober.signIn();
@@ -93,34 +88,19 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
     prober.closed(detail);
     if (queued && !connection) {
       queued = false;
-      void dial(command);
+      dial(command);
     }
   };
-  if (ticket) {
-    const minted = await tickets.take(ticket, budget);
-    if (own.signal.aborted) return;
-    if (minted.type === "ended" && minted.ending.reason === "sign-in-required") return end(null);
-    if (minted.type !== "token")
-      return end(
-        budget.aborted
-          ? `${transport} did not establish`
-          : minted.type === "ended"
-            ? minted.ending.detail
-            : minted.detail,
-      );
-    token = minted.token;
-  }
   const opened = (write: Send) => {
     if (own.signal.aborted) return;
     openedAt = performance.now();
     queued = false;
-    tickets.spent(token);
     send = write;
     prober.opened();
   };
   try {
-    if (transport === "websocket") socket(withToken(url, token), own.signal, expired, end, opened);
-    else session(withToken(url, token), own.signal, budget, end, opened);
+    if (transport === "websocket") socket(url, own.signal, expired, end, opened);
+    else session(url, own.signal, budget, end, opened);
   } catch (error) {
     end(String(error));
   }

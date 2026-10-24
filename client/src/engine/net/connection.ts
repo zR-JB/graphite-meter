@@ -37,6 +37,7 @@ import {
 } from "./checks";
 import { createBusSlot, IDLE_INTERVAL_MS } from "../lanes/probes";
 import { createWorkerPool } from "../lanes/pool";
+import { createLease } from "./lease";
 import type { Limiter } from "./limiter";
 import type { PageConfig, PageSession } from "./page";
 import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
@@ -175,8 +176,9 @@ function connect(
     },
   };
   const workers = createWorkerPool();
-  const link: Link = { bus: createBusSlot(env.openProbeChannel, parked), workers };
-  const context: CheckContext = { entry, auth, page, bus: link.bus, now };
+  const lease = createLease(entry.url, auth);
+  const link: Link = { bus: createBusSlot(env.openProbeChannel, parked), workers, lease };
+  const context: CheckContext = { entry, auth, lease, page, bus: link.bus, now };
   const discovery = signal<Discovery | null>(null);
   /** The last discovery failure is kept through a loud re-read, which only hides it. */
   const fault = signal<Fault | null>(null);
@@ -567,21 +569,28 @@ function connect(
     const path = watchedPath();
     if (!path) return;
     const { bus } = link;
-    untrack(() => {
+    let watched = true;
+    // A bus that cannot even open is a path to prove again.
+    const unopened = () => queueMicrotask(() => disposed || invalidate(["latency"]));
+    const open = () => {
+      if (!watched) return;
       try {
         const { target } = path;
         const held = bus.take(
-          { target, auth, control: entry.url, intervalMs: IDLE_INTERVAL_MS, maxInFlight: 2 },
+          { target, auth: lease, control: entry.url, intervalMs: IDLE_INTERVAL_MS, maxInFlight: 2 },
           parked,
         );
         // Every idle probe counts, as there is no warmup.
         held.measure();
       } catch {
-        // A bus that cannot even open is a path to prove again.
-        queueMicrotask(() => disposed || invalidate(["latency"]));
+        unopened();
       }
+    };
+    untrack(() => void lease.renew().then(open, () => watched && unopened()));
+    onCleanup(() => {
+      watched = false;
+      bus.park();
     });
-    onCleanup(() => bus.park());
   });
   effect(() => {
     if (!env.active() || !quiet()) return;
@@ -592,13 +601,16 @@ function connect(
   });
   effect(() => {
     if (!required("latency")) link.bus.dispose();
-    if (!selected()) workers.drain();
+    if (selected()) return;
+    workers.drain();
+    lease.end();
   });
   effect(() => {
     if (!env.hidden()) return;
     const timer = setTimeout(() => {
       link.bus.dispose();
       workers.drain();
+      lease.end();
     }, HIDDEN_MS);
     onCleanup(() => clearTimeout(timer));
   });
@@ -607,6 +619,7 @@ function connect(
     cancelAll();
     link.bus.dispose();
     workers.close();
+    lease.end();
   });
 
   // The view reads settled booleans, so a quiet re-read that starts and ends changes nothing it shows.
@@ -680,7 +693,9 @@ function connect(
       untrack(() => {
         if (auth.left() <= 0) return null;
         const ready = paths(since);
-        return ready && { server: identity(), auth, discovery: discovery()!, link, ...ready };
+        return (
+          ready && { server: identity(), auth: lease, discovery: discovery()!, link, ...ready }
+        );
       }),
     invalidate,
     proved,

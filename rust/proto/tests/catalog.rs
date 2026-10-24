@@ -216,7 +216,7 @@ fn discovery_may_use_the_entry_host_on_any_port_or_an_exact_additional_origin() 
             |base| json!({"baseUrl": base, "transport": "fetch-stream", "protocol": "http2"});
         let throughput: Vec<_> = targets.iter().map(target).collect();
         let capabilities = json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": []});
-        let document = json!({"server": {"name": ""}, "engineVersion": "", "generation": "g", "capabilities": capabilities});
+        let document = json!({"server": {"name": ""}, "engineVersion": "", "generation": "g", "capabilities": capabilities, "lease": {"maxMeasurements": 1, "maxSessions": 0}});
         frankfurt.approves(
             &served,
             &Preflight::decode(&serde_json::to_vec(&document).unwrap()).unwrap(),

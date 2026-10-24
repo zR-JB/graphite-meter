@@ -1,9 +1,9 @@
 //! Bounds a request's time before admission and shows its transport whether, and for whom, it was admitted.
 
 use crate::{
+    admission::Admission,
     auth::AuthLease,
     lane::{Lane, Work},
-    limits::Hold,
     peer::ClientKeys,
 };
 use std::{
@@ -43,18 +43,18 @@ impl Exchange {
         self.0.clone()
     }
 
-    /// Admits `keys`' request as a lane holding `hold` for `lifetime`. It ends on `shutdown` or sign-in revocation.
+    /// Admits `keys`' request as a lane holding `admission` for `lifetime`. It ends on `shutdown` or sign-in revocation.
     pub fn admit(
         self,
         keys: ClientKeys,
-        hold: Hold,
+        admission: impl Into<Admission>,
         lifetime: Duration,
         work: &Work,
         shutdown: &CancellationToken,
         auth: Option<&AuthLease>,
     ) -> Lane {
         let _ = self.0.admitted.set(keys);
-        Lane::start(hold, lifetime, work, shutdown, auth)
+        Lane::start(admission.into(), lifetime, work, shutdown, auth)
     }
 }
 

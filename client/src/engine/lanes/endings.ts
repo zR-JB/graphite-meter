@@ -4,7 +4,7 @@ import { ROUTES } from "../../protocol/routes";
 import type { Ending, ServerAuth } from "../types";
 import { delay } from "../run/clock";
 
-/** A connection that has not answered by now is not going to; a dial's ticket and handshake share it. */
+/** A connection that has not answered by now is not going to. */
 export const ESTABLISH_MS = 3_000;
 export const RESTART_MS = 300;
 /** Retry-After raises the pause up to here, so the one retry still lands inside the run's 1.5 s silence window. */
@@ -13,7 +13,7 @@ export const RESTART_CAP_MS = 1_200;
 type Disposition = Pick<Ending, "reason" | "retry" | "rotate" | "bound"> & { detail?: string };
 const LOST: Disposition = { reason: "connection-lost", retry: true };
 const LIMITED: Disposition = { reason: "client-limit", retry: true };
-const BUSY: Disposition = { reason: "server-busy", retry: true };
+const BUSY: Disposition = { reason: "server-capacity", retry: true };
 const SIGN_IN: Disposition = { reason: "sign-in-required", retry: false };
 const UNEXPECTED: Disposition = { reason: "protocol-error", retry: false };
 /** Refusals by code (api/refusals.txt); `invalid` means the server forgot the upload id, which may be replaced once. */
@@ -23,7 +23,7 @@ const REFUSALS: Record<string, Disposition> = {
   idle: { reason: "timeout", retry: true, bound: true },
   revoked: SIGN_IN,
   "client-limit": LIMITED,
-  "server-busy": BUSY,
+  "server-capacity": BUSY,
   "wrong-protocol": {
     reason: "path-failed",
     retry: false,
@@ -60,7 +60,7 @@ const retryAfterMs = ({ headers }: Response) => {
 
 const REFUSAL_HEADER = "Graphite-Meter-Refusal";
 
-/** A refused upload, progress feed or socket ticket. */
+/** A refused upload, progress feed or lease. */
 export const refused = (response: Response, detail = `HTTP ${response.status}`): Ending =>
   signInMarker(response)
     ? { ...SIGN_IN, detail }

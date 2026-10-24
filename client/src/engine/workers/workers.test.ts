@@ -422,7 +422,6 @@ test("a session's stop finalizes its upload id, then acknowledges on the termina
   const upload: SessionCommand = {
     type: "upload",
     url: "https://peer.example/wt/upload?id=u1",
-    ticket: null,
     datagrams: false,
     streams: 2,
     finalize: { url: feed, request: RECIPE },
@@ -458,7 +457,6 @@ test("a session relays a flood of receiver progress as its newest record every 5
   session.send({
     type: "upload",
     url: "https://peer.example/wt/upload?id=u1",
-    ticket: null,
     datagrams: false,
     streams: 1,
     finalize: { url: "https://peer.example/upload/progress?id=u1", request: RECIPE },
@@ -488,7 +486,6 @@ const datagrams = async (epoch: number) => {
   session.send({
     type: "download",
     url: "https://peer.example/wt/download?datagrams=1",
-    ticket: null,
     datagrams: true,
     epoch,
   });
@@ -537,7 +534,6 @@ test("a session reopened in its epoch keeps the epoch's count, and a stopped one
   session.send({
     type: "download",
     url: "https://peer.example/wt/download?datagrams=1",
-    ticket: null,
     datagrams: true,
     epoch: 3,
   });
@@ -583,7 +579,6 @@ test("a session whose streams broke waits for its close: a revocation asks for s
   const download: SessionCommand = {
     type: "download",
     url: "https://peer.example/wt/download?streams=1",
-    ticket: null,
     datagrams: false,
     epoch: 0,
   };
@@ -613,16 +608,11 @@ test("a session whose streams broke waits for its close: a revocation asks for s
   ]);
 });
 
-test("a session's refused dial spends its ticket, one that lapsed unanswered reuses it, and both report a failed handshake", async () => {
-  let minted = 0;
-  const session = await boot<SessionCommand>("./session.ts", {
-    WebTransport: FakeWebTransport,
-    fetch: async () => Response.json({ token: `t${++minted}`, expires: Date.now() + 30_000 }),
-  });
+test("a session's refused dial and one that lapsed unanswered both report a failed handshake, and redial its lease", async () => {
+  const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
   const download: SessionCommand = {
     type: "download",
-    url: "https://peer.example/wt/download?streams=1",
-    ticket: { url: "https://peer.example/wt/session?target=wt", request: RECIPE },
+    url: "https://peer.example/wt/download?streams=1&lease=gml_t",
     datagrams: false,
     epoch: 0,
   };
@@ -634,10 +624,10 @@ test("a session's refused dial spends its ticket, one that lapsed unanswered reu
   await elapse(3_000);
   session.send(download);
   await elapse(0);
-  expect(FakeWebTransport.dialed.map(({ url }) => new URL(url).searchParams.get("token"))).toEqual([
-    "t1",
-    "t2",
-    "t2",
+  expect(FakeWebTransport.dialed.map(({ url }) => new URL(url).searchParams.get("lease"))).toEqual([
+    "gml_t",
+    "gml_t",
+    "gml_t",
   ]);
   expect(session.posted).toEqual([
     { type: "handshake", opened: false },
@@ -676,22 +666,17 @@ class FakeWebSocket {
   }
 }
 
-const bus = (transport: "websocket" | "webtransport", ticket: boolean): ProbeCommand => ({
+const bus = (transport: "websocket" | "webtransport"): ProbeCommand => ({
   type: "start",
-  url: transport === "websocket" ? "wss://peer.example/ws/ping" : "https://peer.example/wt/ping",
+  url: `${transport === "websocket" ? "wss://peer.example/ws/ping" : "https://peer.example/wt/ping"}?lease=gml_t`,
   transport,
-  ticket: ticket ? { url: "https://peer.example/ws/session?target=wss", request: RECIPE } : null,
   intervalMs: 80,
   maxInFlight: 2,
 });
 
-test("a WebSocket dial past its budget stays, reported as an outage until it answers; a refused one spends its ticket and waits for the owner", async () => {
-  let minted = 0;
-  const probe = await boot<ProbeCommand>("./probe.ts", {
-    WebSocket: FakeWebSocket,
-    fetch: async () => Response.json({ token: `t${++minted}`, expires: Date.now() + 30_000 }),
-  });
-  probe.send(bus("websocket", true));
+test("a WebSocket dial past its budget stays, reported as an outage until it answers; a refused one waits for the owner", async () => {
+  const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
+  probe.send(bus("websocket"));
   // The browser queues the handshake, so closing it would only delay the next one.
   await elapse(3_500);
   expect(probe.types()).toEqual(["stalled"]);
@@ -699,23 +684,23 @@ test("a WebSocket dial past its budget stays, reported as an outage until it ans
   FakeWebSocket.opened.at(-1)!.onopen!();
   await elapse(0);
   expect(probe.types()).toEqual(["stalled", "ready", "resumed"]);
-  // A refused upgrade presented its ticket, so the server spent it whatever it answered; only the owner redials.
+  // Only the owner redials a refused upgrade.
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1006, reason: "" });
   await elapse(5_000);
   expect(FakeWebSocket.opened).toHaveLength(1);
   probe.send({ type: "dial" });
   await elapse(0);
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1008, reason: "authentication required" });
-  expect(FakeWebSocket.opened.map(({ url }) => new URL(url).searchParams.get("token"))).toEqual([
-    "t1",
-    "t2",
+  expect(FakeWebSocket.opened.map(({ url }) => new URL(url).searchParams.get("lease"))).toEqual([
+    "gml_t",
+    "gml_t",
   ]);
   expect(probe.types().slice(3)).toEqual(["stalled", "sign-in"]);
 });
 
 test("an owner's dial during a lapsed WebSocket dial follows that dial's end", async () => {
   const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
-  probe.send(bus("websocket", false));
+  probe.send(bus("websocket"));
   await elapse(3_500);
   expect(probe.types()).toEqual(["stalled"]);
   probe.send({ type: "dial" });
@@ -728,7 +713,7 @@ test("an owner's dial during a lapsed WebSocket dial follows that dial's end", a
 
 test("a bus at the server's lifetime bound, or renewed, dials again on its own without an outage, unless it ended at once", async () => {
   const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
-  probe.send(bus("websocket", false));
+  probe.send(bus("websocket"));
   const first = FakeWebSocket.opened.at(-1)!;
   first.onopen!();
   await elapse(3_000);
@@ -755,7 +740,7 @@ test("a bus at the server's lifetime bound, or renewed, dials again on its own w
 
 test("a WebTransport bus whose datagrams failed waits for its close: a revocation asks for sign-in", async () => {
   const probe = await boot<ProbeCommand>("./probe.ts", { WebTransport: FakeWebTransport });
-  probe.send(bus("webtransport", false));
+  probe.send(bus("webtransport"));
   await elapse(0);
   const transport = FakeWebTransport.dialed.at(-1)!;
   transport.accept();

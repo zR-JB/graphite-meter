@@ -9,11 +9,6 @@ export interface RequestRecipe {
   redirect: RequestRedirect;
 }
 
-export interface TicketRecipe {
-  url: string;
-  request: RequestRecipe;
-}
-
 /** How a lane, feed or channel ended; `retry` may recover it, `rotate` lets the run replace an upload id the server forgot. */
 export interface Ending {
   reason: FailureReason;
@@ -93,14 +88,12 @@ export type SessionCommand =
   | {
       type: "download";
       url: string;
-      ticket: TicketRecipe | null;
       datagrams: boolean;
       epoch: number;
     }
   | {
       type: "upload";
       url: string;
-      ticket: TicketRecipe | null;
       datagrams: boolean;
       streams: number;
       /** The DELETE that finalizes the upload id. */
@@ -131,7 +124,6 @@ export type ProbeCommand =
       type: "start";
       url: string;
       transport: "websocket" | "webtransport";
-      ticket: TicketRecipe | null;
       intervalMs: number | null;
       maxInFlight: number;
     }
