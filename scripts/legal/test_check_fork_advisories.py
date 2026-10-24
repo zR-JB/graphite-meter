@@ -25,18 +25,24 @@ class ForkAdvisoryTests(unittest.TestCase):
         advisory(self.database, "unrelated", "RUSTSEC-2026-0003")
 
     def fork(self, **verdicts: str) -> dict:
-        return {"fork": FORK, "advisoryCrates": ["upstream-proto", "fork-proto"], "advisories": verdicts}
+        return {"fork": FORK, "advisoryCrates": ["upstream-proto", "fork-proto"], "advisories": verdicts,
+                "commits": [{"subject": "Bound the queue"}]}
 
     def test_an_advisory_of_a_derived_crate_needs_a_verdict(self) -> None:
         self.assertEqual(check([self.fork(**{"RUSTSEC-2026-0001": "fixed by fork commit 1"})], self.database), [])
         self.assertEqual(check([self.fork()], self.database),
-                         [f"{FORK}: RUSTSEC-2026-0001 for upstream-proto, fork-proto has no verdict in "
-                          "legal/rust-forks.json"])
+                         [f"{FORK}: RUSTSEC-2026-0001 for upstream-proto has no verdict in legal/rust-forks.json"])
 
     def test_a_verdict_must_match_a_current_advisory(self) -> None:
         verdicts = {"RUSTSEC-2026-0001": "not affected", "RUSTSEC-2026-0002": "withdrawn upstream"}
         self.assertEqual(check([self.fork(**verdicts)], self.database),
                          [f"{FORK}: the verdict on RUSTSEC-2026-0002 matches no current advisory"])
+
+    def test_a_verdict_citing_a_commit_holds_only_while_the_fork_carries_it(self) -> None:
+        self.assertEqual(check([self.fork(**{"RUSTSEC-2026-0001": 'Fixed by "Bound the queue".'})], self.database), [])
+        self.assertEqual(check([self.fork(**{"RUSTSEC-2026-0001": 'Fixed by "Bound the old queue".'})], self.database),
+                         [f'{FORK}: the verdict on RUSTSEC-2026-0001 quotes "Bound the old queue", which is not among '
+                          "the fork's commits"])
 
     def test_a_record_must_name_the_crates_it_derives_from(self) -> None:
         self.assertEqual(check([{"fork": FORK}], self.database),

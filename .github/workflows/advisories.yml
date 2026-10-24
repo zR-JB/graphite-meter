@@ -28,6 +28,6 @@ jobs:
         working-directory: rust
         run: cargo deny --locked check advisories
       - name: Require a verdict on every advisory the Cargo forks inherit
-        run: python3 -m scripts.legal.check_fork_advisories "${CARGO_HOME:-$HOME/.cargo}/advisory-dbs"
+        run: python3 -m scripts.legal.check_fork_advisories
       - name: Check the client's locked dependencies against the registry advisory database
         run: mise run client-audit

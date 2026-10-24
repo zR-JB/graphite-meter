@@ -12,7 +12,7 @@
       "noq-proto",
       "noq-udp"
     ],
-    "advisoryCrates": ["noq", "noq-proto", "noq-udp", "quinn", "quinn-proto", "quinn-udp"],
+    "advisoryCrates": ["noq", "noq-proto", "noq-udp", "quinn", "quinn-proto", "quinn-udp", "iroh-quinn", "iroh-quinn-proto", "iroh-quinn-udp"],
     "advisories": {
       "RUSTSEC-2021-0035": "Fixed in quinn 0.7 long before noq forked; the fork's history has the change.",
       "RUSTSEC-2023-0063": "Fixed by quinn f81c2fafa, which is in the fork's history.",

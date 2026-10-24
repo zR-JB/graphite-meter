@@ -53,9 +53,15 @@ The workspace builds noq and h2 from forks that carry Graphite Meter patches on 
 `rust/Cargo.toml` has a record in `rust-forks.json`: the fork branch and full-SHA `rev`, the upstream tag and its
 commit `base`, `diffSha256` (the SHA-256 of `git diff-tree -r --no-renames --full-index base rev`), the changed
 packages and files, and each commit's subject, purpose and origin.
+`advisoryCrates` names the crates whose RustSec advisories reach the fork, its own and those it derives from under
+other names, and `advisories` holds the reviewed verdict on each of their advisories. cargo-deny cannot match a git
+package, so `mise run rust-check` and the daily Advisories workflow run `python3 -m scripts.legal.check_fork_advisories`
+against the database cargo-deny fetched: an advisory without a verdict, a verdict for a withdrawn or unknown advisory,
+and a verdict quoting a commit subject the fork no longer carries all fail.
 
 To move a fork, carry the patches onto the new upstream release on its `graphite-meter/<crate>-v<version>` branch and
-review the upstream base, each patch's origin, the changed paths and their licenses. Then update `rust/Cargo.toml`,
+review the upstream base, each patch's origin, the changed paths and their licenses, and re-review every advisory
+verdict against the new code. Then update `rust/Cargo.toml`,
 `rust/Cargo.lock` and the record. `mise run rust-check` requires a record for every git package in the lock and a lock
 package for every record; CI also runs `python3 -m scripts.legal.check_git_sources --verify`, which fetches each
 branch and tag and checks ancestry, the change-set digest and scope, and the commit list.
