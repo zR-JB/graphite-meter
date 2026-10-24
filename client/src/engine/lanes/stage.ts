@@ -13,7 +13,7 @@ import {
   type FailureReason,
   type OpenStage,
   type PreparedServer,
-  type ProbeChannel,
+  type LatencyBus,
   type ProbeChannelEvents,
   type Role,
   type StageResources,
@@ -23,7 +23,6 @@ import {
 import { Carrier, type CarrierHost, type CarrierPlan } from "./carrier";
 import { answered, ESTABLISH_MS } from "./endings";
 import { handshakes, THROTTLED } from "../net/webtransport";
-import { openProbeChannel } from "./probes";
 import { Receiver, type ReceiverHost } from "./receiver";
 import { abortable, delay } from "../run/clock";
 
@@ -78,8 +77,9 @@ class Stage implements StageResources {
   #down: Carrier | null = null;
   #up: Carrier | null = null;
   #receiver: Receiver | null = null;
-  #probes: ProbeChannel | null = null;
+  #probes: LatencyBus | null = null;
   #probesReady = false;
+  #probesMeasuring = false;
   readonly #stalls: Record<Direction, boolean> = { down: false, up: false };
   #unprepared: ((error: Error) => void) | null = null;
   #changed = Promise.withResolvers<void>();
@@ -134,6 +134,7 @@ class Stage implements StageResources {
     this.#measuring = true;
     this.#down?.measure(at);
     this.#receiver?.measure();
+    this.#probesMeasuring = !!this.#probes;
     this.#probes?.measure();
   }
 
@@ -170,10 +171,12 @@ class Stage implements StageResources {
   async replaceUpload(signal: AbortSignal): Promise<void> {
     if (!this.#receiver || this.#throughputEnded || this.#released.signal.aborted) return;
     this.#receiver.close();
-    this.#up?.release();
+    const released = this.#up?.release();
     this.#receiver = this.#up = null;
     // The replacement's lanes and feed start with their own reopen.
     for (const label of this.#reopened) if (label.startsWith("up")) this.#reopened.delete(label);
+    await released;
+    if (signal.aborted || this.#released.signal.aborted) return;
     try {
       await this.#prepareUpload(
         AbortSignal.any([signal, this.#released.signal, AbortSignal.timeout(READY_MS)]),
@@ -187,7 +190,7 @@ class Stage implements StageResources {
 
   async finish(): Promise<void> {
     if (this.#released.signal.aborted) return;
-    const drained = this.#probes?.stop();
+    const drained = this.#probes?.stop().then(() => (this.#probesMeasuring = false));
     await Promise.all([this.#down?.stop(), this.#up?.stop()]);
     await this.#receiver?.finish();
     await drained;
@@ -199,8 +202,9 @@ class Stage implements StageResources {
   discard(incomplete = false): void {
     if (this.#released.signal.aborted) return;
     if (this.#probes) {
-      this.#probes.dispose(incomplete);
-      this.#setup.bus.current = null;
+      // The bus stays the server's; outcomes it still owes this population are lost to it.
+      if (incomplete && this.#probesMeasuring) this.#setup.events.probesIncomplete();
+      this.#setup.server.link.bus.park();
     }
     this.#released.abort();
     this.#throughputEnded = true;
@@ -227,7 +231,8 @@ class Stage implements StageResources {
   }
 
   #openProbes(): void {
-    const { server, activity, cadence, events, bus } = this.#setup;
+    const { server, activity, cadence, events } = this.#setup;
+    const { bus } = server.link;
     if (!server.latency || !needsPings(activity)) return;
     const intervalMs = CADENCE_MS[cadence];
     const maxInFlight =
@@ -251,18 +256,21 @@ class Stage implements StageResources {
       signInRequired: () => this.#signIn("latency"),
       incomplete: () => events.probesIncomplete(),
     };
-    // A handshake behind a stage's own transfers can take seconds, so each later stage adopts the bus already open.
-    if (bus.current?.adopt(own)) bus.current.pace(intervalMs, maxInFlight);
-    else if (server.latency.target.transport !== "websocket" && handshakes.throttled.peek()) {
+    const { target } = server.latency;
+    // A handshake behind a stage's own transfers can take seconds, so a stage adopts the server's bus already open.
+    const adopted = bus.adopt(target, own);
+    adopted?.pace(intervalMs, maxInFlight);
+    if (!adopted && target.transport !== "websocket" && handshakes.throttled.peek()) {
       // Loaded latency never holds throughput back.
       if (activity.stage === "latency") throw new StageFailure("path-failed", THROTTLED);
       return events.latencyStalled(THROTTLED);
-    } else
-      bus.current = openProbeChannel(
-        { target: server.latency.target, auth: server.auth, intervalMs, maxInFlight },
+    }
+    this.#probes =
+      adopted ??
+      bus.take(
+        { target, auth: server.auth, control: server.server.url, intervalMs, maxInFlight },
         own,
       );
-    this.#probes = bus.current;
   }
 
   /** Mints an upload id and opens its receiver; HTTP lanes write only once the feed is open, so it reports from the first byte. */
@@ -301,6 +309,7 @@ class Stage implements StageResources {
     let plan: CarrierPlan;
     if (target.transport === "fetch-stream") {
       plan = {
+        pool: server.link.workers,
         worker: WORKERS.lane,
         lanes: count,
         gating: direction === "down" ? Math.min(count, gating?.down ?? count) : 0,
@@ -334,6 +343,7 @@ class Stage implements StageResources {
           : upload;
       const url = `${target.origin}${route}?${query}${direction === "up" && datagrams ? "&datagrams=1" : ""}`;
       plan = {
+        pool: server.link.workers,
         worker: WORKERS.session,
         lanes: 1,
         gating: direction === "down" ? 1 : 0,
@@ -428,8 +438,8 @@ class Stage implements StageResources {
     this.#stall(direction, stall);
     if (broken) void this.#signedOut().then((signedOut) => signedOut && this.#signIn("throughput"));
     await delay(delayMs, signal);
-    const { auth, throughput } = this.#setup.server;
-    const answers = await answered(throughput.fetch.origin, auth, signal, ESTABLISH_MS);
+    const { auth, server } = this.#setup.server;
+    const answers = await answered(server.url, auth, signal, ESTABLISH_MS);
     // Whoever closed this lane or feed meanwhile owns its ending.
     if (signal.aborted || this.#throughputEnded) return false;
     if (!answers)

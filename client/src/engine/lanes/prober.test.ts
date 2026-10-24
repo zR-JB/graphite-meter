@@ -207,7 +207,7 @@ test("a window's end drains its probes to their own deadlines outside it while t
   );
   b.prober.stop();
   b.run(470);
-  expect(b.reports.at(-1)).toEqual({ type: "drained" });
+  expect(b.reports.at(-1)).toEqual({ type: "drained", id: 0 });
 });
 
 test("a new pace can turn a fixed cadence into a reply-driven chain within a smaller window, and back", () => {
@@ -243,6 +243,16 @@ test("a disconnect keeps passed deadlines as timeouts, interrupts the rest, stal
   // Its loss is a new outage.
   b.prober.closed("websocket closed");
   expect(b.of("stalled")).toHaveLength(2);
+});
+
+test("a renewal interrupts the probes in flight without an outage, and the fresh connection is ready at its first reply", () => {
+  const b = opened(bus(100, 16, () => 5));
+  b.run(250);
+  b.prober.renewing();
+  b.prober.opened();
+  b.run(260);
+  expect(b.of("stalled")).toHaveLength(0);
+  expect(b.of("ready")).toHaveLength(2);
 });
 
 test("a freeze leaves the probes in flight across it unresolved, whether its late timer or a reply runs first", () => {

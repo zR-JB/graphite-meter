@@ -152,8 +152,8 @@ export class FakeBuses {
       timer = setTimeout(() => {
         const rttMs = this.rttMs;
         if (rttMs === null) return;
-        if (first) events.ready();
-        events.outcomes([
+        if (first) bus.events.ready();
+        bus.events.outcomes([
           {
             rttMs,
             timedOut: false,
@@ -174,6 +174,12 @@ export class FakeBuses {
       dispose() {
         bus.disposed = true;
         clearTimeout(timer);
+      },
+      renew() {},
+      adopt(next) {
+        if (bus.disposed) return false;
+        bus.events = next;
+        return true;
       },
     };
   };

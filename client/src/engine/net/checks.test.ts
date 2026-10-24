@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
-import type { Discovery } from "../types";
+import { createBusSlot } from "../lanes/probes";
+import type { Discovery, ProbeChannelEvents } from "../types";
 import { checkLatency, checkThroughput, discover, failureOf, type CheckContext } from "./checks";
 import {
   FakeBuses,
@@ -48,7 +49,7 @@ async function check<P>(
     entry,
     auth: publicAuth(entry),
     page: browser,
-    openProbeChannel: buses.open,
+    bus: createBusSlot(buses.open, {} as ProbeChannelEvents),
     now: fake.now,
   };
   const signal = new AbortController().signal;
@@ -112,16 +113,17 @@ test("Automatic gives each candidate its own budget, names why it fell back, and
   ]);
 });
 
-test("a latency path needs its probe and a bus answering within 3.5 s; five replies end its check", async () => {
+test("a latency path needs its probe and a bus answering within 3.5 s; five replies end its check, and the bus stays", async () => {
   const offer = { throughput: [], latency: [ws(".")] };
   const buses = new FakeBuses();
   const replies = await check(checkLatency, "auto", offer, () => ({ body: PROBE }), buses);
-  expect("value" in replies && { at: replies.at, rttMs: replies.value.path.rttMs }).toEqual({
+  expect("value" in replies && { at: replies.at, rttMs: replies.value.rttMs }).toEqual({
     at: 490,
     rttMs: 10,
   });
-  // A bus nobody adopted closes with its check's budget.
-  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true]);
+  expect(buses.opened.map(({ disposed, intervalMs }) => [disposed, intervalMs])).toEqual([
+    [false, 1_000],
+  ]);
   const silent = new FakeBuses();
   silent.rttMs = null;
   const quiet = await check(checkLatency, "auto", offer, () => ({ body: PROBE }), silent);
@@ -149,8 +151,8 @@ test("a throttled page's Automatic latency uses WebSocket and says why; a chosen
   );
   expect(
     "value" in automatic && {
-      transport: automatic.value.path.target.transport,
-      fallback: automatic.value.path.verifiedFor.fallback,
+      transport: automatic.value.target.transport,
+      fallback: automatic.value.verifiedFor.fallback,
     },
   ).toEqual({ transport: "websocket", fallback: THROTTLED });
   const chosen = await check(

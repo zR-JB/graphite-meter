@@ -29,6 +29,7 @@ function setup(
     }),
     fits: (ms) => options.fits?.(ms) ?? true,
     recheck: () => {},
+    proved: () => {},
     finished: (finished) => offers.push(finished ? "offer" : "withdraw"),
     mint: async () => "u",
     open: (stage) =>

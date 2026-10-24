@@ -32,7 +32,6 @@ import {
   type StageEvents,
   type StageLanes,
   type StageResources,
-  type StageSetup,
   type TestConfig,
 } from "../types";
 import { pageClock, RunClock, type Clock } from "./clock";
@@ -170,8 +169,6 @@ interface Participant {
   rotated: boolean;
   /** Probe adjacency for jitter; a reconnect breaks it. */
   continuity: number;
-  /** Its latency bus across the run's stages, disposed when the run ends. */
-  bus: StageSetup["bus"];
   /** Upload ids minted at the start, each for its upload stage. */
   uploadIds: Partial<Record<Stage, Promise<string | null>>>;
 }
@@ -317,7 +314,6 @@ export class Run {
         removed: false,
         rotated: false,
         continuity: 0,
-        bus: { current: null },
         uploadIds: {},
       };
     });
@@ -705,7 +701,6 @@ export class Run {
       now: () => this.#clock.runMs(),
       endsIn: () => this.#endsIn(activity.stage),
       uploadId,
-      bus: server.bus,
     });
     stage.seats.set(server.id, seat);
     return seat;
@@ -1632,8 +1627,7 @@ export class Run {
     this.#aggregate.close();
     for (const server of this.#servers) {
       server.latency.close();
-      server.bus.current?.dispose();
-      server.bus.current = null;
+      server.prepared.link.bus.park();
     }
   }
 

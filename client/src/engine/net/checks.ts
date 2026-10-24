@@ -21,8 +21,8 @@ import {
   type Discovery,
   type LatencyPath,
   type LatencyTarget,
-  type OpenProbeChannel,
-  type ProbeChannel,
+  type BusSlot,
+  type LatencyBus,
   type ProbeChannelEvents,
   type Role,
   type ServerAuth,
@@ -69,7 +69,7 @@ export interface CheckContext {
   entry: CatalogEntry;
   auth: ServerAuth;
   page: PageConfig;
-  openProbeChannel: OpenProbeChannel;
+  bus: BusSlot;
   now(): number;
 }
 
@@ -468,20 +468,13 @@ async function verifySession(
   }
 }
 
-/** The bus a latency check proved, kept open for the idle monitor to adopt; until then it closes with its check. */
-export interface CheckedBus {
-  /** Its events go to `events` from now on, and the channel to its adopter. */
-  adopt(events: ProbeChannelEvents): ProbeChannel;
-  dispose(): void;
-}
-
 /** Proves the latency path `selection` names: its origin answers a probe while its bus answers pings, both at once. */
 export async function checkLatency(
   context: CheckContext,
   discovery: Discovery,
   selection: Selection,
   signal: AbortSignal,
-): Promise<{ path: LatencyPath; bus: CheckedBus }> {
+): Promise<LatencyPath> {
   const targets = targetsFor(context, discovery, "latency", selection);
   const verifiedFor = { selection: selectionText(selection), head: targets[0]!.id };
   const passed = passedOver(context, discovery, "latency", selection);
@@ -491,26 +484,14 @@ export async function checkLatency(
     const linked = AbortSignal.any([bounded, both.signal]);
     const collecting = collectRtt(context, target, linked);
     try {
-      const [{ probe }, { rttMs, channel, events }] = await Promise.all([
+      const [{ probe }, { rttMs, channel }] = await Promise.all([
         probeOrigin(target.origin, context.auth, linked),
         collecting,
       ]);
-      const release = () => channel.dispose();
-      bounded.addEventListener("abort", release, { once: true });
-      // The budget may have ended between the answers and here; its abort has fired already.
-      if (bounded.aborted) release();
-      const bus: CheckedBus = {
-        adopt(next) {
-          bounded.removeEventListener("abort", release);
-          Object.assign(events, next);
-          return channel;
-        },
-        dispose() {
-          bounded.removeEventListener("abort", release);
-          channel.dispose();
-        },
-      };
-      const path = {
+      // The budget may have ended between the answers and here.
+      if (bounded.aborted) context.bus.dispose(channel);
+      else context.bus.park();
+      return {
         target,
         probe,
         rttMs,
@@ -518,10 +499,9 @@ export async function checkLatency(
         verifiedAt: context.now(),
         verifiedFor: { ...verifiedFor, fallback },
       };
-      return { path, bus };
     } catch (error) {
       void collecting.then(
-        ({ channel }) => channel.dispose(),
+        ({ channel }) => context.bus.dispose(channel),
         () => {},
       );
       throw error;
@@ -531,9 +511,9 @@ export async function checkLatency(
   });
 }
 
-type Collected = { rttMs: number | null; channel: ProbeChannel; events: ProbeChannelEvents };
+type Collected = { rttMs: number | null; channel: LatencyBus };
 
-/** Opens the bus at the preparation cadence and collects replies for a moment: their median or null, and the still-open bus. */
+/** Adopts or opens the bus at the preparation cadence and collects replies for a moment: their median or null, and the bus. */
 function collectRtt(
   context: CheckContext,
   target: LatencyTarget,
@@ -542,7 +522,7 @@ function collectRtt(
   if (signal.aborted) return Promise.reject(signal.reason);
   const { promise, resolve, reject } = Promise.withResolvers<Collected>();
   const rtts: number[] = [];
-  let channel: ProbeChannel | null = null;
+  let channel: LatencyBus | null = null;
   let collecting = false;
   let done = false;
   /** The median, once collected; handed over with the channel once that exists. */
@@ -553,14 +533,14 @@ function collectRtt(
     clearTimeout(timer);
     signal.removeEventListener("abort", abort);
     if (error !== undefined) {
-      channel?.dispose();
+      if (channel) context.bus.dispose(channel);
       return reject(error);
     }
     const sorted = rtts.toSorted((a, b) => a - b);
     collected = {
       rttMs: sorted.length ? midpointMedian(sorted.length, (rank) => sorted[rank]!) : null,
     };
-    if (channel) resolve({ ...collected, channel, events });
+    if (channel) resolve({ ...collected, channel });
   };
   const abort = () => finish(signal.reason);
   let timer = setTimeout(
@@ -586,16 +566,16 @@ function collectRtt(
     signInRequired: () => finish(new SignInRequired(identityOf(entry))),
   };
   try {
-    channel = context.openProbeChannel(
-      { target, auth, intervalMs: PREPARATION_INTERVAL_MS, maxInFlight: 2 },
+    channel = context.bus.take(
+      { target, auth, control: entry.url, intervalMs: PREPARATION_INTERVAL_MS, maxInFlight: 2 },
       events,
     );
   } catch (error) {
     finish(new CheckError("Latency channel did not open", "retryable", { cause: error }));
     return promise;
   }
-  if (collected) resolve({ ...collected, channel, events });
-  else if (done) channel.dispose();
+  if (collected) resolve({ ...collected, channel });
+  else if (done) context.bus.dispose(channel);
   else channel.measure();
   return promise;
 }

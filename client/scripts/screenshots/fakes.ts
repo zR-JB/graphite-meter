@@ -212,6 +212,7 @@ export const openProbeChannel: OpenProbeChannel = ({ target, intervalMs }, event
     pace: (ms) => void (interval = ms ?? rttMs),
     stop: async () => {},
     dispose: () => clearTimeout(timer),
+    renew() {},
     adopt(next) {
       events = next;
       if (answered) next.ready();

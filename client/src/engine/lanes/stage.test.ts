@@ -6,7 +6,9 @@ import type {
   FetchTarget,
   LatencyPath,
   LatencyTarget,
+  Link,
   PreparedServer,
+  ProbeChannelEvents,
   ServerAuth,
   SessionTarget,
   StageEvents,
@@ -14,6 +16,8 @@ import type {
 } from "../types";
 import { elapse, FakeWorker, outcome, useFakeWorkers } from "./fakes.testutil";
 import { sessionClosed } from "./endings";
+import { createWorkerPool } from "./pool";
+import { createBusSlot, openProbeChannel } from "./probes";
 import { openStage } from "./stage";
 
 useFakeWorkers();
@@ -33,14 +37,26 @@ const SESSION: SessionTarget = {
   protocol: "http3",
   tls: true,
 };
+const LATENCY: LatencyTarget = {
+  id: ORIGIN,
+  origin: ORIGIN,
+  transport: "websocket",
+  protocol: "http1",
+  tls: true,
+};
+const IGNORED = new Proxy({} as ProbeChannelEvents, { get: () => () => {} });
+const testLink = (): Link => ({
+  bus: createBusSlot(openProbeChannel, IGNORED),
+  workers: createWorkerPool(),
+});
 const DOWNLOAD: Activity = { stage: "download", transfer: ["down"], loadedLatency: false };
 
-/** One server's stage over `target`, with `auth` answering its credentials, `bus` as its latency bus and `server` overriding the rest. */
+/** One server's stage over `target`, with `auth` answering its credentials, `link` as its server's and `server` overriding the rest. */
 function stage(
   activity: Activity,
   auth: Partial<ServerAuth> = {},
   target: FetchTarget | SessionTarget = FETCH,
-  bus: StageSetup["bus"] = { current: null },
+  link: Link = testLink(),
   server: Partial<PreparedServer> = {},
   uploadId: StageSetup["uploadId"] = Promise.resolve(null),
 ) {
@@ -65,15 +81,8 @@ function stage(
       server: { id: "peer", url: ORIGIN, name: "Peer" },
       auth: credentials,
       throughput: { target, fetch: target.transport === "fetch-stream" ? target : FETCH },
-      latency: {
-        target: {
-          id: ORIGIN,
-          origin: ORIGIN,
-          transport: "websocket",
-          protocol: "http1",
-          tls: true,
-        },
-      },
+      latency: { target: LATENCY },
+      link,
       ...server,
     } as unknown as PreparedServer,
     activity,
@@ -94,7 +103,6 @@ function stage(
     now: () => performance.now(),
     endsIn: () => 6_000,
     uploadId,
-    bus,
   });
   const workers = (url: string) =>
     FakeWorker.spawned.slice(spawned).filter((worker) => worker.url === url);
@@ -108,6 +116,7 @@ function stage(
   };
 }
 
+const stopped = (worker: FakeWorker) => worker.commands.at(-1)?.type === "stop";
 const bytes = (lane: FakeWorker, epoch: number) =>
   lane.report({ type: "bytes", bytes: 1_000, epoch });
 
@@ -141,7 +150,7 @@ test("readiness waits for the gating lanes; a lane's failure keeps its reason; o
     reason: "protocol-error",
     message: "down stream 0 failed: HTTP 400",
   });
-  expect(refused.lanes().every(({ terminated }) => terminated)).toBe(true);
+  expect(refused.lanes().every(stopped)).toBe(true);
 
   // The mint gives up at 3 s. Its sign-in check answers 2.9 s later, long after the stage's 3.5 s.
   const hung = stage(
@@ -169,7 +178,7 @@ test("a lane refused at its client limit is asked again once, after 300 ms, and 
   const [lane] = limited.lanes();
   const opened: number[] = [];
   for (let at = 0; at < 3_500; at += 5) {
-    if (lane!.commands.length > opened.length) {
+    if (lane!.commands.filter(({ type }) => type === "download").length > opened.length) {
       opened.push(at);
       lane!.report({
         type: "ended",
@@ -235,7 +244,7 @@ test("a broken lane reopens once, stalling once and checking the sign-in once; i
     ["failed", "connection-lost", "down stream 0 failed: TypeError: network error"],
   ]);
   expect(outage.events.filter(([type]) => type === "download")).toHaveLength(4);
-  expect(lanes.every(({ terminated }) => terminated)).toBe(true);
+  expect(lanes.every(stopped)).toBe(true);
 });
 
 test("a broken lane reopens after its pause while a slow sign-in check runs, which releases it if signed out", async () => {
@@ -255,7 +264,7 @@ test("a broken lane reopens after its pause while a slow sign-in check runs, whi
     expect(blip.events.filter(([type]) => type === "signInRequired")).toEqual(
       signedOut ? [["signInRequired", "throughput"]] : [],
     );
-    expect(lanes.every(({ terminated }) => terminated)).toBe(signedOut);
+    expect(lanes.every(stopped)).toBe(signedOut);
   }
 });
 
@@ -352,7 +361,7 @@ test("a count sums every lane's total at a time without cutting the lanes, or is
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(3_000);
 });
 
-test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", async () => {
+test("a session's stop waits for its worker's acknowledgement, at most 3.25 s", async () => {
   for (const acknowledged of [true, false]) {
     const session = stage(DOWNLOAD, {}, SESSION);
     void session.resources.prepare(new AbortController().signal);
@@ -371,9 +380,9 @@ test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", a
     const finished = outcome(session.resources.finish());
     expect(worker.commands.at(-1)).toEqual({ type: "stop" });
     if (acknowledged) worker.report({ type: "stopped" });
-    await elapse(3_000);
-    expect(finished.at).toBe(acknowledged ? 0 : 2_500);
-    expect(worker.terminated).toBe(true);
+    await elapse(3_500);
+    expect(finished.at).toBe(acknowledged ? 0 : 3_250);
+    expect(worker.terminated).toBe(!acknowledged);
   }
 });
 
@@ -461,14 +470,14 @@ test("a session's fourth failed handshake in the page throttles WebTransport: it
     expect(session.events.filter(([type]) => type === "failed")).toEqual([
       ["failed", "path-failed", THROTTLED],
     ]);
+    // A later run over the same path, which its break left verified, dials nothing either.
+    const later = stage(DOWNLOAD, {}, SESSION);
+    const refused = outcome(later.resources.prepare(new AbortController().signal));
+    await elapse(0);
+    expect(later.session().commands.filter(({ type }) => type === "download")).toHaveLength(0);
+    expect(refused.error).toMatchObject({ reason: "path-failed", message: THROTTLED });
     const latency = { target: { ...SESSION, transport: "webtransport" } } as unknown as LatencyPath;
-    const loaded = stage(
-      { ...DOWNLOAD, loadedLatency: true },
-      {},
-      FETCH,
-      { current: null },
-      { latency },
-    );
+    const loaded = stage({ ...DOWNLOAD, loadedLatency: true }, {}, FETCH, testLink(), { latency });
     outcome(loaded.resources.prepare(new AbortController().signal));
     expect([loaded.lanes().length, loaded.probes().length]).toEqual([3, 0]);
     expect(loaded.events.filter(([type]) => type === "latencyStalled")).toEqual([
@@ -478,7 +487,7 @@ test("a session's fourth failed handshake in the page throttles WebTransport: it
       { stage: "latency", transfer: [], loadedLatency: false },
       {},
       FETCH,
-      { current: null },
+      testLink(),
       { latency },
     );
     const prepared = outcome(idle.resources.prepare(new AbortController().signal));
@@ -492,7 +501,7 @@ test("a session's fourth failed handshake in the page throttles WebTransport: it
   }
 });
 
-test("a session discarded while it dials counts as a failed handshake, as Chrome counts it; one that delivered does not", async () => {
+test("a session discarded while it dials, its worker never acknowledging, counts as a failed handshake, as Chrome counts it; one that delivered does not", async () => {
   try {
     const delivered = stage(DOWNLOAD, {}, SESSION);
     outcome(delivered.resources.prepare(new AbortController().signal));
@@ -503,10 +512,12 @@ test("a session discarded while it dials counts as a failed handshake, as Chrome
       outcome(dialing.resources.prepare(new AbortController().signal));
       dialing.resources.discard();
     }
+    await elapse(3_250);
     expect(handshakes.throttled()).toBe(false);
     const fourth = stage(DOWNLOAD, {}, SESSION);
     outcome(fourth.resources.prepare(new AbortController().signal));
     fourth.resources.discard();
+    await elapse(3_250);
     expect(handshakes.throttled()).toBe(true);
   } finally {
     await elapse(0);
@@ -528,7 +539,7 @@ test("a session ended at the server's bound reopens without spending the stage's
   expect(session.events.filter(([type]) => type === "failed")).toEqual([]);
 });
 
-test("a stage's download lanes end on the server's clock just past its planned end once the clock runs, and a stop waits at most 1 s for them", async () => {
+test("a stage's download lanes end on the server's clock just past its planned end once the clock runs, and a stop waits at most 1 s for them, then cuts them", async () => {
   const lanes = stage(DOWNLOAD);
   void lanes.resources.prepare(new AbortController().signal);
   await elapse(150);
@@ -547,12 +558,11 @@ test("a stage's download lanes end on the server's clock just past its planned e
   const finished = outcome(lanes.resources.finish());
   expect(opened.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "stop" }));
   opened[0]!.report({ type: "stopped" });
-  opened[1]!.report({ type: "broken", detail: "TypeError: network error" });
+  opened[1]!.report({ type: "stopped" });
   await elapse(500);
-  expect(opened.map(({ terminated }) => terminated)).toEqual([false, false, false]);
   opened[2]!.report({ type: "stopped" });
   await elapse(0);
-  expect([finished.at, opened.every(({ terminated }) => terminated)]).toEqual([500, true]);
+  expect([finished.at, opened.some(({ terminated }) => terminated)]).toEqual([500, false]);
   // HTTP/1.1 bodies keep a length, as a proxy would re-chunk one without.
   const late = stage(DOWNLOAD, {}, { ...FETCH, protocol: "http1" });
   void late.resources.prepare(new AbortController().signal);
@@ -562,7 +572,10 @@ test("a stage's download lanes end on the server's clock just past its planned e
   await elapse(0);
   const cut = outcome(late.resources.finish());
   await elapse(1_000);
-  expect([cut.at, late.lanes().every(({ terminated }) => terminated)]).toEqual([1_000, true]);
+  const stops = (lane: FakeWorker) => lane.commands.filter(({ type }) => type === "stop").length;
+  expect(late.lanes().map(stops)).toEqual([2, 2, 2]);
+  await elapse(250);
+  expect([cut.at, late.lanes().every(({ terminated }) => terminated)]).toEqual([1_250, true]);
 });
 
 test("a stage's first upload takes the run's id; its replacement is minted", async () => {
@@ -576,7 +589,7 @@ test("a stage's first upload takes the run's id; its replacement is minted", asy
       },
     },
     SESSION,
-    { current: null },
+    testLink(),
     {},
     Promise.resolve("u1"),
   );
@@ -587,14 +600,15 @@ test("a stage's first upload takes the run's id; its replacement is minted", asy
     { type: "upload", url: `${ORIGIN}/wt/upload?id=u1` },
   ]);
   void upload.resources.replaceUpload(new AbortController().signal);
+  upload.session().report({ type: "stopped" });
   await elapse(0);
   expect(minted).toEqual([`${ORIGIN}/upload/session`]);
   upload.resources.discard();
 });
 
-test("one latency bus serves the server's run: a later stage adopts and re-paces it, and only a discard closes it", async () => {
-  const bus: StageSetup["bus"] = { current: null };
-  const idle = stage({ stage: "latency", transfer: [], loadedLatency: false }, {}, FETCH, bus);
+test("one latency bus serves the server's run: a later stage adopts and re-paces it, and a discard leaves it to the server", async () => {
+  const link = testLink();
+  const idle = stage({ stage: "latency", transfer: [], loadedLatency: false }, {}, FETCH, link);
   const prepared = outcome(idle.resources.prepare(new AbortController().signal));
   const [probe] = idle.probes();
   expect(probe!.commands).toEqual([
@@ -612,7 +626,7 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
   expect(prepared).toEqual({ at: 0 });
   idle.resources.measure(performance.now());
   const finished = outcome(idle.resources.finish());
-  probe!.report({ type: "drained" });
+  probe!.report({ type: "drained", id: 1 });
   await elapse(0);
   expect(finished).toEqual({ at: 0 });
   expect(probe!.terminated).toBe(false);
@@ -622,7 +636,7 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
     { stage: "download", transfer: ["down"], loadedLatency: true },
     {},
     FETCH,
-    bus,
+    link,
   );
   const discarded = outcome(loaded.resources.prepare(new AbortController().signal));
   expect(loaded.probes()).toEqual([]);
@@ -634,9 +648,9 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
   ]);
   expect(idle.events.filter(([type]) => type === "latencyStalled")).toEqual([]);
   loaded.resources.discard(true);
-  expect(probe!.terminated).toBe(true);
+  expect(probe!.terminated).toBe(false);
   expect(loaded.events.at(-1)).toEqual(["probesIncomplete"]);
-  expect(bus.current).toBeNull();
+  expect(link.bus.adopt(LATENCY, IGNORED)).not.toBeNull();
   await elapse(0);
   expect(discarded.error).toBeInstanceOf(DOMException);
 });
@@ -721,7 +735,7 @@ test("a fetch upload's feed reaches only its own origin: over a WebSocket offere
           },
         },
         { ...FETCH, protocol },
-        { current: null },
+        testLink(),
         {
           discovery: { latency: offered(...sockets) } as Discovery,
           latency: { target: socket(BUS) } as LatencyPath,
@@ -735,4 +749,41 @@ test("a fetch upload's feed reaches only its own origin: over a WebSocket offere
   } finally {
     Object.assign(globalThis, { WebSocket: RealWebSocket });
   }
+});
+
+test("a later stage's lanes run in the workers an earlier stage stopped, and a worker that never acknowledged is replaced", async () => {
+  const link = testLink();
+  const first = stage(DOWNLOAD, {}, FETCH, link);
+  void first.resources.prepare(new AbortController().signal);
+  const lanes = first.lanes();
+  for (const lane of lanes) bytes(lane, 0);
+  await elapse(0);
+  const finished = first.resources.finish();
+  for (const lane of lanes.slice(1)) lane.report({ type: "stopped" });
+  await elapse(3_250);
+  await finished;
+  expect(lanes.map(({ terminated }) => terminated)).toEqual([true, false, false]);
+  const spawned = FakeWorker.spawned.length;
+  const second = stage(DOWNLOAD, {}, FETCH, link);
+  outcome(second.resources.prepare(new AbortController().signal));
+  await elapse(200);
+  expect(FakeWorker.spawned.length).toBe(spawned + 1);
+  expect(lanes.slice(1).map(({ commands }) => commands.at(-1)?.type)).toEqual([
+    "download",
+    "download",
+  ]);
+  second.resources.discard();
+});
+
+test("a stage discarded while its bus is stalled parks it with the server, whose stall closes it", async () => {
+  const link: Link = {
+    bus: createBusSlot(openProbeChannel, { ...IGNORED, stalled: () => link.bus.dispose() }),
+    workers: createWorkerPool(),
+  };
+  const idle = stage({ stage: "latency", transfer: [], loadedLatency: false }, {}, FETCH, link);
+  outcome(idle.resources.prepare(new AbortController().signal));
+  const [probe] = idle.probes();
+  probe!.report({ type: "stalled", detail: "websocket closed" });
+  idle.resources.discard(true);
+  expect(probe!.terminated).toBe(true);
 });

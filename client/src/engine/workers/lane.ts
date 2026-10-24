@@ -26,36 +26,55 @@ const STOP_WAIT_MS = 500;
 /** A body that ends early below this came from something else, such as a proxy's page; a longer one is fetched again. */
 const MIN_DOWNLOAD_BYTES = 1024 * 1024;
 
-const post = (report: LaneReport) => postMessage(report);
 const ignore = () => {};
-const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
+/** The lane in this worker; a stop ends it and silences it, so the worker can carry another. */
+let lane = new AbortController();
+let running: Promise<unknown> = Promise.resolve();
+let stopping = false;
+const post = (report: LaneReport) => stopping || postMessage(report);
+const counter = () => new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
+let reports = counter();
 let body = new Blob();
 let partSize = 0;
 /** Epoch ms by which the server ends each body, or null while the stage prepares. */
 let until: number | null = null;
 /** Page ms the current body ends at on the server's clock, or null while no download runs. */
 let bodyEnd: number | null = null;
-let stopping = false;
 
 self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   if (data.type === "measure") return reports.measure(data.epoch, data.at - performance.timeOrigin);
   if (data.type === "flush") return post(reports.flushed(data.at));
   if (data.type === "until") return void (until = data.until);
-  if (data.type === "stop") {
-    stopping = true;
-    if (bodyEnd === null || bodyEnd - performance.now() > STOP_WAIT_MS) post({ type: "stopped" });
-    return;
-  }
+  if (data.type === "stop") return void (stopping ? lane.abort() : stop());
+  const { signal } = lane;
   // A rejection in a worker never reaches the owner's error handler, so it ends the lane as a break.
-  void (data.type === "download" ? download(data) : upload(data)).then(post, (error) =>
-    post({ type: "broken", detail: String(error) }),
+  running = (data.type === "download" ? download(data, signal) : upload(data, signal)).then(
+    post,
+    (error) => post({ type: "broken", detail: String(error) }),
   );
 };
 
-async function download(command: Extract<LaneCommand, { type: "download" }>): Promise<LaneReport> {
+/** A timed body ending soon ends on the server's clock, which keeps its connection; any other request is cut. */
+async function stop(): Promise<void> {
+  stopping = true;
+  if (bodyEnd === null || bodyEnd - performance.now() > STOP_WAIT_MS) lane.abort();
+  await running;
+  lane = new AbortController();
+  reports = counter();
+  body = new Blob();
+  partSize = 0;
+  until = null;
+  stopping = false;
+  postMessage({ type: "stopped" } satisfies LaneReport);
+}
+
+async function download(
+  command: Extract<LaneCommand, { type: "download" }>,
+  signal: AbortSignal,
+): Promise<LaneReport> {
   until = command.until;
   try {
-    return await bodies(command);
+    return await bodies(command, signal);
   } finally {
     bodyEnd = null;
   }
@@ -63,16 +82,13 @@ async function download(command: Extract<LaneCommand, { type: "download" }>): Pr
 
 /** Bodies fetched again until the lane stops: timed ones end on the server's clock at `until`, and a stop takes the
  *  current one's end; an untimed one is cut. */
-async function bodies({
-  url,
-  request,
-  epoch,
-  streams,
-  timed,
-}: Extract<LaneCommand, { type: "download" }>): Promise<LaneReport> {
+async function bodies(
+  { url, request, epoch, streams, timed }: Extract<LaneCommand, { type: "download" }>,
+  signal: AbortSignal,
+): Promise<LaneReport> {
   reports.measure(epoch);
   reports.share(streams);
-  const init: RequestInit = { ...request, cache: "no-store" };
+  const init: RequestInit = { ...request, cache: "no-store", signal };
   for (;;) {
     try {
       const sentAt = performance.now();
@@ -124,13 +140,10 @@ async function drained(response: Response): Promise<boolean> {
 const repeated = (part: Blob) =>
   new Blob(Array.from({ length: Math.ceil(MAX_POST_BYTES / part.size) }, () => part));
 
-async function upload({
-  url,
-  request,
-  streams,
-  sharing,
-  rttMs,
-}: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
+async function upload(
+  { url, request, streams, sharing, rttMs }: Extract<LaneCommand, { type: "upload" }>,
+  signal: AbortSignal,
+): Promise<LaneReport> {
   const largest = largestPost(
     streams,
     sharing,
@@ -157,6 +170,7 @@ async function upload({
         ...request,
         method: "POST",
         body: body.slice(0, bytes),
+        signal,
       });
       // An unread echo pins the keep-alive connection the next POST needs; it is counted, never kept.
       if (!(await drained(response)))

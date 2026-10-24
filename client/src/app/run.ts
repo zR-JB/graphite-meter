@@ -20,7 +20,15 @@ import {
 } from "../engine/run/run";
 import { CHECK_FAILED } from "../engine/net/checks";
 import { adaptWarmup, planned, STAGES, totalMs, type Stage } from "../engine/run/schedule";
-import type { FailureReason, OpenStage, PreparedServer, Stall, TestConfig } from "../engine/types";
+import {
+  ROLES,
+  type FailureReason,
+  type OpenStage,
+  type PreparedServer,
+  type Role,
+  type Stall,
+  type TestConfig,
+} from "../engine/types";
 import { batch, computed, effect, signal, untrack, type Read, type Signal } from "../lib/signal";
 import type { PreferenceStore } from "./preferences";
 import { appendThroughput, upsertLatency, type ThroughputSample } from "./series";
@@ -44,8 +52,9 @@ interface RunEnvironment {
   ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
   /** Whether a run of `totalMs` still fits the sign-in; a live change that lengthens the test must. */
   fits(totalMs: number): boolean;
-  /** A server failed during the run, or with null the whole run did: its paths are checked again. */
+  /** A server failed during the run, or with null the whole run did: a path that failed is checked again. */
   recheck(failure: ServerFailure | null): void;
+  proved(serverId: string, roles: readonly Role[]): void;
   /** Hands a finished run to History; null withdraws the one shown. */
   finished(run: { result: RunResult; plans: StagePlans } | null): void;
   open: OpenStage;
@@ -255,6 +264,19 @@ export function createRun(env: RunEnvironment) {
             phase.set("complete");
           });
           env.finished({ result: finished, plans });
+          const moved = STAGES.some(
+            (each) => each !== "latency" && finished.stages[each] !== "not-run",
+          );
+          for (const { server, latency } of prepared.peek()) {
+            const failed = (role: Role) =>
+              finished.multiServer.failures.some(
+                (failure) => failure.serverId === server.id && failure.scope === role,
+              );
+            env.proved(
+              server.id,
+              ROLES.filter((role) => (role === "throughput" ? moved : latency) && !failed(role)),
+            );
+          }
           return releaseRun();
         }
         case "error":

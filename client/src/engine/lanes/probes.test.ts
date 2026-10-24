@@ -33,6 +33,7 @@ function channel(
         tls: true,
       },
       auth,
+      control: "https://peer.example",
       intervalMs: 80,
       maxInFlight: 2,
     },
@@ -83,8 +84,8 @@ test("a window's drain waits at most the longest deadline and a margin; acknowle
     const { bus, events, worker } = channel(false);
     bus.measure();
     const drained = outcome(bus.stop());
-    expect(worker.commands.slice(1)).toEqual([{ type: "measure" }, { type: "stop" }]);
-    if (acknowledged) worker.report({ type: "drained" });
+    expect(worker.commands.slice(1)).toEqual([{ type: "measure" }, { type: "stop", id: 1 }]);
+    if (acknowledged) worker.report({ type: "drained", id: 1 });
     await elapse(DEADLINE_CEILING_MS + 245);
     expect(drained.at).toBe(acknowledged ? 0 : undefined);
     await elapse(5);
