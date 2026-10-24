@@ -202,24 +202,29 @@ export function roleLine(
       return { state, status: { label: message, tone: "err" }, summary: null };
     const summary = pathSummary(first.discovery, role, shownTarget(first, role, page));
     const fallback = path?.verifiedFor.fallback;
-    return {
-      state,
-      status: READINESS[state],
-      summary:
-        message ?? (fallback ? `Automatic used ${summary} for ${role}: ${fallback}` : summary),
-    };
+    // Automatic passed over the path it prefers, which the line names in place of a plain Ready.
+    if (state === "verified" && fallback)
+      return {
+        state,
+        status: READINESS.fallback,
+        summary: `Automatic used ${summary} for ${role}: ${fallback}`,
+      };
+    return { state, status: READINESS[state], summary: message ?? summary };
   }
   const states = considered.map((view) => view[role].state);
   const state =
     (["checking", "failed", "unchecked"] as const).find((each) => states.includes(each)) ??
     "verified";
   const verified = states.filter((each) => each === "verified").length;
+  const fellBack = considered.filter((view) => view[role].path?.verifiedFor.fallback).length;
   return {
     state,
-    status: READINESS[state],
+    status: state === "verified" && fellBack ? READINESS.fallback : READINESS[state],
     summary:
-      verified === states.length
-        ? "Resolved per server"
-        : `${verified} of ${states.length} servers ready`,
+      verified < states.length
+        ? `${verified} of ${states.length} servers ready`
+        : fellBack
+          ? `${fellBack} of ${states.length} servers on a fallback`
+          : "Resolved per server",
   };
 }

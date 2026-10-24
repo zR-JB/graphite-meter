@@ -19,6 +19,7 @@ import {
   isNetworkFailure,
   SignInRequired,
   type Discovery,
+  type FailureReason,
   type LatencyPath,
   type LatencyTarget,
   type BusSlot,
@@ -51,19 +52,27 @@ export type Retry = "retryable" | "needs-user" | "impossible";
 
 /** A check that failed for a reason the user can read; `retry` says whether time alone can clear it. */
 export class CheckError extends Error {
+  readonly reason: FailureReason;
+
   constructor(
     message: string,
     readonly retry: Retry,
-    options?: ErrorOptions,
+    options: ErrorOptions & { reason?: FailureReason } = {},
   ) {
     super(message, options);
+    this.reason = options.reason ?? "path-failed";
   }
 }
+
+/** The origin answered, but not over the protocol its path claims. */
+class ProtocolUnproven extends CheckError {}
 
 export interface Failure {
   message: string;
   retry: Retry;
   signIn: boolean;
+  /** What a run records when the failure keeps the server out of it. */
+  reason: FailureReason;
 }
 
 export interface CheckContext {
@@ -95,14 +104,21 @@ export const CHECK_FAILED = "Could not check the connection";
 
 /** How a failed check reads on its server's row, `name` being the server's displayed name. */
 export function failureOf(error: unknown, name: string): Failure {
-  if (signsIn(error)) return { message: `Sign in to ${name}`, retry: "needs-user", signIn: true };
+  if (signsIn(error))
+    return {
+      message: `Sign in to ${name}`,
+      retry: "needs-user",
+      signIn: true,
+      reason: "sign-in-required",
+    };
   if (error instanceof CheckError)
-    return { message: error.message, retry: error.retry, signIn: false };
+    return { message: error.message, retry: error.retry, signIn: false, reason: error.reason };
   const timedOut = error instanceof DOMException && error.name === "TimeoutError";
   return {
     message: timedOut ? "Connection check timed out" : CHECK_FAILED,
     retry: "retryable",
     signIn: false,
+    reason: "path-failed",
   };
 }
 
@@ -359,26 +375,40 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   }
   // While any target may still answer, time can clear the role, whatever the preferred one said.
   if (retryable && failure instanceof CheckError && failure.retry !== "retryable")
-    throw new CheckError(failure.message, "retryable", { cause: failure });
+    throw new CheckError(failure.message, "retryable", { cause: failure, reason: failure.reason });
   throw failure;
 }
 
-/** Proves the throughput path `selection` names: its origin answers a probe over the claimed protocol, and a session delivers bytes. */
+/** Proves the throughput path `selection` names: its origin answers a probe over the claimed protocol, and outside a
+ *  `start`, whose stage dials its own, a session delivers bytes. */
 export async function checkThroughput(
   context: CheckContext,
   discovery: Discovery,
   selection: Selection,
   signal: AbortSignal,
+  start = false,
 ): Promise<ThroughputPath> {
   const targets = targetsFor(context, discovery, "throughput", selection);
   const verifiedFor = { selection: selectionText(selection), head: targets[0]!.id };
   const passed = passedOver(context, discovery, "throughput", selection);
-  return firstVerified(targets, signal, passed, async (target, bounded, fallback) => ({
-    ...(await verifyThroughput(context, discovery, target, bounded)),
-    generation: discovery.generation,
-    verifiedAt: context.now(),
-    verifiedFor: { ...verifiedFor, fallback },
-  }));
+  // A start proves a session's path over HTTP alone, so a fetch that never reached HTTP/3 there rules the session out.
+  const unreached = new Map<string, string>();
+  return firstVerified(targets, signal, passed, async (target, bounded, fallback) => {
+    const unproven = start && target.transport !== "fetch-stream" && unreached.get(target.origin);
+    if (unproven) throw new CheckError(unproven, "retryable");
+    try {
+      return {
+        ...(await verifyThroughput(context, discovery, target, bounded, start)),
+        generation: discovery.generation,
+        verifiedAt: context.now(),
+        verifiedFor: { ...verifiedFor, fallback },
+      };
+    } catch (error) {
+      if (error instanceof ProtocolUnproven && target.protocol === "http3")
+        unreached.set(target.origin, error.message);
+      throw error;
+    }
+  });
 }
 
 async function verifyThroughput(
@@ -386,6 +416,7 @@ async function verifyThroughput(
   discovery: Discovery,
   target: ThroughputTarget,
   signal: AbortSignal,
+  start: boolean,
 ) {
   const session = target.transport !== "fetch-stream";
   const view = session ? fetchView(discovery, target) : { ...target };
@@ -413,14 +444,14 @@ async function verifyThroughput(
   const proven = view.protocol === "negotiated" || observed === view.protocol;
   // WebTransport proves its own data path; only its HTTP view's protocol is learned here.
   if (!session && !proven)
-    throw new CheckError(
+    throw new ProtocolUnproven(
       observed
         ? `The browser used ${PROTOCOL_LABEL[observed]}, not ${PROTOCOL_LABEL[view.protocol]}`
         : `The browser did not confirm ${PROTOCOL_LABEL[view.protocol]}`,
       "retryable",
     );
   if (!proven || view.protocol === "negotiated") view.protocol = observed ?? "negotiated";
-  if (session) await verifySession(context.lease, target, signal);
+  if (session && !start) await verifySession(context.lease, target, signal);
   return {
     target: session ? target : view,
     fetch: view,

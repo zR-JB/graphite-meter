@@ -116,7 +116,9 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       ? READINESS["in-use"]
       : mode() === "result"
         ? READINESS.used
-        : READINESS[view()?.[role].state ?? "unchecked"];
+        : view()?.[role].path?.verifiedFor.fallback
+          ? READINESS.fallback
+          : READINESS[view()?.[role].state ?? "unchecked"];
   // Before a path is proven, the words assume HTTP/1.1.
   const streams = computed(() => {
     const { discovery, throughput } = facts();
