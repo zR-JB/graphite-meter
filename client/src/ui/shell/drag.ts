@@ -118,7 +118,8 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
       const across = at === "bottom" ? dx : dy;
       // Down drags a bottom sheet only from the top of its content, so the content under the finger scrolls first.
       const scrolled = at === "bottom" && !!current.content && scrolledAbove(current.content);
-      if (outward <= 0 || Math.abs(across) > Math.abs(outward) || scrolled) {
+      // A move the browser already scrolls with cannot be cancelled, so the scroll keeps the gesture.
+      if (outward <= 0 || Math.abs(across) > Math.abs(outward) || scrolled || !event.cancelable) {
         gesture = null;
         return;
       }
