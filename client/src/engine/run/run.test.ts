@@ -517,16 +517,18 @@ test("several servers that all fail end the run; a sole server skips to its next
   expect(skipped.outcome).toBe("incomplete");
 });
 
-test("a sole server that stopped ends the run instead of skipping to its next stage", async () => {
+test("a sole server that stopped ends the run, its loaded latency stopped with it", async () => {
   const stop = {
     measure: (events: StageEvents, { stage }: Activity) => {
       if (stage === "download") later(400, () => events.failed("server-stopped", "x"));
     },
+    discard: (events: StageEvents, incomplete: boolean) => incomplete && events.probesIncomplete(),
   };
   const sole = setup(
     [{ id: "self", ...stop }],
     { download: true, upload: true },
     { downloadMs: 1_400, uploadMs: 1_400 },
+    { loadedLatency: true },
   );
   sole.start();
   const result = await sole.result();

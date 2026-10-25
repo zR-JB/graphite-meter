@@ -1179,7 +1179,7 @@ export class Run {
     if (unreached(reason)) void this.#signedOut(server, stage.activity.stage);
     this.#updateStalled();
     const survivors = this.#participants();
-    // A sole server that measured something skips to its next stage; otherwise the run ends with what it has.
+    // A sole server that measured something and did not stop skips to its next stage; otherwise the run ends with what it has.
     if (!survivors.length)
       return this.#servers.length === 1 && this.#measured() && reason !== "server-stopped"
         ? this.#skip(stage)
