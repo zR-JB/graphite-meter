@@ -91,8 +91,10 @@ async fn connections_idle_open_after_their_sessions_and_refused_connects_hold_no
             None,
             "an idle connection gets no close"
         );
+        assert!(connection.requests.going_away(), "but is retired");
     }
-    let bus = idle[0].session("/wt/ping").await;
+    let fresh = h3.connect(transport(None)).await;
+    let bus = fresh.session("/wt/ping").await;
     bus.send_datagram(b"PING,1").unwrap();
     bus.read_datagram().await.expect("its PONG");
 }
@@ -100,13 +102,19 @@ async fn connections_idle_open_after_their_sessions_and_refused_connects_hold_no
 #[tokio::test]
 async fn sessions_without_peer_traffic_end_idle_after_thirty_seconds() {
     let h3 = H3::start(&[]).await;
-    let (bus, flooded) = (
+    let connections = [
         h3.connect(transport(None)).await,
         h3.connect(transport(None)).await,
-    );
-    let bus = bus.session("/wt/ping").await;
-    let flooded = flooded.session("/wt/download?bytes=1000&datagrams").await;
+    ];
+    let bus = connections[0].session("/wt/ping").await;
+    let flooded = connections[1]
+        .session("/wt/download?bytes=1000&datagrams")
+        .await;
     pass(Duration::from_secs(25)).await;
+    assert!(
+        connections.iter().all(|c| !c.requests.going_away()),
+        "an open session keeps its connection from being retired"
+    );
     bus.send_datagram(b"PING,1").unwrap();
     bus.read_datagram().await.expect("its PONG");
     pass(Duration::from_secs(5)).await;

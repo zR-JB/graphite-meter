@@ -376,9 +376,8 @@ export async function start(page: Page, fleet: Fleet) {
             protocol === "http3" || (transport && transport !== "fetch-stream") ? 2 : 0;
           const sessions = summary?.throughput.transport === "webtransport" ? dial : 1;
           const bus = summary?.latencyTarget?.transport === "webtransport" ? dial : 0;
-          // Start probes an HTTP/3 origin no fetch lane then reuses: a WebTransport path's, or a WebTransport bus's.
-          const probe =
-            (transport && transport !== "fetch-stream") || (bus && protocol !== "http3") ? 1 : 0;
+          // Start probes the HTTP/3 origin; fetch lanes that find their pooled connections retired may take another.
+          const probe = transfer || bus ? 1 : 0;
           // A signed-in server's lanes send cookies, so their preflights, which send none, get a connection of their own.
           const preflights =
             fleet.signIn && i === 0 && transport === "fetch-stream" && protocol === "http3" ? 1 : 0;
