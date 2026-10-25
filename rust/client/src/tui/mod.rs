@@ -329,12 +329,12 @@ impl App {
             Event::ServerFailed(failure) => {
                 let recorded = self.view.run.as_ref().and_then(|run| run.issues.last());
                 if let Some((stage, _)) = recorded {
-                    let issue = match self.several() {
-                        true => format!("Issue on {}", self.name(Some(&failure.server))),
-                        false => "Issue".into(),
-                    };
                     let place = format::place(*stage, failure.scope);
-                    let text = format!("{issue} · {place}: {}", failure.failure.reason.label());
+                    let place = match self.several() {
+                        true => format!("{} · {place}", self.name(Some(&failure.server))),
+                        false => place.into(),
+                    };
+                    let text = format!("{place}: {}", failure.failure.reason.label());
                     self.notify(Line::styled(text, self.palette.warn));
                 }
             }

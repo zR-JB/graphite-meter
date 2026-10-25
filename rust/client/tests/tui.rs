@@ -736,15 +736,11 @@ fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
     assert!(shows(
         &mut app,
         now,
-        "Issue on B · Loaded download: Stopped delivering data"
+        "B · Loaded download: Stopped delivering data"
     ));
     let lost = failed(Scope::Throughput, FailureReason::ConnectionLost);
     app.event(&Event::ServerFailed(lost.clone()), now);
-    assert!(shows(
-        &mut app,
-        now,
-        "Issue on B · Download: Connection lost"
-    ));
+    assert!(shows(&mut app, now, "B · Download: Connection lost"));
     let result = StageResult {
         failures: vec![lost.clone(), lost],
         ..result_of(Stage::Download)
@@ -768,7 +764,7 @@ fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
         ..failed(Scope::Throughput, FailureReason::ConnectionLost)
     };
     app.event(&Event::ServerFailed(alone.clone()), now);
-    assert!(shows(&mut app, now, "Issue · Download: Connection lost"));
+    assert!(shows(&mut app, now, "Download: Connection lost"));
     let mut buffer = Buffer::empty(Rect::new(0, 0, 110, 36));
     app.draw(&mut buffer, now);
     let bar: String = buffer.content()[110 * 35..]
@@ -776,7 +772,7 @@ fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
         .map(Cell::symbol)
         .collect();
     assert!(
-        bar.contains("Issue · Download: Connection lost")
+        bar.contains("Download: Connection lost")
             && bar.contains("stop test")
             && !bar.contains("keys"),
         "the keys after the first give way to a notice: {bar}"
@@ -811,7 +807,7 @@ fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
         &Event::ServerFailed(failed(Scope::Server, FailureReason::PathFailed)),
         now,
     );
-    assert!(shows(&mut app, now, "Issue on B · Start: Path unavailable"));
+    assert!(shows(&mut app, now, "B · Start: Path unavailable"));
 
     let config = Config {
         stages: Vec::new(),
