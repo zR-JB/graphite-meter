@@ -102,6 +102,8 @@ jobs:
         with: {rust: 'true', cargo-deny: 'true', cargo-nextest: 'true'}
       - name: Check Rust formatting, dependency policy, lints and tests
         run: mise run rust-check
+      - name: Run the release build's PGO training transfers once with the debug builds
+        run: python3 -m scripts.pgo --check rust/target/debug
 
   rust-delayed:
     name: Delayed-link download gate

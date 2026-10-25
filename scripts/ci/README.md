@@ -20,7 +20,7 @@ runs the checks job alone; every other change, every push to main and the daily 
 | Job | Runs |
 |---|---|
 | Checks | workflow policy, tooling tests, Gitleaks, the browser client's checks |
-| Rust checks | `rust-check` |
+| Rust checks | `rust-check`, then release PGO training's transfers with its debug builds (`pgo.py --check`) |
 | Delayed-link download gate | `delayed-downloads` |
 | Rust target checks | `check_git_sources --verify`, `rust-check-targets` |
 | Rust checks on Windows | the client, net and legal crates' tests |
