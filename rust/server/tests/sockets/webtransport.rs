@@ -84,7 +84,7 @@ async fn connections_idle_open_after_their_sessions_and_refused_connects_hold_no
     let ended = h3.connect(transport(None)).await;
     ended.session("/wt/ping").await.close(0, "").await;
     idle.push(ended);
-    pass(Duration::from_secs(60)).await;
+    pass(Duration::from_secs(45)).await;
     for connection in &idle {
         assert_eq!(
             connection.closed_within(Duration::from_millis(10)).await,
