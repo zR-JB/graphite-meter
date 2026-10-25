@@ -496,7 +496,7 @@ fn outcomes_follow_stage_results() {
     });
     let unopened = script.engine.result();
     assert_eq!(
-        (unopened.throughput.down, unopened.status(None)),
+        (unopened.throughput.down, unopened.status(None, &[])),
         (None, StageStatus::Failed)
     );
     assert_eq!(
@@ -507,7 +507,7 @@ fn outcomes_follow_stage_results() {
     stopped.stop(Instant::now());
     let stopped = stopped.result();
     assert_eq!(
-        (stopped.throughput.down, stopped.status(None)),
+        (stopped.throughput.down, stopped.status(None, &[])),
         (None, StageStatus::Stopped)
     );
     assert_eq!(

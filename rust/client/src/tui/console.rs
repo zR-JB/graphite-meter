@@ -6,10 +6,10 @@ use super::{
 };
 use crate::{
     config::Invalid,
-    events::{Point, Running, Series},
+    events::{Point, Run, Running, Series},
     format::{self, MISSING, round_trip},
     measure::{latency::Summary, wire},
-    model::{Outcome, Stage, StageResult, StageStatus},
+    model::{Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus, selection},
     style::mix,
     text::{self, Line, Profile, Style},
 };
@@ -420,6 +420,7 @@ impl App {
                 let (text, style) = self.ended(status);
                 (text.into(), style)
             }
+            State::Unreached => (format::UNREACHED.into(), palette.muted),
             State::Pending => (
                 planned.map_or("Skipped".into(), format::stage_time),
                 palette.muted,
@@ -705,7 +706,7 @@ impl App {
         let head = match state {
             State::Measuring | State::Warmup => palette.wash(stage, 0.24, tile),
             State::Ended(_) => palette.wash(stage, 0.12, tile),
-            State::Pending => palette.raised,
+            State::Pending | State::Unreached => palette.raised,
         };
         canvas.fill(Rect::new(area.x, area.y, area.width, 1), head);
         let inner = area.width.saturating_sub(2);
@@ -716,7 +717,7 @@ impl App {
             inner,
             &mark.and(format::label(stage), palette.heading),
         );
-        let (status, style) = self.card_status(stage, state);
+        let (status, style) = self.card_status(state);
         canvas.right(area.x + 1, area.y, inner, &Line::styled(status, style));
         let run = self.view.run.as_ref();
         let result = run.and_then(|run| run.results.iter().rfind(|result| result.stage == stage));
@@ -761,20 +762,14 @@ impl App {
         }
     }
 
-    /// The card's head end: what the stage is doing, how it ended, or that a stopped test never reached it.
-    fn card_status(&self, stage: Stage, state: State) -> (&'static str, Style) {
+    /// The card's head end: what the stage is doing, how it ended, or that the run ended without it.
+    fn card_status(&self, state: State) -> (&'static str, Style) {
         let palette = &self.palette;
-        let run = self
-            .view
-            .run
-            .as_ref()
-            .filter(|run| run.outcome == Some(Outcome::Stopped));
-        let planned = run.is_some_and(|run| run.plan.iter().any(|(own, _)| *own == stage));
         match state {
             State::Measuring => ("Running", palette.text),
             State::Warmup => ("Warmup", palette.muted),
             State::Ended(status) => self.ended(status),
-            State::Pending if planned => ("Not reached", palette.muted),
+            State::Unreached => (format::UNREACHED, palette.muted),
             State::Pending => ("", palette.muted),
         }
     }
@@ -869,8 +864,6 @@ impl App {
                 let (fallback, style) = self.ended(status);
                 Line::styled(self.failure(stage).unwrap_or(fallback.into()), style)
             }
-            State::Warmup => Line::styled(self.spinner(), palette.accent)
-                .and(" Warming up, not counted", palette.muted),
             _ => quiet,
         };
         [value, quiet]
@@ -897,6 +890,23 @@ impl App {
             if !lines.contains(&line) {
                 lines.push(line);
             }
+        }
+        let selected = selection(&run.results);
+        let absent: Vec<_> = result
+            .absent(&selected)
+            .map(|id| self.name(Some(id)))
+            .collect();
+        if let Some((last, rest)) = absent.split_last() {
+            let names = match rest {
+                [] => last.clone(),
+                rest => format!("{} and {last}", rest.join(", ")),
+            };
+            let without = if lines.is_empty() {
+                "Without"
+            } else {
+                "without"
+            };
+            lines.push(format!("{without} {names}"));
         }
         (!lines.is_empty()).then(|| lines.join(", "))
     }
@@ -1098,7 +1108,8 @@ impl App {
                 }]
             };
             if let Running::Warmup(_) = running {
-                let warming = at_rest(ticks, muted("Warming up, not counted"));
+                let note = Line::styled("Warmup", palette.text).and("  Not counted", palette.muted);
+                let warming = at_rest(ticks, note);
                 return Dial {
                     track,
                     label: label(stage),
@@ -1203,7 +1214,81 @@ impl App {
                     palette.warn,
                 )
             }
+            Some(Outcome::Partial | Outcome::Incomplete) => Line::styled(
+                run.map(|run| self.ending(run)).unwrap_or_default(),
+                palette.warn,
+            ),
             _ => Line::default(),
+        }
+    }
+
+    fn ending(&self, run: &Run) -> String {
+        let selected = selection(&run.results);
+        let order = |stage: &Stage| Stage::ALL.iter().position(|own| own == stage);
+        let mut causes: Vec<&(Stage, ServerFailure)> = Vec::new();
+        for id in &selected {
+            let mut own: Vec<_> = run
+                .issues
+                .iter()
+                .filter(|(_, issue)| issue.server == *id)
+                .collect();
+            own.sort_by_key(|(stage, _)| order(stage));
+            let left = |stage: &Stage| {
+                own.iter()
+                    .any(|(other, issue)| other == stage && issue.scope != Scope::Latency)
+            };
+            causes.extend(own.iter().filter(|(stage, issue)| {
+                issue.scope != Scope::Latency || *stage == Stage::Latency || !left(stage)
+            }));
+        }
+        let Some(&&(first_stage, ref first)) = causes.first() else {
+            return String::new();
+        };
+        let reason = |issue: &ServerFailure| text::lowered(issue.failure.reason.label());
+        let at = |stage: Stage, issue: &ServerFailure| {
+            let place = format::place(stage, issue.scope);
+            match issue.scope {
+                Scope::Server => format!("{} at {place}", reason(issue)),
+                Scope::Latency if stage != Stage::Latency => {
+                    format!("{} in {}", reason(issue), text::lowered(place))
+                }
+                _ => format!("{} in {place}", reason(issue)),
+            }
+        };
+        let more = match causes.len() {
+            1 => String::new(),
+            count => format!(" and {} more", count - 1),
+        };
+        let focus = run.focus.as_ref();
+        let lacking = run.plan.iter().find_map(|&(stage, _)| {
+            let result = run.results.iter().rfind(|result| result.stage == stage);
+            match result.map(|result| result.status(focus, &selected)) {
+                Some(StageStatus::Failed) => Some((stage, "failed")),
+                None => Some((stage, "not reached")),
+                _ => None,
+            }
+        });
+        if let (Some(Outcome::Incomplete), Some((stage, word))) = (run.outcome, lacking) {
+            let own = causes.iter().find(|(own, _)| *own == stage);
+            let said = match own {
+                Some((_, issue)) => reason(issue),
+                None => at(first_stage, first),
+            };
+            return format!("{} {word}: {said}", format::label(stage));
+        }
+        if selected.len() == 1 {
+            let place = format::place(first_stage, first.scope);
+            return format!("{place}: {}{more}", reason(first));
+        }
+        let mut troubled: Vec<_> = causes.iter().map(|(_, issue)| &issue.server).collect();
+        troubled.dedup();
+        match troubled.len() {
+            1 => format!(
+                "{}: {}{more}",
+                self.name(Some(&first.server)),
+                at(first_stage, first)
+            ),
+            count => format!("{count} servers with issues, each marked on its card"),
         }
     }
 

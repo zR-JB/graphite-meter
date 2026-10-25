@@ -6,7 +6,9 @@ use crate::{
         round_trip,
     },
     measure::latency::{Population, Summary, added},
-    model::{Direction, Outcome, ServerFailure, Stage, StageResult, StageStatus, Throughput},
+    model::{
+        Direction, Outcome, ServerFailure, Stage, StageResult, StageStatus, Throughput, selection,
+    },
     net::approval::EXPIRED,
     style::Palette,
     text::{Line, Style, wrap},
@@ -93,16 +95,18 @@ impl Report<'_> {
     }
 
     fn status(&self, stage: Stage) -> Option<StageStatus> {
-        Some(self.result(stage)?.status(self.focus))
+        Some(
+            self.result(stage)?
+                .status(self.focus, &selection(&self.run.results)),
+        )
     }
 
     fn unmeasured(&self, stage: Stage) -> &'static str {
-        let stopped = self.run.outcome == Some(Outcome::Stopped);
-        let skipped = if stopped { "Not reached" } else { "Skipped" };
-        self.status(stage).map_or(skipped, |status| match status {
-            StageStatus::Complete => MISSING,
-            status => format::status_label(status),
-        })
+        self.status(stage)
+            .map_or(format::UNREACHED, |status| match status {
+                StageStatus::Complete => MISSING,
+                status => format::status_label(status),
+            })
     }
 
     fn population(&self, stage: Stage) -> Option<Population> {

@@ -11,7 +11,9 @@ use graphite_meter_client::{
         aggregate::Rate,
         latency::{Latency, ProbeOutcome},
     },
-    model::{Dir, Failure, Outcome, Scope, ServerFailure, Stage, StageResult, Throughput},
+    model::{
+        Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput,
+    },
     net::{ThroughputPath, approval::Unapproved},
     report::report,
     run::{
@@ -824,6 +826,80 @@ fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
         "dial and status bar: {blocked:#?}"
     );
     assert!(shows(&mut app, now, "Start test turn on a stage"));
+}
+
+#[test]
+fn a_stage_without_a_selected_server_is_partial_and_says_who_it_lacks() {
+    let now = Instant::now();
+    let plan = [(Stage::Download, SECOND * 10), (Stage::Upload, SECOND * 10)];
+    let mut app = running(&["a", "b"], &plan, now);
+    let own = |name: &str, left: bool| ServerResult {
+        server: id(name),
+        left,
+        throughput: Dir::default(),
+        latency: None,
+    };
+    let lost = ServerFailure {
+        server: id("b"),
+        scope: Scope::Throughput,
+        failure: Failure::new(FailureReason::ConnectionLost, "lost"),
+        at: now,
+    };
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    app.event(&Event::ServerFailed(lost.clone()), now);
+    let download = StageResult {
+        servers: vec![own("a", false), own("b", true)],
+        failures: vec![lost.clone()],
+        ..result_of(Stage::Download)
+    };
+    app.event(&Event::StageFinished(download), now);
+    measuring(&mut app, Stage::Upload, SECOND * 10, now);
+    let upload = StageResult {
+        stage: Stage::Upload,
+        throughput: Dir {
+            down: None,
+            up: result_of(Stage::Download).throughput.down,
+        },
+        servers: vec![own("a", false)],
+        ..result_of(Stage::Upload)
+    };
+    app.event(&Event::StageFinished(upload), now);
+    app.event(&ended(Outcome::Partial), now);
+    let rows = frame(&mut app, now);
+    for said in [
+        "↑ Upload Partial",
+        "Without B",
+        "B: connection lost in Download",
+    ] {
+        assert!(
+            rows.iter().any(|row| row.contains(said)),
+            "{said}: {rows:#?}"
+        );
+    }
+
+    let mut app = running(&["a", "b"], &plan, now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    let gone = |name: &str| ServerFailure {
+        server: id(name),
+        ..lost.clone()
+    };
+    let download = StageResult {
+        servers: vec![own("a", true), own("b", true)],
+        failures: vec![gone("a"), gone("b")],
+        ..result_of(Stage::Download)
+    };
+    app.event(&Event::StageFinished(download), now);
+    app.event(&ended(Outcome::Incomplete), now);
+    let rows = frame(&mut app, now);
+    for said in [
+        "↑ Upload Not reached",
+        "Upload not reached: connection lost in Download",
+    ] {
+        assert!(
+            rows.iter().any(|row| row.contains(said)),
+            "{said}: {rows:#?}"
+        );
+    }
 }
 
 fn downloaded(now: Instant) -> App {

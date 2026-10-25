@@ -7,7 +7,7 @@ use super::{
 use crate::{
     events::{Event, Run, Running},
     measure::latency::Summary,
-    model::{Dir, Direction, Stage, StageStatus},
+    model::{Dir, Direction, Stage, StageStatus, selection},
     text::Line,
 };
 use graphite_meter_proto::catalog::ServerId;
@@ -162,6 +162,7 @@ impl Live {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Pending,
+    Unreached,
     Warmup,
     Measuring,
     Ended(StageStatus),
@@ -191,7 +192,14 @@ impl App {
         ) {
             (Some(Running::Measuring { .. }), _) => State::Measuring,
             (Some(Running::Warmup(_)), _) => State::Warmup,
-            (None, Some(result)) => State::Ended(result.status(run.focus.as_ref())),
+            (None, Some(result)) => {
+                State::Ended(result.status(run.focus.as_ref(), &selection(&run.results)))
+            }
+            (None, None)
+                if run.outcome.is_some() && run.plan.iter().any(|(own, _)| *own == stage) =>
+            {
+                State::Unreached
+            }
             (None, None) => State::Pending,
         }
     }

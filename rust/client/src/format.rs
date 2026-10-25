@@ -11,6 +11,7 @@ use graphite_meter_proto::{
 use std::time::Duration;
 
 pub const MISSING: &str = "–";
+pub const UNREACHED: &str = "Not reached";
 
 /// `value` with `places` decimals, an exact tie rounded up as the browser's `toFixed` does, not to even.
 fn fixed(value: f64, places: usize) -> String {
