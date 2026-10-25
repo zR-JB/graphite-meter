@@ -65,7 +65,7 @@ runs:
       env:
         MISE_AUTO_INSTALL: '0'
       with:
-        version: 2026.10.17
+        version: 2026.10.18
         install_args: --locked ${{ steps.tools.outputs.install-args }}
         cache: ${{ inputs.cache }}
         cache_save: ${{ github.ref == 'refs/heads/main' }}
