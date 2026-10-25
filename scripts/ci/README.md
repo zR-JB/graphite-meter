@@ -48,10 +48,11 @@ gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 
 A stable release publishes the image as `X.Y.Z`, moves `X.Y` and `latest`, and creates a GitHub Release with eight
 assets: the server archives for Linux amd64 and arm64, the client archives for Linux and Windows amd64 and arm64, one
-third-party source archive for every shipped build, and `checksums.txt`. Each archive holds the executable,
-`LICENSE`, `COPYRIGHT`, its build's `THIRD_PARTY_NOTICES.txt` and the `SOURCE.txt` that names the source archive. A
-prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or `-f pr=N -f sha=<PR head>` to build an
-open same-repository PR; it publishes only the image of that version, such as `X.Y.Z-rc.N`, which no alias follows.
+third-party source archive for every shipped build, and `checksums.txt`. Each archive holds the executable, `LICENSE`,
+`COPYRIGHT`, its build's `THIRD_PARTY_NOTICES.txt` and the `SOURCE.txt` that names the source archive. The Release's
+notes open with the source notice and the image's `X.Y.Z@sha256:` reference. A prerelease takes a
+`vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or `-f pr=N -f sha=<PR head>` to build an open same-repository
+PR; it publishes only the image of that version, such as `X.Y.Z-rc.N`, which no alias follows.
 `mode=validate` stops before any write. Approve the `ghcr-release` deployment when the Release run asks.
 
 A PR that changes the wire protocol, the API, configuration or saved data incompatibly carries the `breaking change`
