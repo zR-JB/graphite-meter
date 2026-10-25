@@ -58,7 +58,7 @@ def database(root: Path) -> Path:
                                 capture_output=True, text=True, check=False).stdout.strip().lower()
         if origin.removesuffix(".git").removesuffix("/").endswith(RUSTSEC):
             return checkout
-    sys.exit(f"no RustSec advisory database under {root}; run cargo deny check first")
+    sys.exit(f"no RustSec advisory database under {root}; run mise run rust-deny-fetch first")
 
 
 def main() -> None:

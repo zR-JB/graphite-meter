@@ -152,11 +152,12 @@ run = [
 ]
 
 [tasks.rust-deny-fetch]
+shell = "bash -e -o pipefail -c"
 description = "Fetch the live advisory database and the locked crates for cargo deny, retrying transient failures"
 dir = "rust"
 run = '''
 for attempt in 1 2 3; do
-  timeout 120 cargo deny --locked fetch && exit 0
+  timeout 120 cargo deny --locked fetch db index && exit 0
   echo "cargo deny fetch failed (attempt $attempt of 3)" >&2
   [ "$attempt" = 3 ] || sleep 15
 done
