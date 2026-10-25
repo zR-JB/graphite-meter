@@ -109,6 +109,27 @@ fn a_reply_driven_probe_goes_on_the_reply_in_flight_and_never_on_a_late_one() {
     assert!(schedule.send(backup + ms(60)).is_some());
 }
 
+#[test]
+fn a_reply_driven_chain_below_a_1_ms_rtt_sends_once_a_millisecond() {
+    let t0 = Instant::now();
+    let mut schedule = Schedule::new(Cadence::ReplyDriven, 4, t0);
+    let first = schedule.send(t0).unwrap();
+    outcome(schedule.reply(pong(first), t0 + Duration::from_micros(100)));
+    assert_eq!(
+        schedule.wake(),
+        Some(t0 + ms(1)),
+        "an early reply waits out the millisecond"
+    );
+    assert_eq!(schedule.send(t0 + Duration::from_micros(100)), None);
+    let second = schedule.send(t0 + ms(1)).unwrap();
+    outcome(schedule.reply(pong(second), t0 + ms(3)));
+    assert_eq!(
+        schedule.wake(),
+        Some(t0 + ms(3)),
+        "a slower reply sends at once"
+    );
+}
+
 async fn reflector() -> Origin {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = Origin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
@@ -134,7 +155,7 @@ async fn reflector() -> Origin {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_reply_driven_prober_keeps_a_probe_in_flight_on_loopback() {
+async fn a_reply_driven_prober_on_loopback_probes_densely_but_a_millisecond_apart() {
     let path = LatencyPath {
         origin: reflector().await,
         transport: LatencyTransport::WebSocket,
@@ -159,11 +180,10 @@ async fn a_reply_driven_prober_keeps_a_probe_in_flight_on_loopback() {
             _ => None,
         })
         .collect();
-    let (busy, elapsed) = (rtts.iter().sum::<Duration>(), start.elapsed());
+    let (replies, elapsed) = (rtts.len() as u128, start.elapsed().as_millis());
     assert!(
-        busy * 2 > elapsed,
-        "{} replies were in flight {busy:?} of {elapsed:?}",
-        rtts.len()
+        replies * 10 >= elapsed && replies <= elapsed + 1,
+        "{replies} replies in {elapsed} ms"
     );
 }
 

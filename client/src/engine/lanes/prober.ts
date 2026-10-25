@@ -10,6 +10,7 @@ const BATCH_MAX = 128;
 /** Evicted probes a late reply may still name: the only way the estimator learns a jump from fast to slow. */
 const GRAVEYARD_MAX = 64;
 const BACKUP_FLOOR_MS = 8;
+const CHAIN_SPACING_MS = 1;
 const BACKUP_CEILING_MS = 1_000;
 
 interface ProberClock {
@@ -209,11 +210,13 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** Sends when it is the next probe's turn and the window has room; a fixed cadence never catches up on late sends. */
+  /** Sends on the next probe's turn with room in the window; a fixed cadence never catches up, a chain waits 1 ms at least. */
   #step(now: number, chained: boolean): void {
     const { intervalMs, maxInFlight } = this.#pace;
     if (intervalMs === null) {
       if (!chained) return;
+      this.#backupAt = this.#sentAt + CHAIN_SPACING_MS;
+      if (now < this.#backupAt) return;
       this.#backupAt = Infinity;
     } else if (now < this.#sentAt + intervalMs) return;
     if (this.#state !== "open" || this.#pending.size >= maxInFlight) return;

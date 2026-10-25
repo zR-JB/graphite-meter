@@ -24,6 +24,7 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(1);
 const EARLY_LOSS: Duration = Duration::from_millis(500);
 /// A timed-out probe's late reply still teaches the deadline this long after it went.
 const LATE_REPLIES: Duration = Duration::from_secs(10);
+const CHAIN_SPACING: Duration = Duration::from_millis(1);
 
 /// The probes a prober keeps in flight, fewest under load.
 pub fn window(stage: Stage, cadence: Cadence) -> usize {
@@ -34,7 +35,7 @@ pub fn window(stage: Stage, cadence: Cadence) -> usize {
     }
 }
 
-/// Sends go start to start, or on the reply backed by the deadline; a full window skips one, and stopped probes drain.
+/// Sends go start to start, or on the reply 1 ms after the last at least, backed by the deadline; stopped probes drain.
 #[derive(Debug)]
 pub struct Schedule {
     cadence: Cadence,
@@ -43,6 +44,7 @@ pub struct Schedule {
     pending: BTreeMap<u32, (Instant, Instant)>,
     late: BTreeMap<u32, Instant>,
     next: Ping,
+    sent: Instant,
     due: Option<Instant>,
     answered: bool,
 }
@@ -57,6 +59,7 @@ impl Schedule {
             pending: BTreeMap::new(),
             late: BTreeMap::new(),
             next: Ping { id: 0 },
+            sent: now,
             due: Some(now),
             answered: false,
         }
@@ -82,6 +85,7 @@ impl Schedule {
         }
         let ping = self.next;
         self.next = ping.next();
+        self.sent = now;
         self.pending.insert(ping.id, (now, now + deadline));
         Some(ping)
     }
@@ -94,7 +98,7 @@ impl Schedule {
         }
         let (sent, deadline) = self.pending.remove(&pong.id)?;
         if self.cadence == Cadence::ReplyDriven && self.due.is_some() {
-            self.due = Some(now);
+            self.due = Some(now.max(self.sent + CHAIN_SPACING));
         }
         let rtt = now.saturating_duration_since(sent);
         self.observe(rtt);

@@ -156,6 +156,13 @@ test("a reply-driven chain steps on its latest probe, its backup covers a late r
   ]);
 });
 
+test("a reply-driven chain below a 1 ms RTT sends once a millisecond, and every reply resolves", () => {
+  const b = opened(bus(null, 4, () => 0.1));
+  b.run(10);
+  expect(b.sent).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  expect(b.outcomes().every(({ rttMs, timedOut }) => rttMs === 0.1 && !timedOut)).toBe(true);
+});
+
 test("deadlines are fixed at send; a late reply stays a timeout yet teaches the estimator; handling pairs only when possible", () => {
   const b = opened(bus(1_000, 16, (id) => (id === 2 ? "lost" : 300)));
   b.run(2_010);

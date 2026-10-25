@@ -110,14 +110,15 @@ after three replies and timeouts.
 | Behavior         | Rule                                                                                                             |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Cadence          | The idle default is reply-driven and the loaded default is Medium. Fast 80 ms, Medium 250 ms and Slow 600 ms are start-to-start. |
-| Reply-driven     | The latest probe's reply sends the next at once, a late one never; a backup timer covers a missing reply.        |
+| Reply-driven     | The latest probe's reply sends the next, at least 1 ms after the last send; a late reply never; a backup timer covers a missing reply. |
 | In-flight window | 16 probes idle at a fixed cadence, 4 reply-driven and 2 under load. A full window skips the send, never a timeout. |
 | Deadline         | Fixed at send: `SRTT + 4 × max(RTTVAR, 1 ms)` (RFC 6298), clamped to 250 ms to 10 s; 250 ms before the first reply. |
 | Stage end        | Measuring stops; in-window probes drain to their deadlines, at most 10 s. The terminal stops sending; the browser's latency bus keeps probing, but those replies no longer count. |
 | Interruptions    | Disconnects, and in the browser freezes over 1.5 s, leave pending probes unfinished, never timed out; send failures are counted separately. |
 
-Cadence is a scheduling policy, not an observed sampling rate. Reply-driven density follows RTT alone and reaches
-tens of thousands of probes a second on loopback, and no coverage is inferred from cadence and elapsed time. The idle
+Cadence is a scheduling policy, not an observed sampling rate. Reply-driven density follows RTT down to 1 ms, and no
+coverage is inferred from cadence and elapsed time. Every probe wakes the client's prober and the server's bus, so
+below a 1 ms RTT a denser chain adds wakeups and server CPU, while a 4 s stage still holds thousands of replies. The idle
 headline is the full stage median and the base of added latency. It never falls back to loaded RTTs or preflight
 hints. A failed stage keeps its measured population, marked incomplete. Every selected server is probed. The run's
 latency belongs to the server shown when the run starts, or to a survivor once that server leaves. The shown server
