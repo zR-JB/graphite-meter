@@ -164,9 +164,10 @@ impl UploadSession {
     /// The lanes' and feed's health; a receiver that no longer knows its ID is replaced once per server and run.
     pub fn health(&mut self) -> LaneHealth {
         if let Some(replacing) = self.replacing.take_if(|replacing| replacing.is_finished()) {
-            match futures_util::FutureExt::now_or_never(replacing) {
+            match futures_util::FutureExt::now_or_never(tokio::task::unconstrained(replacing)) {
                 Some(Ok(Some(Ok(upload)))) => self.upload = upload,
                 Some(Ok(Some(Err(fault)))) => return LaneHealth::Failed(fault.failure()),
+                Some(Err(error)) => return LaneHealth::Failed(Fault::from(error).failure()),
                 _ => return LaneHealth::Failed(Fault::Lost.failure()),
             }
         }
