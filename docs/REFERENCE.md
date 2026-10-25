@@ -13,7 +13,7 @@ source build. Besides serving, it takes these commands:
 | `version`, `--version` | Print the version.                                                                                  |
 | `hash-password`        | Read a password twice on stdin (1 to 1024 bytes, hidden on a terminal) and print its Argon2id hash. |
 | `--legal`              | Print the project and dependency license notices.                                                   |
-| `--help`               | Print every flag with its variable and default.                                                     |
+| `--help`               | Print every flag with its variable and default, then the variables without a flag.                  |
 
 ## Settings
 
@@ -65,6 +65,7 @@ the setting.
 | `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalog](#server-catalog) JSON.                                                |
 | `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalog file path without `..`; exclusive with the inline form.               |
 | `TZ`                                    | _env only_                             | UTC              | IANA zone name for [log times](#logs), from zone data built into the release.          |
+| `TOKIO_WORKER_THREADS`                  | _env only_                             | one per CPU      | Runtime worker threads ([resources](#resources)).                                      |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | _env only_                             | empty            | Proxy for OIDC requests, read as the [terminal client](TERMINAL.md#environment) reads them. |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR`         | _env only_                             | the system's     | CA roots for OIDC requests. `SSL_CERT_FILE` replaces the system bundle and `SSL_CERT_DIR`, a `:`-separated list, the system directories; each one unset keeps the system's. |
 
