@@ -1,6 +1,7 @@
 //! The interface without a terminal: keys, pointer, events, signals and ticks in; frames, chrome, effects and exits out.
 use crossterm::event::{
-    Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
@@ -423,6 +424,47 @@ fn quitting_during_a_run_stops_it_first_and_ends_with_the_signal_s_status() {
 }
 
 #[test]
+fn a_held_run_key_never_stops_the_test_it_started_and_a_second_tap_does() {
+    let space = KeyCode::Char(' ');
+    let started = |now| {
+        let mut app = App::new(config(), None, (Profile::Plain, Palette::new(true)), now);
+        assert_matches!(command(&press(&mut app, space, now)), Command::Run(_));
+        app
+    };
+    let now = Instant::now();
+    let after = |ms: u64| now + Duration::from_millis(ms);
+    let mut app = started(now);
+    for at in (0..30).map(|repeat| after(1500 + 33 * repeat)) {
+        assert_eq!(press(&mut app, space, at), [], "a repeat of the held key");
+    }
+    assert_eq!(
+        command(&press(&mut app, space, after(1500 + 33 * 29 + 300))),
+        &Command::Stop
+    );
+
+    let mut app = started(now);
+    assert_eq!(
+        press(&mut app, space, after(700)),
+        [],
+        "a first tap reads as a repeat"
+    );
+    assert_eq!(
+        command(&press(&mut app, space, after(1400))),
+        &Command::Stop,
+        "a second tap stops"
+    );
+
+    let mut app = started(now);
+    let release = KeyEvent::new_with_kind(space, KeyModifiers::NONE, KeyEventKind::Release);
+    app.input(Input::Key(release), after(100));
+    assert_eq!(
+        command(&press(&mut app, space, after(200))),
+        &Command::Stop,
+        "a terminal that reports the release lets the next press stop at once"
+    );
+}
+
+#[test]
 fn esc_space_and_r_stop_a_run_after_esc_closes_a_sheet_and_quitting_reports_it() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
@@ -472,7 +514,7 @@ fn esc_space_and_r_stop_a_run_after_esc_closes_a_sheet_and_quitting_reports_it()
         Command::Run(_)
     );
     assert_eq!(
-        command(&press(&mut app, KeyCode::Char(' '), now)),
+        command(&press(&mut app, KeyCode::Char(' '), now + SECOND * 2)),
         &Command::Stop,
         "space stops a test still checking its paths"
     );
