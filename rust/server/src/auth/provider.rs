@@ -16,7 +16,10 @@ use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, head
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use std::{fmt::Display, future::poll_fn, pin::Pin, sync::Arc, time::Duration};
-use tokio::{runtime::Handle, time::timeout};
+use tokio::{
+    runtime::Handle,
+    time::{Instant, timeout_at},
+};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_BODY: usize = 1 << 20;
@@ -58,7 +61,8 @@ impl Client {
             request.headers_mut().insert(header::CONTENT_TYPE, media);
         }
         request.headers_mut().extend(field);
-        let sending = timeout(TIMEOUT, fetch(self.connector.clone(), request));
+        let deadline = Instant::now() + TIMEOUT;
+        let sending = timeout_at(deadline, fetch(self.connector.clone(), request, deadline));
         let sent = self.runtime.spawn(sending).await.map_err(failed)?;
         sent.map_err(|_| "OIDC request failed: timed out".to_owned())?
     }
@@ -68,7 +72,11 @@ fn failed(error: impl Display) -> String {
     format!("OIDC request failed: {error}")
 }
 
-async fn fetch(connector: Arc<Connector>, mut request: Request<String>) -> Result<Answer, String> {
+async fn fetch(
+    connector: Arc<Connector>,
+    mut request: Request<String>,
+    deadline: Instant,
+) -> Result<Answer, String> {
     let url = request.uri().to_string();
     let (origin, path) = Origin::split(&url).map_err(failed)?;
     let authority = origin.to_string().split_off("https://".len());
@@ -98,33 +106,39 @@ async fn fetch(connector: Arc<Connector>, mut request: Request<String>) -> Resul
             .await
             .map_err(failed)?
             .into_parts();
-        let mut bytes = Vec::new();
-        while let Some(frame) =
-            poll_fn(|cx| http_body::Body::poll_frame(Pin::new(&mut body), cx)).await
-        {
-            if let Ok(data) = frame.map_err(failed)?.into_data() {
-                if bytes.len() + data.len() > MAX_BODY {
-                    return Err(format!(
-                        "OIDC response refused: over {} MiB",
-                        MAX_BODY >> 20
-                    ));
+        let read = async {
+            let mut bytes = Vec::new();
+            while let Some(frame) =
+                poll_fn(|cx| http_body::Body::poll_frame(Pin::new(&mut body), cx)).await
+            {
+                if let Ok(data) = frame.map_err(|error| error.to_string())?.into_data() {
+                    if bytes.len() + data.len() > MAX_BODY {
+                        return Err(format!("its answer is over {} MiB", MAX_BODY >> 20));
+                    }
+                    bytes.extend_from_slice(&data);
                 }
-                bytes.extend_from_slice(&data);
             }
+            Ok(bytes)
+        };
+        let read = timeout_at(deadline, read).await;
+        let read = read.unwrap_or_else(|_| Err("timed out".to_owned()));
+        match (head.status, read) {
+            (StatusCode::OK, Ok(bytes)) => Ok(Answer {
+                media: media(&head.headers),
+                body: bytes,
+            }),
+            (StatusCode::OK, Err(cause)) => Err(failed(cause)),
+            (status, Ok(bytes)) => Err(format!(
+                "OIDC provider answered {status}{}",
+                oauth_refusal(&bytes)
+            )),
+            (status, Err(cause)) => Err(format!("OIDC provider answered {status}, then {cause}")),
         }
-        if head.status != StatusCode::OK {
-            let (status, refusal) = (head.status, oauth_refusal(&bytes));
-            return Err(format!("OIDC provider answered {status}{refusal}"));
-        }
-        Ok(Answer {
-            media: media(&head.headers),
-            body: bytes,
-        })
     };
     tokio::join!(exchange, driver).0
 }
 
-fn oauth_refusal(body: &[u8]) -> String {
+pub(super) fn oauth_refusal(body: &[u8]) -> String {
     #[derive(Deserialize)]
     struct Refusal {
         error: String,

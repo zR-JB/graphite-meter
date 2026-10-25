@@ -5,7 +5,7 @@ use super::{
     approval::Challenge,
     jwt, page,
     policy::{Cookie, cookie, cookie_lease},
-    provider::{Client, Provider},
+    provider::{Client, Provider, oauth_refusal},
     rate::{Attempts, engage, share_full},
     routes::{check_csrf, clear_cookie, establish, field, form, redirect, rejected, set_cookie},
     store::{Digest, digest, random},
@@ -274,7 +274,10 @@ impl Oidc {
             let tokens = serde_json::from_slice::<Tokens>(&answer.body);
             let tokens = tokens.map_err(|error| format!("answer unreadable: {error}"))?;
             match tokens.access_token.is_empty() {
-                true => Err("answer names no access_token".into()),
+                true => Err(format!(
+                    "answer names no access_token{}",
+                    oauth_refusal(&answer.body)
+                )),
                 false => Ok(tokens),
             }
         });
