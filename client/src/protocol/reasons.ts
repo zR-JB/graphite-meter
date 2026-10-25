@@ -11,3 +11,15 @@ export const FAILURE_REASONS = {
 } as const;
 
 export type FailureReason = keyof typeof FAILURE_REASONS;
+
+/** Reasons earlier builds saved under the name they had then. */
+const RENAMED = new Map<string, FailureReason>([
+  ["preparation-failed", "path-failed"],
+  ["server-busy", "server-capacity"],
+]);
+
+/** A saved reason by its current name; null for one this build does not know, as a newer build may save. */
+export function knownReason(saved: string): FailureReason | null {
+  const reason = RENAMED.get(saved) ?? saved;
+  return Object.hasOwn(FAILURE_REASONS, reason) ? (reason as FailureReason) : null;
+}

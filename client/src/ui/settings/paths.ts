@@ -70,8 +70,13 @@ export function shownTarget(
     : null;
 }
 
+/** The path a role takes; null until the server's transports are known. */
 export const pathSummary = (discovery: Discovery | null, role: Role, target: PathTarget | null) =>
-  target ? describePath(discovery, role, target).summary : "Selection unresolved";
+  target
+    ? describePath(discovery, role, target).summary
+    : discovery
+      ? "No path matches this choice"
+      : null;
 
 const origins = (discovery: Discovery, role: Role) =>
   discovery[role] as ReadonlyMap<string, OriginTargets<Target>>;

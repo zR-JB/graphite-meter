@@ -12,19 +12,14 @@ export const PHASE_HINT: Partial<
 };
 
 export const DIAL = {
-  restart: "Press Run again to restart",
   otherTab: "A test is running in another tab. This one starts when it ends.",
-  retry: "Press Run again to retry",
-  unknownError: "Something went wrong",
+  /** A stop is never saved. */
+  unsaved: "Nothing was saved",
   noData: (time: string) => `No data for ${time}`,
   noReplies: (time: string) => `No replies for ${time}`,
-  /** What a finished run lacks: the stages with no result, else what it measured in part; "" when it names none. */
-  unfinished: (failed: readonly string[], partial: readonly string[]) =>
-    failed.length
-      ? `${listed(failed)} failed`
-      : partial.length
-        ? `${listed(partial)} measured in part`
-        : "",
+  /** A finished run's issues on more servers than one line names. */
+  troubled: (servers: number) => `${servers} servers with issues`,
+  more: (servers: number) => `and ${servers} more ${servers === 1 ? "server" : "servers"}`,
   unavailable: (throughput: boolean, latency: boolean) =>
     throughput && latency
       ? "Throughput and latency paths are unavailable"
@@ -71,9 +66,15 @@ export const CARDS = {
 
 export const LENS = "Servers shown in the results";
 
+/** The grid of servers by stages under a multi-server result, and the causes under it. */
+export const GRID = {
+  label: "Each server's result by stage",
+  server: "Server",
+  /** The stages a cause cost its server. */
+  unreached: (stages: readonly string[]) =>
+    `${listed(stages)} ${stages.length > 1 ? "were" : "was"} not reached.`,
+} as const;
+
 export const TOAST = {
-  issue: "Issue",
   unsaved: "Not saved",
-  issueOn: (server: string) => `Issue on ${server}`,
-  many: (count: number) => `${count} measurement issues, each marked on its card`,
 } as const;

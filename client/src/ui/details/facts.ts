@@ -8,10 +8,10 @@ const BUSY_SHARE = 0.5;
 /** Reports the occupancy the server gave when the path was checked, or nothing without a slot limit. */
 export function loadSummary(load: Probe["load"]): string | null {
   if (!load || load.max <= 0) return null;
-  const slots = `${load.active} of ${load.max} slots`;
+  const running = `${load.active} of ${load.max} tests`;
   return load.active / load.max > BUSY_SHARE
-    ? `${slots}, server busy: results may be affected`
-    : slots;
+    ? `${running}, busy: results may be affected`
+    : running;
 }
 
 /** Keeps both sides apart, as in "Browser HTTP/1.1, server HTTP/2", and reads `unknown` until either reports. */

@@ -37,7 +37,9 @@ import {
 import { pageClock, RunClock, type Clock } from "./clock";
 import {
   failureScope,
+  failureSentence,
   graded,
+  shortSentence,
   lanes,
   stageStatus,
   type MultiServerResult,
@@ -158,8 +160,8 @@ export type RunEvent =
   /** The run as a whole stalled (every server recovering or quiet), or recovered. */
   | { type: "stall"; stall: Stall | null }
   | { type: "stageEnd"; stage: Stage; status: StageStatus; results: StageResults }
+  /** The run ended with what it measured, which may be nothing: History keeps any run whose timeline began. */
   | { type: "complete"; result: RunResult; plans: StagePlans }
-  | { type: "error"; reason: FailureReason; message: string }
   | { type: "aborted"; t: number };
 
 interface Participant {
@@ -275,7 +277,7 @@ export class Run {
   readonly #page: Clock;
   #clock!: RunClock;
   #handlers = new Set<(event: RunEvent) => void>();
-  #state: "created" | "running" | "completed" | "aborted" | "failed" = "created";
+  #state: "created" | "running" | "completed" | "aborted" = "created";
   #plan: RunPlan;
   #segments: Segment[];
   /** The segment the run shows; a stage's warmup and window share one activity. */
@@ -356,11 +358,18 @@ export class Run {
       t: 0,
       step: "preparing",
     });
-    // A server that failed its start check counts against the first stage that moves bytes.
+    // A server that failed its start check is named at once; saved, it counts against the first stage that moves
+    // bytes, as every release reads it, and the grid knows it left at Start.
     const charged = (this.#segments.find(({ activity }) => activity.transfer.length) ?? first)
       .activity.stage;
-    for (const { server, reason, message } of this.#dropped)
-      this.#record(server.id, "throughput", reason, message, charged);
+    for (const { server, reason, message } of this.#dropped) {
+      const failure = this.#record(server.id, "throughput", reason, message, charged, {
+        start: true,
+      });
+      if (failure) this.#emit({ type: "failure", failure });
+    }
+    // A handler may have stopped the run.
+    if (this.#state !== "running") return;
     this.#mintedAt = Date.now();
     for (const server of this.#servers)
       for (const stage of UPLOADS)
@@ -606,7 +615,7 @@ export class Run {
       const reason = classify(cause, "protocol-error");
       const message = cause instanceof Error ? cause.message : "Could not prepare the stage";
       // What earlier stages measured stays, as when every server leaves.
-      return this.#measured() ? this.end(reason, message) : this.#fail(reason, message);
+      return this.end(reason, message);
     }
     const stage: StageRun = {
       activity,
@@ -1123,10 +1132,16 @@ export class Run {
       seat.server,
       stall?.reason ?? "timeout",
       stall?.detail || `${direction} direction carried no data`,
+      direction,
     );
   }
 
-  #remove(server: Participant, reason: FailureReason, message: string): void {
+  #remove(
+    server: Participant,
+    reason: FailureReason,
+    message: string,
+    direction?: Direction,
+  ): void {
     const stage = this.#stage;
     if (server.removed || !stage || !this.#current(stage)) return;
     const seat = stage.seats.get(server.id);
@@ -1152,19 +1167,13 @@ export class Run {
       seat.resources.discard(true);
     }
     this.#live.drop(server.id);
-    this.#failure(server, "throughput", reason, message);
+    this.#failure(server, "throughput", reason, message, direction);
     if (unreached(reason)) void this.#signedOut(server, stage.activity.stage);
     this.#updateStalled();
     const survivors = this.#participants();
-    if (!survivors.length) {
-      if (!this.#measured())
-        return this.#fail(
-          reason,
-          `All selected test servers failed. ${server.prepared.server.name}: ${message}`,
-        );
-      // A sole server skips to its next stage; several that all fail end the run as incomplete.
-      return this.#servers.length === 1 ? this.#skip(stage) : this.#finish();
-    }
+    // A sole server that measured something skips to its next stage; otherwise the run ends with what it has.
+    if (!survivors.length)
+      return this.#servers.length === 1 && this.#measured() ? this.#skip(stage) : this.#finish();
     if (stage.phase === "measuring" && stage.activity.transfer.length)
       this.#aggregate.dropout(
         survivors.map(({ id }) => id),
@@ -1183,7 +1192,10 @@ export class Run {
     if (!failure || !unreached(failure.reason)) return;
     Object.assign(failure, {
       reason: "sign-in-required",
-      message: `Sign in to ${server.prepared.server.name}`,
+      message: failureSentence(
+        { reason: "sign-in-required", scope: failure.scope, stage },
+        server.prepared.server.name,
+      ),
     });
     this.#emit({ type: "failure", failure });
   }
@@ -1503,11 +1515,27 @@ export class Run {
           ? [this.#focus().id]
           : (this.#aggregate.intervals.findLast((interval) => interval.stage === name)
               ?.participants ?? this.#participants().map(({ id }) => id));
-      const message = short
+      const detail = short
         ? "Measured too little of the planned time"
         : "Too little measured evidence for a result";
-      for (const id of ids)
-        this.#record(id, failureScope(name), "insufficient-evidence", message, name);
+      // A stage cut short says so, as does a latency focus without a path to probe.
+      const missing = stage.activity.transfer.filter(
+        (_, index) => !lanes(this.#results, name)[index],
+      );
+      const direction = name === "bidirectional" && missing.length === 1 ? missing[0] : undefined;
+      for (const id of ids) {
+        const prepared = this.#servers.find((server) => server.id === id)?.prepared;
+        const server = prepared?.server.name ?? id;
+        const message = short
+          ? shortSentence(name as TransferStage, server)
+          : name === "latency" && prepared && !prepared.latency
+            ? `Latency probes had no path to ${server}.`
+            : "";
+        this.#record(id, failureScope(name), "insufficient-evidence", detail, name, {
+          message,
+          direction,
+        });
+      }
     }
     // A server that stayed but measured too little for its own result says so, as the run does; the stage's status counts it.
     if (stage)
@@ -1520,6 +1548,7 @@ export class Run {
                 this.#own.set(`${name}\t${dir}\t${id}`, result);
                 return result;
               });
+        const missing = stage.activity.transfer.filter((_, index) => !own[index]);
         if (!own.every(Boolean) && !this.#failed(name, id))
           this.#record(
             id,
@@ -1527,6 +1556,7 @@ export class Run {
             "insufficient-evidence",
             "Too little measured evidence for a result",
             name,
+            { direction: missing.length === 1 ? missing[0] : undefined },
           );
       }
     const status = stageStatus(lanes(this.#results, name), this.#failed(name));
@@ -1585,29 +1615,47 @@ export class Run {
     serverId: string,
     scope: Role,
     reason: FailureReason,
-    message: string,
+    detail: string,
     stage: Stage,
+    {
+      start = false,
+      message = "",
+      direction,
+    }: { start?: boolean; message?: string; direction?: Direction } = {},
   ): ServerFailure | null {
     if (
       this.#failures.some((f) => f.serverId === serverId && f.stage === stage && f.scope === scope)
     )
       return null;
-    // Server-supplied detail is bounded and filtered before it can reach saved history.
+    const name =
+      this.#servers.find(({ id }) => id === serverId)?.prepared.server.name ||
+      this.#dropped.find(({ server }) => server.id === serverId)?.server.name ||
+      serverId;
     const failure = {
       serverId,
       stage,
       atMs: this.#clock.runMs(),
       scope,
       reason,
-      message: safeDetail(message),
+      message:
+        message ||
+        failureSentence({ reason, scope, stage: start ? "start" : stage, direction }, name),
+      // Server-supplied text is bounded and filtered before it can reach saved history.
+      detail: safeDetail(detail),
     };
     this.#failures.push(failure);
     return failure;
   }
 
-  #failure(server: Participant, scope: Role, reason: FailureReason, message: string): void {
+  #failure(
+    server: Participant,
+    scope: Role,
+    reason: FailureReason,
+    message: string,
+    direction?: Direction,
+  ): void {
     const stage = this.#stage?.activity.stage;
-    const failure = stage && this.#record(server.id, scope, reason, message, stage);
+    const failure = stage && this.#record(server.id, scope, reason, message, stage, { direction });
     if (failure) this.#emit({ type: "failure", failure });
   }
 
@@ -1638,14 +1686,6 @@ export class Run {
     });
     this.#release();
     this.#emit({ type: "complete", result, plans });
-  }
-
-  #fail(reason: FailureReason, message: string): void {
-    if (this.#state !== "running") return;
-    this.#state = "failed";
-    for (const { buckets } of this.#servers) buckets.flush(this.#elapsed);
-    this.#release();
-    this.#emit({ type: "error", reason, message });
   }
 
   #release(): void {

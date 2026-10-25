@@ -190,7 +190,7 @@ test("the page requires Trusted Types and refuses script it did not make", async
   page.errors.length = 0;
 });
 
-test("stopping during download freezes elapsed time and a rerun completes", async (page) => {
+test("stopping during download freezes elapsed time, and a rerun starts afresh and completes", async (page) => {
   await open(page, home.url, {
     config: {
       stages: { ...downloadOnly.stages, latency: true },
@@ -200,8 +200,15 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
   await ready(page);
   await runButton(page, "Start test").click();
   await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+  // The download's own rate, not the latency figure the dial hands over from.
+  await expect(page.locator('.results .card[data-tone="download"] .headline .num')).toHaveText(
+    /\d/,
+  );
   await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
+  // The dial keeps the rate the download reached, under Stopped.
+  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
+  await expect(page.locator(".gauge-status")).toHaveText("Stopped");
   const elapsed = page.locator(".elapsed");
   const frozen = await elapsed.textContent();
   // A running clock would redraw its 0.1 s readout within eight frames.
@@ -210,6 +217,12 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
       await new Promise((resolve) => requestAnimationFrame(resolve));
   });
   expect(await elapsed.textContent()).toBe(frozen);
+  // A rerun leaves the stopped rate behind: stopped again in Latency, the dial holds no figure.
+  await runButton(page, /^(Start test|Run again)$/).click();
+  await expect(phase(page, "latency")).toHaveCount(1, { timeout: 10_000 });
+  await runButton(page, "Stop test").click();
+  await expect(phase(page, "aborted")).toHaveCount(1);
+  await expect(page.locator(".gauge-value")).toHaveText(/^\D*$/);
   const saved = await run(page);
   expect(saved.result.outcome).toBe("complete");
 });

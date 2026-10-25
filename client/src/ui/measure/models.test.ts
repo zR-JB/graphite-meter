@@ -2,10 +2,12 @@ import { expect, test } from "bun:test";
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { LatencySummary } from "../../engine/measure/latency";
-import type { MultiServerResult } from "../../engine/run/result";
+import { grid, type MultiServerResult, type RunResult } from "../../engine/run/result";
 import { MISSING } from "../../view/format";
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
 import {
+  cardLine,
+  gridView,
   liveCard,
   serverIssues,
   settledCard,
@@ -147,6 +149,7 @@ const transfer = (bytesPerSec: number): ThroughputResult => ({
 });
 const NOTHING: Evidence = {
   status: {},
+  whole: new Set(),
   download: null,
   upload: null,
   bidirectional: null,
@@ -253,35 +256,54 @@ test("a running card follows its own stage only, says when replies stop, and a s
   ]);
 });
 
-test("a server's issues name the stages each reason ended", () => {
+test("a server's issues name the stages each reason ended, a server dropped at Start by Start", () => {
   const failure = (stage: string, scope: string, reason: string, serverId = "a") => ({
     serverId,
     stage,
     scope,
     reason,
   });
-  const details = {
-    selection: [{ id: "a", name: "Oslo" }],
-    failures: [
-      failure("download", "throughput", "timeout"),
-      failure("upload", "latency", "timeout"),
-      failure("latency", "latency", "connection-lost"),
-      failure("upload", "throughput", "timeout", "b"),
-    ],
-  } as unknown as MultiServerResult;
-  expect(serverIssues(details, "a")).toEqual([
-    {
-      server: "Oslo",
-      stages: `${STAGE.download.label}, ${POPULATION.upload}`,
-      reason: reasonLabel("timeout"),
-      throughput: ["download"],
+  const ran = {
+    latency: "partial",
+    download: "partial",
+    upload: "complete",
+    bidirectional: "not-run",
+  };
+  const table = grid({
+    latency: null,
+    download: null,
+    upload: null,
+    bidirectional: null,
+    stages: ran,
+    multiServer: {
+      selection: [
+        { id: "a", name: "Oslo" },
+        { id: "b", name: "Bergen" },
+      ],
+      servers: [{ server: { id: "a" }, latencyTarget: {}, stages: ran }],
+      failures: [
+        failure("download", "throughput", "timeout"),
+        failure("upload", "latency", "timeout"),
+        failure("latency", "latency", "connection-lost"),
+        // Charged to the first transfer stage, as every release saves a Start drop.
+        failure("download", "throughput", "server-capacity", "b"),
+      ],
     },
+  } as unknown as RunResult);
+  expect(serverIssues(table, "a")).toEqual([
     {
       server: "Oslo",
       stages: STAGE.latency.label,
       reason: reasonLabel("connection-lost"),
-      throughput: [],
     },
+    {
+      server: "Oslo",
+      stages: `${STAGE.download.label}, ${POPULATION.upload}`,
+      reason: reasonLabel("timeout"),
+    },
+  ]);
+  expect(serverIssues(table, "b")).toEqual([
+    { server: "Bergen", stages: "Start", reason: reasonLabel("server-capacity") },
   ]);
 });
 
@@ -302,10 +324,20 @@ test("shown together, the latency card reads the server latency is shown for, he
     download: null,
     upload: null,
     bidirectional: null,
-  } as unknown as Omit<Evidence, "idle">;
+  } as unknown as Omit<Evidence, "idle" | "whole">;
+  const result = {
+    ...run,
+    stages: {
+      latency: "complete",
+      download: "not-run",
+      upload: "not-run",
+      bidirectional: "not-run",
+    },
+    multiServer: { ...details, selection: [near.server, far.server], failures: [] },
+  } as unknown as RunResult;
   const live = summary(121, 40);
   const shown = (focus: string, lens = "") =>
-    shownEvidence({ details, lens, focus, run, idle: live });
+    shownEvidence({ table: lens ? grid(result) : null, details, lens, focus, run, idle: live });
   // Latency shown for the far server reads its result and its own replies, never the run's near headline.
   expect([shown("far").latency, shown("far").idle?.probeCount]).toEqual([far.latency as never, 9]);
   expect(shown("far").status).toEqual({ latency: "complete", download: "complete" });
@@ -315,5 +347,165 @@ test("shown together, the latency card reads the server latency is shown for, he
   ]);
   // A lens on one server reads that server alone; with no result yet, the run's own and the live replies.
   expect(shown("near", "far").latency).toBe(far.latency as never);
-  expect(shownEvidence({ details: null, lens: "", focus: "far", run, idle: live }).idle).toBe(live);
+  expect(
+    shownEvidence({ table: null, details: null, lens: "", focus: "far", run, idle: live }).idle,
+  ).toBe(live);
+});
+
+test("a card's line names who failed in its stage and who never reached it; one server shown alone says why", () => {
+  const frankfurt = { id: "f", name: "Frankfurt", url: "" };
+  const oslo = { id: "o", name: "Oslo", url: "" };
+  const bergen = { id: "b", name: "Bergen", url: "" };
+  const all = {
+    latency: "not-run",
+    download: "complete",
+    upload: "complete",
+    bidirectional: "not-run",
+  };
+  const failure = (serverId: string, reason: string) => ({
+    serverId,
+    stage: "download",
+    atMs: 0,
+    scope: "throughput",
+    reason,
+    message: "",
+  });
+  const table = grid({
+    latency: null,
+    download: transfer(1e6),
+    upload: transfer(1e6),
+    bidirectional: null,
+    stages: { ...all, download: "partial", upload: "partial" },
+    multiServer: {
+      selection: [frankfurt, oslo, bergen],
+      servers: [
+        { server: frankfurt, stages: all },
+        { server: oslo, stages: { ...all, download: "partial", upload: "not-run" } },
+      ],
+      failures: [failure("o", "connection-lost"), failure("b", "server-capacity")],
+    },
+  } as unknown as RunResult);
+  expect(cardLine(table, "download")).toBe("Oslo: connection lost; without Bergen");
+  expect(cardLine(table, "upload")).toBe("Without Oslo and Bergen");
+  expect(cardLine(table, "download", "o")).toBe("Connection lost");
+  expect(cardLine(table, "upload", "o")).toBe("Left in Download: connection lost");
+  expect(cardLine(table, "upload", "b")).toBe("Left at Start: server at capacity");
+  expect(cardLine(table, "upload", "f")).toBe("");
+  const both = grid({
+    latency: null,
+    download: null,
+    upload: null,
+    bidirectional: null,
+    stages: { ...all, download: "failed", upload: "not-run" },
+    multiServer: {
+      selection: [frankfurt, oslo],
+      servers: [
+        { server: frankfurt, stages: { ...all, download: "failed", upload: "not-run" } },
+        { server: oslo, stages: { ...all, download: "failed", upload: "not-run" } },
+      ],
+      failures: [failure("f", "connection-lost"), failure("o", "connection-lost")],
+    },
+  } as unknown as RunResult);
+  expect(cardLine(both, "download")).toBe("Frankfurt and Oslo: connection lost");
+});
+
+test("the server grid reads each server's value or word per planned stage, then each cause and what it cost", () => {
+  const frankfurt = { id: "f", name: "Frankfurt", url: "" };
+  const oslo = { id: "o", name: "Oslo", url: "" };
+  const bergen = { id: "b", name: "Bergen", url: "" };
+  const ran = {
+    latency: "not-run",
+    download: "complete",
+    upload: "complete",
+    bidirectional: "not-run",
+  };
+  const failure = (serverId: string, stage: string, reason: string, message = "") => ({
+    serverId,
+    stage,
+    atMs: 0,
+    scope: "throughput",
+    reason,
+    message,
+  });
+  const result = {
+    latency: null,
+    download: transfer(2.5e6),
+    upload: transfer(1e6),
+    bidirectional: null,
+    stages: { ...ran, download: "partial", upload: "partial" },
+    outcome: "partial",
+    multiServer: {
+      selection: [frankfurt, oslo, bergen],
+      servers: [
+        { server: frankfurt, download: transfer(2e6), upload: transfer(1e6), stages: ran },
+        {
+          server: oslo,
+          download: transfer(5e5),
+          upload: null,
+          stages: { ...ran, download: "partial", upload: "not-run" },
+        },
+      ],
+      failures: [
+        failure("o", "download", "connection-lost", "Download from Oslo lost its connection."),
+        failure(
+          "b",
+          "download",
+          "server-capacity",
+          "Bergen had no room for another test when this one started.",
+        ),
+      ],
+    },
+  } as unknown as RunResult;
+  const view = gridView(result, grid(result), BITS);
+  expect(view.stages).toEqual(["download", "upload"]);
+  expect(view.rows[1]!.cells.map(({ measured }) => measured)).toEqual([true, false]);
+  expect(view.rows[1]!.cells[1]!.tip).toBe("Not reached\nLeft in Download: connection lost");
+  expect(view.units).toEqual({ download: "Mbit/s", upload: "Mbit/s" });
+  expect(
+    view.rows.map(({ name, word, cells }) => [
+      name,
+      word?.label ?? "",
+      ...cells.map(({ text, word }) => `${text}${word ? ` ${word.tone}` : ""}`),
+    ]),
+  ).toEqual([
+    ["Frankfurt", "", "16.00", "8.00"],
+    ["Oslo", "Incomplete", "4.00 warn", "Not reached"],
+    ["Bergen", "Incomplete", "Not reached", "Not reached"],
+  ]);
+  expect(view.rows[1]!.cells[0]!.tip).toBe("Partial\nDownload from Oslo lost its connection.");
+  expect(view.notes).toEqual([
+    {
+      tone: "warn",
+      text: "Download from Oslo lost its connection. Upload was not reached.",
+    },
+    {
+      tone: "warn",
+      text: "Bergen had no room for another test when this one started. Download and Upload were not reached.",
+    },
+  ]);
+
+  // A server that failed where it ran is the error; one left short is a warning.
+  const porto = { id: "p", name: "Porto", url: "" };
+  const failed = {
+    ...result,
+    multiServer: {
+      ...result.multiServer,
+      selection: [frankfurt, porto],
+      servers: [
+        result.multiServer.servers[0],
+        {
+          server: porto,
+          download: null,
+          upload: transfer(1e6),
+          stages: { ...ran, download: "failed" },
+        },
+      ],
+      failures: [failure("p", "download", "timeout", "Porto stopped delivering download data.")],
+    },
+  } as unknown as RunResult;
+  const failedView = gridView(failed, grid(failed), BITS);
+  expect(failedView.rows[1]!.cells[0]).toMatchObject({ text: "Failed", measured: false });
+  expect(failedView.notes).toEqual([
+    { tone: "err", text: "Porto stopped delivering download data." },
+  ]);
 });

@@ -18,7 +18,7 @@ import { Glide } from "../../lib/motion";
 import { batch, computed, effect, scope, signal, untrack, type Read } from "../../lib/signal";
 import type { RateUnits, Units } from "../../view/format";
 import { latencyAxisMs, throughputScales } from "../../view/scales";
-import { stageState, type StageState } from "../../view/words";
+import { stageState, type StageFacts, type StageState } from "../../view/words";
 import { resultArcs } from "./dial-model";
 
 /** A stalled sample fades the rates to zero once, over this long. */
@@ -92,8 +92,10 @@ function createLive(app: App) {
   let stalled = false;
   effect(() => {
     const sample = run.live();
+    // A stopped run keeps the rate it last showed, until the next run leaves "aborted".
+    const held = !sample && run.phase() === "aborted";
     untrack(() => {
-      if (sample?.stage !== rateStage.peek()) {
+      if (!held && sample?.stage !== rateStage.peek()) {
         rateStage.set(null);
         stalled = false;
       }
@@ -259,7 +261,7 @@ function createLive(app: App) {
     const key = `${run.phase()}:${run.shownAt()}`;
     const step = run.step();
     untrack(() => {
-      if (run.phase.peek() === "aborted" || run.phase.peek() === "error") phaseClock.hold();
+      if (run.phase.peek() === "aborted") phaseClock.hold();
       else if (key !== segment) {
         segment = key;
         stale = progress;
@@ -289,7 +291,7 @@ function createLive(app: App) {
       if (phase === "connecting") runClock.set(0, { rate: 1, snap: true });
       else if (phase === "idle") runClock.set(0, { snap: true });
       else if (phase === "complete" && result) runClock.set(result.durationMs, { snap: true });
-      else if (phase === "aborted" || phase === "error") runClock.hold();
+      else if (phase === "aborted") runClock.hold();
       bump();
     });
   });
@@ -310,29 +312,19 @@ function createLive(app: App) {
     const current = run.stage();
     const statuses = run.statuses();
     const stall = run.stall() !== null;
-    const ended =
-      phase === "complete"
-        ? "complete"
-        : phase === "aborted"
-          ? "stopped"
-          : phase === "error"
-            ? "error"
-            : null;
+    const ended: StageFacts["ended"] =
+      phase === "complete" ? "complete" : phase === "aborted" ? "stopped" : null;
     const plan = shownPlan();
     const entries = STAGES.map((stage) => {
       const mine = current === stage;
-      const state = stageState({
+      const facts = {
         planned: planned(plan, stage),
         settled: statuses[stage] ?? null,
         phase: mine ? shown : null,
         stalled: mine && stall,
         ended,
-      });
-      // A run that failed leaves the stage it was in waiting, as its result never says otherwise.
-      return [
-        stage,
-        ended === "error" && state === "failed" && !statuses[stage] ? "upcoming" : state,
-      ] as const;
+      };
+      return [stage, stageState(facts)] as const;
     });
     return Object.fromEntries(entries) as Record<Stage, StageState>;
   });

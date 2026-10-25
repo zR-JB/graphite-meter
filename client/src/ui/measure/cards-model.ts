@@ -3,8 +3,15 @@ import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyResult, LatencySummary } from "../../engine/measure/latency";
 import type { WireModel } from "../../engine/measure/overhead";
 import { stabilityPct } from "../../engine/measure/stability";
-import type { MultiServerResult, StageStatus } from "../../engine/run/result";
-import type { Stage, TransferStage } from "../../engine/run/schedule";
+import {
+  grid,
+  type Cause,
+  type CellStatus,
+  type Grid,
+  type MultiServerResult,
+  type RunResult,
+} from "../../engine/run/result";
+import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import {
   fmtBytes,
   fmtCount,
@@ -22,6 +29,8 @@ import {
   type RateUnits,
 } from "../../view/format";
 import {
+  listed,
+  OUTCOME,
   POPULATION,
   reasonLabel,
   STAGE,
@@ -30,7 +39,7 @@ import {
   type StageState,
   type Word,
 } from "../../view/words";
-import { CARDS, FACT, type FactKey } from "./copy";
+import { CARDS, FACT, GRID, type FactKey } from "./copy";
 
 type CardStatus =
   | "pending"
@@ -76,7 +85,10 @@ type Transfer = ThroughputResult & { wire?: WireModel | null };
 
 /** The evidence a card shows, the run's or one server's share of it. */
 export interface Evidence {
-  status: Partial<Record<Stage, StageStatus>>;
+  /** As the result grid judges each stage. */
+  status: Partial<Record<Stage, CellStatus>>;
+  /** Stages every server that took part measured in full, however many did not: their stability and wire rate stand. */
+  whole: ReadonlySet<Stage>;
   download: Transfer | null;
   upload: Transfer | null;
   bidirectional: {
@@ -89,12 +101,44 @@ export interface Evidence {
   idle: LatencySummary | null;
 }
 
-/** Takes one server's share of a multi-server result; nothing is settled for a server that measured nothing. */
-export function serverEvidence(details: MultiServerResult, id: string): Evidence {
+/** The stages a judged result measured in full, or one server of it did. */
+function wholeStages(table: Grid, id = ""): Set<Stage> {
+  const rows = id ? table.rows.filter((row) => row.server.id === id) : table.rows;
+  return new Set(
+    STAGES.filter(
+      (stage) =>
+        table.columns[stage] !== "skipped" &&
+        rows.some((row) => row.cells[stage].status === "complete") &&
+        rows.every(({ cells }) =>
+          ["complete", "unreached", "skipped"].includes(cells[stage].status),
+        ),
+    ),
+  );
+}
+
+/** A finished result as the cards read every server together. */
+export const runEvidence = (result: RunResult): Evidence => {
+  const table = grid(result);
+  return {
+    ...result,
+    status: table.columns,
+    whole: wholeStages(table),
+    idle: result.latencyByStage.latency,
+  };
+};
+
+/** One server's share of a run, each stage as its cell reads; a server dropped at Start measured nothing. */
+export function serverEvidence(table: Grid, details: MultiServerResult, id: string): Evidence {
+  const row = table.rows.find((entry) => entry.server.id === id);
+  const status = row
+    ? Object.fromEntries(STAGES.map((stage) => [stage, row.cells[stage].status]))
+    : {};
+  const whole = wholeStages(table, id);
   const server = details.servers.find((entry) => entry.server.id === id);
   if (!server)
     return {
-      status: {},
+      status,
+      whole,
       download: null,
       upload: null,
       bidirectional: null,
@@ -102,7 +146,8 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
       idle: null,
     };
   return {
-    status: server.stages,
+    status,
+    whole,
     download: server.download,
     upload: server.upload,
     bidirectional: server.bidirectional,
@@ -111,30 +156,34 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
   };
 }
 
-/** What the cards read: the lens's server, or all together; latency reads only its shown server so figures never mix servers. */
+/** What the cards read: the lens's server, or all together; latency reads only its shown server so figures never mix
+ *  servers. */
 export function shownEvidence(view: {
+  table: Grid | null;
   details: MultiServerResult | null;
   lens: string;
   focus: string | null;
-  run: Omit<Evidence, "idle">;
+  run: Omit<Evidence, "idle" | "whole">;
   /** The focus's live replies stand in while it has no result. */
   idle: LatencySummary | null;
 }): Evidence {
-  const { details, lens, focus, run } = view;
-  if (details && lens) return serverEvidence(details, lens);
+  const { table, details, lens, focus, run } = view;
+  if (table && details && lens) return serverEvidence(table, details, lens);
+  const evidence = { ...run, whole: table ? wholeStages(table) : new Set<Stage>() };
   const focused = details?.servers.find((entry) => entry.server.id === focus);
-  if (!focused?.latency) return { ...run, idle: view.idle };
+  if (!focused?.latency) return { ...evidence, idle: view.idle };
+  const own = focused.stages.latency;
   return {
-    ...run,
-    status: { ...run.status, latency: focused.stages.latency },
+    ...evidence,
+    status: own === "not-run" ? run.status : { ...run.status, latency: own },
     latency: focused.latency,
     idle: focused.latencyByStage.latency,
   };
 }
 
-const SETTLED = new Set<StageStatus>(["complete", "partial", "failed"]);
+const SETTLED = new Set<CellStatus>(["complete", "partial", "failed"]);
 export const settled = (
-  status: StageStatus | null | undefined,
+  status: CellStatus | null | undefined,
 ): status is "complete" | "partial" | "failed" => !!status && SETTLED.has(status);
 
 const LOOK: Record<StageState, CardStatus> = {
@@ -251,7 +300,7 @@ export function settledCard(
   showWire: boolean,
 ): CardModel {
   const card = blank(stage, status);
-  const complete = status === "complete";
+  const complete = status === "complete" || evidence.whole.has(stage);
   if (stage === "latency") {
     const latency = evidence.latency;
     const idle = idleFacts(evidence.idle);
@@ -407,44 +456,80 @@ export interface Issue {
   server: string;
   stages: string;
   reason: string;
-  throughput: Stage[];
 }
 
-/** Lists failed server stages, one line per server and reason; only throughput failures mark a card, and `scope` narrows to one server. */
-export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
-  const lines = new Map<
-    string,
-    { server: string; stages: string[]; reason: string; throughput: Stage[] }
-  >();
-  for (const failure of details.failures) {
-    if (scope && failure.serverId !== scope) continue;
-    const key = `${failure.serverId} ${failure.reason}`;
-    let line = lines.get(key);
-    if (!line) {
-      const server =
-        details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server";
-      line = { server, stages: [], reason: reasonLabel(failure.reason), throughput: [] };
+/** The causes in a grid, one line per server and reason; `scope` narrows to one server. */
+export function serverIssues(table: Grid, scope = ""): Issue[] {
+  const lines = new Map<string, Issue & { places: string[] }>();
+  for (const { server, causes } of table.rows) {
+    if (scope && server.id !== scope) continue;
+    for (const cause of causes) {
+      const key = `${server.id} ${cause.reason}`;
+      const line = lines.get(key) ?? {
+        server: server.name,
+        stages: "",
+        reason: reasonLabel(cause.reason),
+        places: [],
+      };
       lines.set(key, line);
+      line.places.push(causePlace(cause));
     }
-    const latency = failure.scope === "latency";
-    line.stages.push(
-      latency && failure.stage !== "latency"
-        ? POPULATION[failure.stage]
-        : STAGE[failure.stage].label,
-    );
-    if (!latency) line.throughput.push(failure.stage);
   }
-  return [...lines.values()].map(({ stages, ...line }) => ({ ...line, stages: stages.join(", ") }));
+  return [...lines.values()].map(({ places, ...line }) => ({ ...line, stages: places.join(", ") }));
 }
 
-/** Gives a card's failure reason, named by server when several ran and all are shown. */
-export function cardReason(issues: readonly Issue[], stage: Stage, attributed: boolean): string {
-  return issues
-    .filter((issue) => issue.throughput.includes(stage))
-    .map(({ server, reason }) =>
-      attributed ? `${server}: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}` : reason,
-    )
-    .join(", ");
+export const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+const loaded = (cause: Cause) => cause.scope === "latency" && cause.stage !== "latency";
+
+/** Where a cause arose, as a line starts with it: Start, a stage, or a transfer stage's loaded latency. */
+export const causePlace = (cause: Cause) =>
+  cause.stage === "start"
+    ? "Start"
+    : loaded(cause)
+      ? POPULATION[cause.stage]
+      : STAGE[cause.stage].label;
+
+/** Causes of one reason mid-sentence: "connection lost in Latency and Download", "server at capacity at Start". */
+export function causeAt(...causes: Cause[]): string {
+  const places = [
+    ...new Set(
+      causes.map((cause) => (loaded(cause) ? lower(causePlace(cause)) : causePlace(cause))),
+    ),
+  ];
+  const stages = places.filter((place) => place !== "Start");
+  const where = [
+    ...(places.includes("Start") ? ["at Start"] : []),
+    ...(stages.length ? [`in ${listed(stages)}`] : []),
+  ];
+  return `${lower(reasonLabel(causes[0]!.reason))} ${where.join(" and ")}`;
+}
+
+/** Where a server left the run, and why: "Left in Download: connection lost". */
+export const leftLine = (cause: Cause) =>
+  `${cause.stage === "start" ? "Left at Start" : `Left in ${STAGE[cause.stage].label}`}: ${lower(reasonLabel(cause.reason))}`;
+
+/** A card's line: each server's failure in its stage, then who never reached it; one server alone says why. */
+export function cardLine(table: Grid, stage: Stage, lens = ""): string {
+  const attributed = !lens && table.rows.length > 1;
+  const rows = lens ? table.rows.filter((row) => row.server.id === lens) : table.rows;
+  const lines: string[] = [];
+  // Servers short for one reason share it: "Frankfurt and Oslo: connection lost".
+  const short = new Map<string, string[]>();
+  const without: string[] = [];
+  for (const { server, cells } of rows) {
+    const { status, cause } = cells[stage];
+    if (status === "unreached") {
+      if (attributed) without.push(server.name);
+      else if (cause) lines.push(leftLine(cause));
+    } else if ((status === "partial" || status === "failed") && cause) {
+      const reason = reasonLabel(cause.reason);
+      if (attributed) short.set(reason, [...(short.get(reason) ?? []), server.name]);
+      else lines.push(reason);
+    }
+  }
+  for (const [reason, names] of short) lines.push(`${listed(names)}: ${lower(reason)}`);
+  if (without.length) lines.push(`${lines.length ? "without" : "Without"} ${listed(without)}`);
+  return lines.join("; ");
 }
 
 /** Speaks a completed run once in card order, with each headline, its status if not complete and latency's jitter. */
@@ -459,4 +544,92 @@ export function resultSentence(cards: readonly CardModel[]): string {
       return `${STAGE[card.stage].label} ${headline}${status}${jitter}`;
     })
     .join("; ");
+}
+
+export interface GridCell {
+  stage: Stage;
+  /** The server's own value, or the cell's word when it has none. */
+  text: string;
+  measured: boolean;
+  /** Partial and Failed carry a dot of their tone; Complete and Not reached none. */
+  word: Word | null;
+  tip: string;
+}
+export interface GridNote {
+  tone: "err" | "warn";
+  /** The cause's sentence, which names its server and stage, then what it cost. */
+  text: string;
+}
+export interface GridView {
+  stages: Stage[];
+  /** Each column's unit, shared by its cells. */
+  units: Partial<Record<Stage, string>>;
+  rows: { id: string; name: string; word: Word | null; cells: GridCell[] }[];
+  notes: GridNote[];
+}
+
+/** The result grid in words: every server's value or word per planned stage, then each cause and what it cost. */
+export function gridView(result: RunResult, table: Grid, units: RateUnits): GridView {
+  const stages = STAGES.filter((stage) => table.columns[stage] !== "skipped");
+  const tier = units.tier ?? 0;
+  const value = (stage: Stage, id: string): string => {
+    const server = result.multiServer.servers.find((entry) => entry.server.id === id);
+    if (stage === "latency") return server?.latency ? fmtMs(server.latency.reportedMs) : MISSING;
+    const lanes =
+      stage === "bidirectional"
+        ? [server?.bidirectional?.down, server?.bidirectional?.up]
+        : [server?.[stage]];
+    if (!lanes.every(Boolean)) return MISSING;
+    const bytesPerSec = lanes.reduce((sum, lane) => sum + lane!.reportedBytesPerSec, 0);
+    return fmtSpeed(toRateUnit(bytesPerSec, units, tier));
+  };
+  const rows = table.rows.map(({ server, cells, outcome }) => ({
+    id: server.id,
+    name: server.name,
+    word: outcome === "complete" ? null : OUTCOME[outcome],
+    cells: stages.map((stage): GridCell => {
+      const { status, cause } = cells[stage];
+      const shown = status === "complete" || status === "partial";
+      const word = status === "complete" ? null : STAGE_STATE[status];
+      // A server that left says where; one that failed here says what happened.
+      const why = !cause ? [] : status === "unreached" ? [leftLine(cause)] : [cause.message];
+      return {
+        stage,
+        text: shown ? value(stage, server.id) : word!.label,
+        measured: shown,
+        word: status === "unreached" ? null : word,
+        tip: [word?.label, ...why].filter(Boolean).join("\n"),
+      };
+    }),
+  }));
+  // One server's cards already say each cause of their stage; its list keeps only what no card shows.
+  const notes = table.rows.flatMap(({ cells, causes }) =>
+    causes
+      .filter((cause) => table.rows.length > 1 || loaded(cause))
+      .map((cause): GridNote => {
+        const after = stages.filter(
+          (stage) => cells[stage].status === "unreached" && cells[stage].cause === cause,
+        );
+        const failed = stages.some(
+          (stage) => cells[stage].status === "failed" && cells[stage].cause === cause,
+        );
+        return {
+          tone: failed ? "err" : "warn",
+          text: [
+            cause.message,
+            after.length ? GRID.unreached(after.map((stage) => STAGE[stage].label)) : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        };
+      }),
+  );
+  return {
+    stages,
+    units: Object.fromEntries(
+      stages.map((stage) => [stage, stage === "latency" ? "ms" : rateUnit(units, tier)]),
+    ),
+    rows,
+    notes,
+  };
 }

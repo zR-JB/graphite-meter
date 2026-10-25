@@ -1,5 +1,5 @@
 import type { HistoryRecord } from "../src/app/history/records";
-import { incoherence, type StagePlans } from "../src/engine/run/result";
+import { grid, incoherence, type StagePlans } from "../src/engine/run/result";
 import type { TestConfig as RunnerConfig } from "../src/engine/types";
 import { planned, STAGES } from "../src/engine/run/schedule";
 import { STAGE } from "../src/view/words";
@@ -195,13 +195,15 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
     () => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config,
   );
   expect(incoherence(record!.result, plansOf(config))).toEqual([]);
-  // History views have no stage track; the live view must show what was saved.
+  // History views have no stage track; the live view must show what was saved, as the grid judges it.
+  const { columns } = grid(record!.result);
   for (const stage of STAGES) {
-    const status = record!.result.stages[stage];
+    const status = columns[stage];
     const name = new RegExp(`^${STAGE[stage].label} stage`);
     const track = page.getByRole("switch", { name });
-    if (status !== "not-run" && (await track.state()).length)
-      await expect(track).toHaveAttribute("class", new RegExp(`\\bchip--${status}\\b`));
+    const look = status === "unreached" ? "pending" : status;
+    if (status !== "skipped" && (await track.state()).length)
+      await expect(track).toHaveAttribute("class", new RegExp(`\\bchip--${look}\\b`));
   }
   return record!;
 }

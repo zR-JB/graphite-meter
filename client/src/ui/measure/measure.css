@@ -181,14 +181,14 @@
     & circle {
       fill: var(--accent, var(--text-soft));
     }
-    /* A warmup's reading is shown, not counted: its hue faded toward the page until the window opens; opaque, so overlaps paint as one. */
-    &.warming path {
+    /* A warmup's or a stopped stage's reading is shown, not counted: its hue faded toward the page; opaque, so overlaps paint as one. */
+    &.muted path {
       stroke: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
-    &.warming circle {
+    &.muted circle {
       fill: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
-    &.warming .ripple {
+    &.muted .ripple {
       border-color: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
     & .ripple {
@@ -1267,6 +1267,10 @@
       font-weight: var(--w-strong);
     }
   }
+  /* Only a stage without a result reads its line as an error; one that keeps or may keep a result warns. */
+  .card:not(.failed) .line .reason {
+    color: var(--warn);
+  }
   .card .strip {
     min-height: 68px;
     max-height: 120px;
@@ -1274,6 +1278,12 @@
     padding: 6px 8px 0;
     border-radius: var(--r-well);
     background: color-mix(in oklab, var(--tone) 7%, var(--surface-1));
+  }
+  /* Nothing to plot: a baseline, not a tinted block that reads as loading. */
+  .card:is(.pending, .not-run, .failed) .strip {
+    border-bottom: var(--hairline) solid var(--border);
+    border-radius: 0;
+    background: none;
   }
   .card .facts {
     display: grid;
@@ -1314,22 +1324,115 @@
       color: var(--text-soft);
     }
   }
-  .result-summary .issues {
+  /* Each server's result by stage, ruled with hairlines as the facts lists are; a phone stacks a block per server. */
+  .server-grid {
     display: grid;
-    grid-template-columns: auto auto;
-    justify-content: center;
-    gap: 2px var(--space-3);
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
-    &.attributed {
-      grid-template-columns: auto auto auto;
-      & dt {
+    gap: var(--space-2);
+    max-inline-size: 760px;
+    overflow-x: auto;
+    & table {
+      width: 100%;
+      border: var(--hairline) solid var(--border);
+      border-radius: var(--r-chrome);
+      border-spacing: 0;
+      background: var(--surface-1);
+      box-shadow: var(--elev-tile);
+    }
+    & :is(th, td) {
+      padding: 7px var(--row-inset);
+      text-align: end;
+      white-space: nowrap;
+    }
+    & :is(th, td):first-child {
+      text-align: start;
+    }
+    & tbody > tr > * {
+      border-top: var(--hairline) solid var(--border-subtle);
+    }
+    & thead th {
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+      vertical-align: bottom;
+    }
+    & thead .unit {
+      display: block;
+      color: var(--text-muted);
+      font: var(--role-caption);
+    }
+    & tbody th {
+      font: var(--w-strong) var(--type-md) / 1.35 var(--font-sans);
+    }
+    & tbody th .word,
+    & td.word {
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+    }
+    & tbody th .word {
+      display: block;
+    }
+    & td {
+      font: var(--role-figure-sm);
+    }
+    & .status-dot.inline {
+      margin-inline-end: 0.4em;
+    }
+    /* Causes are a ruled list with a dot in their tone, never tinted boxes: the cards already carry the alarm. */
+    & .causes {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--text-muted);
+      font: var(--role-caption);
+      & li {
+        display: flex;
+        align-items: baseline;
+        padding-block: var(--space-2);
+        border-top: var(--hairline) solid var(--border-subtle);
+      }
+      & strong {
         color: var(--text);
         font-weight: var(--w-strong);
       }
     }
-    & .reason {
-      color: var(--text-soft);
+  }
+  @container results (max-width: 520px) {
+    .server-grid {
+      & thead {
+        display: none;
+      }
+      & :is(table, tbody, tr) {
+        display: grid;
+      }
+      & table {
+        gap: var(--space-2);
+        border: 0;
+        background: none;
+        box-shadow: none;
+      }
+      & tr {
+        padding-inline: var(--row-inset);
+        border: var(--hairline) solid var(--border);
+        border-radius: var(--r-chrome);
+        background: var(--surface-1);
+        box-shadow: var(--elev-tile);
+      }
+      & tr > * {
+        display: flex;
+        justify-content: space-between;
+        gap: var(--space-3);
+        padding-inline: 0;
+      }
+      & tbody tr > th {
+        border-top: 0;
+      }
+      & tbody th .word {
+        display: inline;
+      }
+      & td::before {
+        content: attr(data-label);
+        color: var(--text-soft);
+        font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+      }
     }
   }
   /* A phone's card: the name and status at the left, the headline at the right, the facts a wrapping row. */
@@ -1567,15 +1670,25 @@
       translate: 0 4px;
     }
   }
-  /* A phone has no status strip: a stall shows for its reading time too. */
+  /* A narrow page docks the toast across its width, above the status strip; a stall shows for its reading time too. */
   @media (max-width: 759px) {
     .phase-toast {
-      inset-inline: var(--space-4);
+      inset-inline: 0;
+      bottom: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
       min-width: 0;
       max-width: none;
+      border-width: var(--hairline) 0 0;
+      border-radius: 0;
       &.stall {
         animation: linger var(--leave) var(--ease-out) var(--linger) forwards;
       }
+    }
+  }
+  /* A phone hides the strip, so the toast docks on the bottom edge. */
+  @media (max-width: 520px), (max-width: 759px) and (max-height: 520px) and (pointer: coarse) {
+    .phase-toast {
+      bottom: 0;
+      padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
     }
   }
 

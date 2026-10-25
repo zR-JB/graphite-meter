@@ -400,7 +400,8 @@ export function measured(run: Attempt) {
   return {
     outcome: run.record?.result.outcome ?? `no result: ${run.notice}`,
     failures: failures.map(
-      ({ serverId, stage, reason, message }) => `${serverId} ${stage} ${reason}: ${message}`,
+      ({ serverId, stage, reason, message, detail }) =>
+        `${serverId} ${stage} ${reason}: ${message} (${detail ?? ""})`,
     ),
   };
 }

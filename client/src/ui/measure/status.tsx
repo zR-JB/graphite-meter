@@ -2,7 +2,7 @@
 import type { App } from "../../app/app";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import { needsPings } from "../../engine/net/streams";
-import { movedBytes } from "../../engine/run/result";
+import { type Cause, movedBytes } from "../../engine/run/result";
 import { activities } from "../../engine/run/schedule";
 import { Show } from "../../lib/dom";
 import { handoff } from "../../lib/motion";
@@ -13,6 +13,7 @@ import {
   OUTCOME,
   PHASE,
   reasonLabel,
+  STAGE_STATE,
   statusLabel,
   type Connectivity,
   type Tone,
@@ -21,14 +22,18 @@ import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
 import type { Shell } from "../shell/api";
-import { serverIssues } from "./cards-model";
+import { causePlace } from "./cards-model";
 import { TOAST } from "./copy";
 import { liveOf } from "./live";
 import { Figure, painter, setText } from "./paint";
 
 /** The word cell is as wide as the widest word it can say, so the figures stay where they are. */
 const WORDS = [
-  ...new Set([...Object.values(PHASE), ...Object.values(OUTCOME).map((outcome) => outcome.label)]),
+  ...new Set([
+    ...Object.values(PHASE),
+    ...Object.values(OUTCOME).map((outcome) => outcome.label),
+    STAGE_STATE.failed.label,
+  ]),
 ];
 
 /** The status strip; each figure's cell is as wide as its longest value, so counting never moves its neighbors. */
@@ -37,7 +42,7 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
   const { run } = app;
   const live = liveOf(app);
   const label = handoff(
-    () => statusLabel(live.preparation(), run.phase(), run.result()?.outcome),
+    () => statusLabel(live.preparation(), run.phase(), run.result()),
     (word) => word,
   );
   const refused = computed(
@@ -64,7 +69,7 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
     (now) => {
       // A stopped run keeps the time it showed when it stopped.
       const phase = run.phase.peek();
-      if (phase !== "aborted" && phase !== "error")
+      if (phase !== "aborted")
         elapsed.set(fmtDuration(run.result.peek()?.durationMs ?? live.runClock.at(now)));
       const rest = fmtDuration(Math.max(0, live.budget.peek() - live.phaseClock.at(now)));
       if (left.shown.peek().recovering) setText(recoveringText, rest);
@@ -131,21 +136,17 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     message: reasonLabel(run.stall()?.reason ?? "connection-lost"),
     tone: CONNECTIVITY.recovering.tone as Tone,
   }));
-  const issues = computed(() => {
-    const details = run.details();
-    return details ? serverIssues(details) : [];
-  });
-  const issue = computed(() => {
-    const all = issues();
+  const causes = computed(() => run.table()?.causes ?? []);
+  const keyOf = (cause: Cause) => `${cause.serverId} ${cause.stage} ${cause.scope} ${cause.reason}`;
+  const named = (cause: Cause) => {
+    const server = run.table()!.rows.find((row) => row.server.id === cause.serverId)!.server.name;
     const several = (run.details()?.selection.length ?? 0) > 1;
+    // Where it happened leads, as the card it marks names its stage: "Bergen · Start", then what happened.
     return {
-      kicker: all.length === 1 && several ? TOAST.issueOn(all[0]!.server) : TOAST.issue,
-      message:
-        all.length > 1
-          ? TOAST.many(all.length)
-          : all.map(({ stages, reason }) => `${stages}: ${reason}`).join(""),
+      kicker: several ? `${server} · ${causePlace(cause)}` : causePlace(cause),
+      message: reasonLabel(cause.reason),
     };
-  });
+  };
   const toast = signal<{ kicker: string; message: string; tone: Tone }>({
     kicker: "",
     message: "",
@@ -161,18 +162,22 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     toast.set(next);
     timer = window.setTimeout(() => lingering.set(false), LINGER_MS);
   };
-  let seen = 0;
+  // A toast notes each cause as it arrives, the newest when several do.
+  let seen = new Set<string>();
   effect(() => {
     const phase = run.phase();
-    const count = issues().length;
-    const added = count > seen;
-    seen = count;
-    if (phase === "idle") show(null);
-    else if (added) show({ ...untrack(issue), tone: "err" });
-    else if (phase === "error") {
-      const error = untrack(run.error);
-      show({ kicker: PHASE.error, message: error ? reasonLabel(error.reason) : "", tone: "err" });
+    const all = causes();
+    if (phase === "idle") {
+      seen = new Set();
+      return show(null);
     }
+    const fresh = all.filter((cause) => !seen.has(keyOf(cause)));
+    seen = new Set(all.map(keyOf));
+    const newest = fresh.reduce<Cause | null>(
+      (latest, each) => (!latest || each.atMs >= latest.atMs ? each : latest),
+      null,
+    );
+    if (newest) show({ ...untrack(() => named(newest)), tone: "err" });
   });
   const unsaved = computed(
     () =>
@@ -191,7 +196,7 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
   );
   announceChanges(() => (stalled() ? `${stall().kicker}: ${stall().message}` : ""));
   announceChanges(() => (unsaved() ? `${TOAST.unsaved}: ${app.saver.warning()}` : ""));
-  announceChanges(() => (issue().message ? `${issue().kicker}: ${issue().message}` : ""));
+  announceChanges(() => (lingering() ? `${toast().kicker}: ${toast().message}` : ""));
   // Out of layout while it shows nothing, so a stage that resizes never lays it out; laid out for its fade as it goes.
   const showing = computed(() => lingering() || stalled() || unsaved());
   const leaving = signal(false);

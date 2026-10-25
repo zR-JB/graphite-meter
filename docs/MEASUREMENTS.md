@@ -174,7 +174,7 @@ RTT stays primary for latency, jitter, deadlines and added latency.
 | Partial    | Every stage has its results, but a server missed one or a latency population failed. |
 | Incomplete | A planned result is missing after measurement began, including every server failing. |
 | Stopped    | Canceled by the user; work a failure cancels carries that failure, never "stopped". |
-| Failed     | Nothing was measured.                                                                |
+| Failed     | Nothing was measured; the browser keeps such a run in History as Incomplete.         |
 
 In the browser a stage is Complete only when every selected server measured it. A server that left in an earlier
 stage, or failed its check at Start, did not reach it, so the stage is Partial even though its result stands.
@@ -202,14 +202,16 @@ pins:
 
 ## Saved history
 
-When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB.
+When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB,
+a run that failed once its stages began among them; a refused Start and a stop are never kept.
 A record holds the build and the result. The result covers the selected servers and survivors, each server's engine
-version, path evidence and stage statuses, latency populations with exact probe counts, at most 128 recent intervals,
-failures with reasons, byte totals, and the headline with its peak, stability and wire estimate. Missing
-measurements stay null, and grants and leases are never saved. Records that earlier releases saved at
-schemas 4 and 5 are upgraded to the current schema 6 once when the database opens, and records that cannot be read
-stay in storage, are skipped and are reported. A failure earlier releases saved as `preparation-failed` reads as
-`path-failed`, and one saved as `server-busy` as `server-capacity`.
+version, path evidence and stage statuses, latency populations with exact probe counts, at most 128 recent
+intervals, failures with reasons, each said as a sentence with the lane's or server's own text kept beside it, byte
+totals, and the headline with its peak, stability and wire estimate. Missing measurements stay null, and grants and
+leases are never saved. Records that earlier releases saved at schemas 4 and 5 are upgraded to the current schema 6
+once when the database opens, and records that cannot be read stay in storage, are skipped and are reported. A
+failure earlier releases saved as `preparation-failed` reads as `path-failed`, and one saved as `server-busy` as
+`server-capacity`.
 
 Before saving, a result must be coherent: every failure has one of the eight reasons; every selected server that
 did not complete a stage names why, by its own failure in the stage's scope or by the failure that took it out in

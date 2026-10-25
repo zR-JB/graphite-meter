@@ -196,11 +196,18 @@ export function ResultsList(props: {
   };
 
   const Metric = (cell: Cell) => (
-    <span class={cell.value === null ? "metric missing" : "metric"} data-tone={cell.column}>
+    <span
+      class={cell.value === null ? "metric missing" : "metric"}
+      data-tone={cell.column}
+      ref={cell.partial ? tip(() => cell.partial) : undefined}
+    >
       {cell.value !== null && (
         <span class="bar" ref={(bar) => bar.style.setProperty("--value", String(cell.value))} />
       )}
-      <span class="value">{cell.text}</span>
+      <span class="value">
+        {cell.partial && <span class="status-dot inline" data-tone="warn" />}
+        {cell.text}
+      </span>
       {cell.note && <small class="note">{cell.note}</small>}
     </span>
   );

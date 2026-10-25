@@ -1,6 +1,6 @@
 // The result cards: the live console's carry strips and follow the frame clock; History's show a saved result.
 import type { App } from "../../app/app";
-import type { RunResult } from "../../engine/run/result";
+import { grid, type RunResult } from "../../engine/run/result";
 import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, untrack, type Read } from "../../lib/signal";
@@ -14,27 +14,28 @@ import {
   type RateUnits,
 } from "../../view/format";
 import { replyTrackMs } from "../../view/scales";
-import { STAGE, TIP, type StageState } from "../../view/words";
+import { STAGE, TIP, type StageState, type Word } from "../../view/words";
 import { announce } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tipGroup } from "../kit/rove";
 import { clip, term, tip } from "../kit/tip";
 import {
-  cardReason,
+  cardLine,
+  gridView,
   liveCard,
   resultSentence,
+  runEvidence,
   serverEvidence,
-  serverIssues,
   settled,
   settledCard,
   shapeSoFar,
   shownEvidence,
   type CardModel,
   type Evidence,
-  type Issue,
+  type GridView,
   type LiveEvidence,
 } from "./cards-model";
-import { CARDS } from "./copy";
+import { CARDS, GRID } from "./copy";
 import type { Live } from "./live";
 import { Figure, painter, setText } from "./paint";
 import { StageGraph, type Head } from "./strip";
@@ -131,8 +132,8 @@ function Card(props: {
     );
   });
   const unknown = computed(() => card().facts.every((fact) => fact.value === MISSING));
-  // The quiet line: a failure's reason, else the wire rate, else latency's jitter; then time without data.
-  const reason = computed(() => (quiet() ? "" : props.reason()));
+  // The line: a failure's reason, which a card never reached keeps too, else the wire rate, else latency's jitter.
+  const reason = props.reason;
   const wire = computed(() => card().wire?.value ?? "");
   const overhead = computed(() => card().wire?.overhead ?? "");
   const wireTip = computed(() => card().wire?.tip ?? "");
@@ -247,6 +248,97 @@ function Summary(props: {
   return summary;
 }
 
+/** A result's servers by stages under its cards, then each cause and what it cost; one server's result lists only
+ *  the causes, as its cards already are its row. */
+function ServerGrid(props: { view: Read<GridView> }): Node {
+  const several = computed(() => props.view().rows.length > 1);
+  const dot = (word: Word | null) =>
+    word?.tone && word.tone !== "neutral" ? (
+      <span class="status-dot inline" data-tone={word.tone} />
+    ) : null;
+  return (
+    <div class="server-grid enter">
+      <Show when={several}>
+        {() => (
+          <table ref={tipGroup}>
+            <caption class="sr-only">{GRID.label}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{GRID.server}</th>
+                {() =>
+                  props.view().stages.map((stage) => (
+                    <th scope="col">
+                      {STAGE[stage].short}
+                      <span class="unit">{props.view().units[stage]}</span>
+                    </th>
+                  ))
+                }
+              </tr>
+            </thead>
+            <tbody>
+              {() =>
+                props.view().rows.map((row) => (
+                  <tr>
+                    <th scope="row">
+                      <span class="name">{row.name}</span>
+                      {row.word && (
+                        <span class="word">
+                          {dot(row.word)}
+                          {row.word.label}
+                        </span>
+                      )}
+                    </th>
+                    {row.cells.map((cell) => (
+                      <td
+                        data-label={`${STAGE[cell.stage].short} ${props.view().units[cell.stage]}`}
+                        class={cell.measured ? undefined : "word"}
+                        ref={cell.tip ? tip(() => cell.tip) : undefined}
+                      >
+                        <span>
+                          {dot(cell.word)}
+                          {cell.text}
+                          {cell.measured && cell.word && (
+                            <span class="sr-only">, {cell.word.label.toLowerCase()}</span>
+                          )}
+                        </span>
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        )}
+      </Show>
+      <Show when={() => props.view().notes.length > 0}>
+        {() => (
+          <ul class="causes">
+            {() =>
+              props.view().notes.map((note) => (
+                <li>
+                  <span class="status-dot inline" data-tone={note.tone} />
+                  <span>{note.text}</span>
+                </li>
+              ))
+            }
+          </ul>
+        )}
+      </Show>
+    </div>
+  ) as HTMLElement;
+}
+
+/** The cards of a stage no server's result holds: not reached, or off for the run. */
+const NONE: LiveEvidence = {
+  own: false,
+  lost: false,
+  spoken: null,
+  held: null,
+  idle: null,
+  bytes: 0,
+  shape: null,
+};
+
 /** A saved result's cards as History shows them; `lens` "" shows every server together. */
 export function ResultSummary(props: {
   result: () => RunResult;
@@ -255,53 +347,37 @@ export function ResultSummary(props: {
   showWire: () => boolean;
 }): Node {
   const { lens } = props;
-  const evidence = computed<Evidence>(() => {
-    const result = props.result();
-    return lens()
-      ? serverEvidence(result.multiServer, lens())
-      : { ...result, status: result.stages, idle: result.latencyByStage.latency };
+  const table = computed(() => grid(props.result()));
+  const evidence = computed<Evidence>(() =>
+    lens()
+      ? serverEvidence(table(), props.result().multiServer, lens())
+      : runEvidence(props.result()),
+  );
+  // Every stage the run planned, the ones this server or the run never reached too.
+  const stages = computed(() =>
+    STAGES.filter((stage) => (evidence().status[stage] ?? "skipped") !== "skipped"),
+  );
+  const view = computed(() => gridView(props.result(), table(), props.units()));
+  const shown = computed(() => {
+    const { rows, notes } = view();
+    return rows.length > 1 || notes.length > 0;
   });
-  const stages = computed(() => STAGES.filter((stage) => settled(evidence().status[stage])));
-  const issues = computed(() => serverIssues(props.result().multiServer, lens()));
-  const attributed = computed(() => props.result().multiServer.selection.length > 1 && !lens());
-  const listed = computed(() => issues().filter((issue) => !issue.throughput.length));
   const card = (stage: Stage) =>
     Card({
       card: computed(() => {
         const status = evidence().status[stage];
-        return settledCard(
-          stage,
-          settled(status) ? status : "failed",
-          evidence(),
-          props.units(),
-          props.showWire(),
-        );
+        return settled(status)
+          ? settledCard(stage, status, evidence(), props.units(), props.showWire())
+          : liveCard(stage, "unreached", NONE, props.units());
       }),
-      reason: computed(() => cardReason(issues(), stage, attributed())),
+      reason: computed(() => cardLine(table(), stage, lens())),
       lens,
     }).element;
   return (
     <Summary
       stages={stages}
       card={card}
-      issues={
-        <Show when={() => listed().length > 0}>
-          {() => (
-            <dl class={() => (attributed() ? "issues enter attributed" : "issues enter")}>
-              {() =>
-                listed().map((issue: Issue) => [
-                  attributed() ? (
-                    [<dt>{issue.server}</dt>, <dd>{issue.stages}</dd>]
-                  ) : (
-                    <dt>{issue.stages}</dt>
-                  ),
-                  <dd class="reason">{issue.reason}</dd>,
-                ])
-              }
-            </dl>
-          )}
-        </Show>
-      }
+      issues={<Show when={shown}>{() => <ServerGrid view={view} />}</Show>}
     />
   );
 }
@@ -317,6 +393,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
   const { lens } = live;
   const evidence = computed<Evidence>(() =>
     shownEvidence({
+      table: run.table(),
       details: details(),
       lens: lens(),
       focus: live.focus(),
@@ -324,18 +401,13 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       idle: live.summaries().latency ?? null,
     }),
   );
-  // Lost latency probes are marked on the latency card's facts; nothing is added under the cards mid-run.
-  const issues = computed(() =>
-    details() ? serverIssues(details()!, lens()).filter((issue) => issue.throughput.length) : [],
-  );
-  const attributed = computed(() => (details()?.selection.length ?? 1) > 1 && !lens());
   const plan = computed(() => run.plan() ?? app.preferences.config());
 
   /** What a stage that has not settled shows, read from the run only while it runs or after it stopped. */
   const liveEvidence = (stage: Stage, state: StageState): LiveEvidence => {
     const running = RUNNING_STATES.has(state);
     const idle = live.summaries().latency ?? null;
-    const none = { own: false, lost: false, spoken: null, held: null, idle, bytes: 0, shape: null };
+    const none = { ...NONE, idle };
     if (!running && state !== "stopped") return none;
     if (stage === "latency") {
       const replies = live.replies();
@@ -369,8 +441,9 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       const status = evidence().status[stage];
       if (settled(status))
         return settledCard(stage, status, evidence(), units(), app.preferences.showWireEstimates());
-      // A server shown alone that never ran the stage reads as skipped.
-      const state: StageState = status === "not-run" ? "skipped" : live.states()[stage];
+      // A server shown alone reads its own cell: one it never reached, or a stage off for the run.
+      const state: StageState =
+        status === "unreached" || status === "skipped" ? status : live.states()[stage];
       return liveCard(stage, state, liveEvidence(stage, state), units());
     });
 
@@ -471,7 +544,11 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     const view = model(stage);
     const { element, figures } = Card({
       card: view,
-      reason: computed(() => cardReason(issues(), stage, attributed())),
+      // Lost latency probes are marked on the latency card's facts; a line names who failed or is missing.
+      reason: computed(() => {
+        const table = run.table();
+        return table ? cardLine(table, stage, lens()) : "";
+      }),
       lens,
       strip: strip(stage),
     });
@@ -525,22 +602,27 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     const result = run.result();
     if (run.phase() !== "complete" || !result || result === spoken) return;
     spoken = result;
-    const cards = STAGES.filter((stage) => settled(result.stages[stage])).map((stage) =>
-      settledCard(
-        stage,
-        result.stages[stage] as "complete",
-        { ...result, status: result.stages, idle: result.latencyByStage.latency },
-        untrack(units),
-        false,
-      ),
-    );
+    const evidence = runEvidence(result);
+    const cards = STAGES.flatMap((stage) => {
+      const status = evidence.status[stage];
+      return settled(status) ? [settledCard(stage, status, evidence, untrack(units), false)] : [];
+    });
     untrack(() => announce(resultSentence(cards)));
   });
 
+  // A finished run short of complete shows who measured what, and why not.
+  const view = computed(() => {
+    const result = run.result();
+    const table = run.table();
+    return result && table && result.outcome !== "complete"
+      ? gridView(result, table, units())
+      : null;
+  });
   return (
     <Summary
       stages={computed(() => STAGES.filter((stage) => live.visibility(stage).card))}
       card={card}
+      issues={<Show when={view}>{(shown) => <ServerGrid view={shown} />}</Show>}
     />
   );
 }

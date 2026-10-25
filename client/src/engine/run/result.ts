@@ -1,5 +1,5 @@
 // What a finished run reports and the rules that judge it; History keeps these shapes as schema 6.
-import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
+import { FAILURE_REASONS, knownReason, type FailureReason } from "../../protocol/reasons";
 import {
   coveredMs,
   directions,
@@ -11,8 +11,8 @@ import {
 import type { AddedLatency, LatencyResult, LatencySummary } from "../measure/latency";
 import type { WireModel } from "../measure/overhead";
 import { minCoverage } from "../measure/stability";
-import type { HttpProtocol, Role, ServerIdentity } from "../types";
-import { STAGES, type Stage } from "./schedule";
+import type { Direction, HttpProtocol, Role, ServerIdentity } from "../types";
+import { STAGES, type Stage, type TransferStage } from "./schedule";
 
 export type StageStatus = "complete" | "partial" | "failed" | "not-run";
 export type Outcome = "complete" | "partial" | "incomplete";
@@ -23,8 +23,11 @@ export interface ServerFailure {
   atMs: number;
   scope: Role;
   reason: FailureReason;
-  /** At most 256 characters, empty when the server's text carried control characters. */
+  /** What happened, as a sentence that names the server and the stage; never the reason's label again. */
   message: string;
+  /** The engine's or the server's own text, for a report: at most 256 characters, empty when it carried control
+   *  characters. Records before 0.14 kept it as `message`. */
+  detail?: string;
 }
 
 type StageThroughput = ThroughputResult & { wire: WireModel | null };
@@ -97,6 +100,104 @@ export type StagePlans = Record<Stage, { planned: boolean; durationMs: number; e
 export const failureScope = (stage: Stage): Role =>
   stage === "latency" ? "latency" : "throughput";
 
+const TRANSFER: Record<TransferStage, (server: string) => string> = {
+  download: (server) => `Download from ${server}`,
+  upload: (server) => `Upload to ${server}`,
+  bidirectional: (server) => `The bidirectional transfer with ${server}`,
+};
+const DURING: Record<Stage, string> = {
+  latency: "during the latency stage",
+  download: "during the download",
+  upload: "during the upload",
+  bidirectional: "during the bidirectional transfer",
+};
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+export const shortSentence = (stage: TransferStage, server: string) =>
+  `${TRANSFER[stage](server)} covered less of its planned time than a complete result needs.`;
+
+/** A failure as a reader of the result says it, naming its server and where; never its reason's label again. */
+export function failureSentence(
+  {
+    reason,
+    stage,
+    scope,
+    direction,
+  }: { reason: string; stage: Stage | "start"; scope: Role; direction?: Direction },
+  server: string,
+): string {
+  const known = knownReason(reason);
+  if (stage === "start")
+    switch (known) {
+      case "server-capacity":
+        return `${server} had no room for another test when this one started.`;
+      case "client-limit":
+        return `${server} already ran a test for your address or sign-in when this one started.`;
+      case "sign-in-required":
+        return `${server} asked for a sign-in when this test started.`;
+      case "protocol-error":
+        return `${server} sent a reply this page cannot read when this test started.`;
+      case "connection-lost":
+      case "timeout":
+        return `${server} stopped answering as this test started.`;
+      default:
+        return `${server} could not be reached on its selected paths when this test started.`;
+    }
+  const during = DURING[stage];
+  if (scope === "latency") {
+    const loaded = stage === "latency" ? "" : ` ${during}`;
+    switch (known) {
+      case "connection-lost":
+        return `Latency probes to ${server} lost their connection${loaded}.`;
+      case "timeout":
+        return `${server} stopped answering latency probes${loaded}.`;
+      case "path-failed":
+        return `Latency probes could not reach ${server}${loaded}.`;
+      case "sign-in-required":
+        return `Latency probes to ${server} stopped when its sign-in ended ${during}.`;
+      case "client-limit":
+        return `${server} refused latency probes for your address or sign-in ${during}.`;
+      case "server-capacity":
+        return `${server} had no room for latency probes ${during}.`;
+      case "protocol-error":
+        return `${capital(during)}, ${server} sent a latency reply this page cannot read.`;
+      case "insufficient-evidence":
+        return loaded
+          ? `${capital(during)}, ${server} answered too few latency probes for a result.`
+          : `${server} answered too few latency probes for a result.`;
+      default:
+        return `${capital(during)}, latency probes to ${server} ran into a problem this page does not name.`;
+    }
+  }
+  const transfer = stage as TransferStage;
+  const lane = transfer !== "bidirectional" ? transfer : direction === "up" ? "upload" : "download";
+  const within = transfer === "bidirectional" && direction ? " in the bidirectional transfer" : "";
+  switch (known) {
+    case "connection-lost":
+      return `${TRANSFER[transfer](server)} lost its connection.`;
+    case "timeout":
+      return transfer === "bidirectional" && !direction
+        ? `The bidirectional transfer with ${server} stopped moving data.`
+        : `${capital(lane)} data ${lane === "upload" ? "to" : "from"} ${server} stopped arriving${within}.`;
+    case "path-failed":
+      return `${TRANSFER[transfer](server)} could not start.`;
+    case "sign-in-required":
+      return `The sign-in to ${server} ended ${during}.`;
+    case "client-limit":
+      return `${server} refused more connections for your address or sign-in ${during}.`;
+    case "server-capacity":
+      return `${server} had no room for more connections ${during}.`;
+    case "protocol-error":
+      return `${capital(during)}, ${server} sent a reply this page cannot read.`;
+    case "insufficient-evidence":
+      return transfer === "bidirectional" && !direction
+        ? `${server} exchanged too little data in the bidirectional transfer for a result.`
+        : `${server} ${lane === "upload" ? "received" : "sent"} too little ${lane} data${within} for a result.`;
+    default:
+      return `${capital(during)}, ${server} ran into a problem this page does not name.`;
+  }
+}
+
 export const lanes = (
   results: Record<"latency" | "download" | "upload", unknown> & {
     bidirectional: { down: unknown; up: unknown } | null;
@@ -120,44 +221,88 @@ export interface Cell {
   /** Its own failure, or for an unreached cell the one that took its server out. */
   cause: Cause | null;
 }
+export interface Row {
+  server: ServerIdentity;
+  cells: Record<Stage, Cell>;
+  /** The server's own outcome by the run's rule: Incomplete when a stage it was planned for has no result of its. */
+  outcome: Outcome;
+  /** Each of its failures, in stage order; loaded latency's included. */
+  causes: Cause[];
+}
 export interface Grid {
   /** Every selected server, in selection order. */
-  rows: { server: ServerIdentity; cells: Record<Stage, Cell> }[];
+  rows: Row[];
   /** Complete only when every selected server measured the stage. */
   columns: Record<Stage, CellStatus>;
   outcome: Outcome;
+  /** Some stage has a result; a run without one failed, though History keeps it as Incomplete. */
+  measured: boolean;
+  /** Every server's causes, in selection order. */
+  causes: Cause[];
 }
 type Graded = StageResults & Pick<RunResult, "stages" | "multiServer"> & { outcome?: Outcome };
+
+const order = (stage: Stage | "start") => (stage === "start" ? -1 : STAGES.indexOf(stage));
 
 const perStage = <T>(value: (stage: Stage) => T) =>
   Object.fromEntries(STAGES.map((stage) => [stage, value(stage)])) as Record<Stage, T>;
 
-/** The result as servers by stages, from what schema 6 saves; every surface reads its words from this. */
-export function grid(result: Graded): Grid {
-  const { selection, servers, failures } = result.multiServer;
+/** The result as servers by stages, from what schema 6 saves; every surface reads its words from this. A `running`
+ *  stage reads each server as it stands so far: failed there, gone before it, or still measuring as complete. */
+export function grid(result: Graded, running: Stage | null = null): Grid {
+  const { selection, servers, failures, participants } = result.multiServer;
   const rows = selection.map((server) => {
     const summary = servers.find((entry) => entry.server.id === server.id);
     const own = failures.filter((failure) => failure.serverId === server.id);
     // A server outside the run failed its start check; its failure was charged to a stage it never reached.
     const start: Cause | null = summary || !own[0] ? null : { ...own[0], stage: "start" };
     const cell = (stage: Stage): Cell => {
-      if (result.stages[stage] === "not-run") return { status: "skipped", cause: null };
+      if (result.stages[stage] === "not-run" && stage !== running)
+        return { status: "skipped", cause: null };
       if (!summary) return { status: "unreached", cause: start };
-      const status = summary.stages[stage];
       const failure = own.find((f) => f.stage === stage && f.scope === failureScope(stage));
       // A server without a latency path takes no part in the latency stage by plan, unless charged for it.
       if (stage === "latency" && summary.latencyTarget === null && !failure)
         return { status: "skipped", cause: null };
-      if (status !== "not-run") return { status, cause: failure ?? null };
-      // Charged for a stage it never ran, as a focus without a latency path is: it failed there.
-      if (failure) return { status: "failed", cause: failure };
       const before = STAGES.indexOf(stage);
       const left = own.findLast(
         (f) => f.scope === failureScope(f.stage) && STAGES.indexOf(f.stage) < before,
       );
+      // A sole server rejoins at each stage, though no event has said so yet.
+      if (stage === running)
+        return failure
+          ? { status: "failed", cause: failure }
+          : participants.includes(server.id) || servers.length === 1
+            ? { status: "complete", cause: null }
+            : { status: "unreached", cause: left ?? null };
+      const status = summary.stages[stage];
+      // A server's own lanes decide: a schema 4 record copied the run's statuses onto every server.
+      if (status !== "not-run")
+        return {
+          status: lanes(summary, stage).every(Boolean) ? status : "failed",
+          cause: failure ?? null,
+        };
+      // Charged for a stage it never ran, as a focus without a latency path is: it failed there.
+      if (failure) return { status: "failed", cause: failure };
       return { status: "unreached", cause: left ?? null };
     };
-    return { server, cells: perStage(cell) };
+    const cells = perStage(cell);
+    const statuses = Object.values(cells).map(({ status }) => status);
+    // Loaded latency lost because its server left the stage is that leaving, not a cause of its own.
+    const consequence = (f: ServerFailure) =>
+      f.scope !== failureScope(f.stage) &&
+      own.some((g) => g.stage === f.stage && g.scope === failureScope(g.stage));
+    const causes: Cause[] = start
+      ? [start]
+      : own.filter((f) => !consequence(f)).toSorted((a, b) => order(a.stage) - order(b.stage));
+    const outcome: Outcome = statuses.some(
+      (status) => status === "failed" || status === "unreached",
+    )
+      ? "incomplete"
+      : causes.length || statuses.includes("partial")
+        ? "partial"
+        : "complete";
+    return { server, cells, outcome, causes };
   });
   const columns = perStage((stage): CellStatus => {
     const saved = result.stages[stage];
@@ -175,7 +320,13 @@ export function grid(result: Graded): Grid {
     : failures.length || statuses.includes("partial")
       ? "partial"
       : "complete";
-  return { rows, columns, outcome };
+  return {
+    rows,
+    columns,
+    outcome,
+    measured: statuses.some((status) => status === "complete" || status === "partial"),
+    causes: rows.flatMap((row) => row.causes),
+  };
 }
 
 /** A column as schema 6 saves it, in the words every release reads. */
@@ -194,10 +345,20 @@ export function graded<T extends Graded>(result: T): T & { outcome: Outcome } {
   const { columns, outcome } = grid(result);
   // Judging again only adds causes; a saved worse outcome had evidence a record no longer keeps.
   const saved = OUTCOMES.indexOf(result.outcome ?? "complete");
+  const { selection, servers, failures } = result.multiServer;
+  // Before 0.14 a failure kept its lane's or server's text as its message; it reads as a sentence now.
+  const said = failures.map((failure) => {
+    if (failure.detail !== undefined) return failure;
+    const ran = servers.some(({ server }) => server.id === failure.serverId);
+    const name = selection.find(({ id }) => id === failure.serverId)?.name || failure.serverId;
+    const where = { ...failure, stage: ran ? failure.stage : ("start" as const) };
+    return { ...failure, detail: failure.message, message: failureSentence(where, name) };
+  });
   return {
     ...result,
     stages: perStage((stage) => SAVED[columns[stage]]),
     outcome: OUTCOMES[Math.max(saved, OUTCOMES.indexOf(outcome))]!,
+    multiServer: { ...result.multiServer, failures: said },
   };
 }
 

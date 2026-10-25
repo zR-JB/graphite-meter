@@ -6,7 +6,7 @@ import type { Preparation, ShownPhase } from "../app/run";
 import type { Readiness } from "../engine/net/connection";
 import { PROTOCOL_LABEL, protocolFromNextHop } from "../engine/net/paths";
 import { SESSION_MAX_LANES } from "../engine/net/streams";
-import type { Outcome, StageStatus } from "../engine/run/result";
+import { grid, type CellStatus, type Outcome, type RunResult } from "../engine/run/result";
 import type { Phase } from "../engine/run/run";
 import {
   planned,
@@ -25,7 +25,7 @@ import {
   type TestConfig,
   type ThroughputTarget,
 } from "../engine/types";
-import { FAILURE_REASONS, type FailureReason } from "../protocol/reasons";
+import { FAILURE_REASONS, knownReason } from "../protocol/reasons";
 import { fmtDuration } from "./format";
 
 /** The hues `[data-tone]` maps (styles/tokens.css): each stage's own, the warmup's, and the status tones. */
@@ -63,7 +63,6 @@ export const PHASE = {
   upload: STAGE.upload.label,
   bidirectional: STAGE.bidirectional.label,
   stopped: "Stopped",
-  error: "Failed",
 } as const satisfies Record<Phase, string> & Record<string, string>;
 
 export const OUTCOME = {
@@ -83,23 +82,21 @@ export const RUN_ACTION = {
 export function runAction(preparing: boolean, running: boolean, phase: ShownPhase): string {
   if (preparing) return RUN_ACTION.cancel;
   if (running) return RUN_ACTION.stop;
-  return phase === "complete" || phase === "aborted" || phase === "error"
-    ? RUN_ACTION.again
-    : RUN_ACTION.start;
+  return phase === "complete" || phase === "aborted" ? RUN_ACTION.again : RUN_ACTION.start;
 }
 
 /** The run in one word, as the status strip says it: a refused start, a check, else the phase or the finished outcome. */
 export function statusLabel(
   preparation: Preparation,
   phase: ShownPhase,
-  outcome: Outcome | undefined,
+  result: RunResult | null,
 ): string {
   if (preparation === "blocked") return PHASE.blocked;
   if (preparation === "failed") return PHASE["start-failed"];
   if (preparation === "waiting") return PHASE.waiting;
   if (preparation === "authenticating") return PHASE.authenticating;
   if (preparation === "checking" || preparation === "launching") return PHASE.connecting;
-  if (phase === "complete") return OUTCOME[outcome ?? "complete"].label;
+  if (phase === "complete") return result ? runWord(result).label : OUTCOME.complete.label;
   if (phase === "aborted") return PHASE.stopped;
   return PHASE[phase];
 }
@@ -131,6 +128,10 @@ export const STAGE_STATE = {
   unreached: { label: "Not reached", tone: "neutral" },
 } as const satisfies Record<StageState, Word>;
 
+/** How a finished run reads: its outcome, or Failed when no stage has a result, though History keeps it Incomplete. */
+export const runWord = (result: RunResult): Word =>
+  grid(result).measured ? OUTCOME[result.outcome] : STAGE_STATE.failed;
+
 /** A stage the next run includes but the shown run did not run, as its chip names it. */
 export const NEXT_RUN = { label: "Next test", tone: null } as const satisfies Word;
 export const NEXT_TEST = "Applies to the next test";
@@ -153,40 +154,28 @@ export function chipTag(state: StageState, selected: boolean, nextRun: boolean):
 /** What the runner has said about one stage of the shown run. */
 export interface StageFacts {
   planned: boolean;
-  settled: StageStatus | null;
+  /** As the result grid judges it. */
+  settled: CellStatus | null;
   /** The run's phase while this is its stage, kept once the run ends; null until the run moves to it. */
   phase: Phase | null;
   stalled: boolean;
-  ended: "complete" | "stopped" | "error" | null;
+  ended: "complete" | "stopped" | null;
 }
 
 /** A stage's state: planned, then settled; a stall reads Recovering, an ended run leaves unsettled stages unreached. */
 export function stageState({ planned, settled, phase, stalled, ended }: StageFacts): StageState {
-  if (!planned || settled === "not-run") return "skipped";
+  if (!planned || settled === "skipped") return "skipped";
   if (settled) return settled;
   const began = phase !== null && phase !== "connecting";
-  if (ended)
-    return !began || ended === "complete"
-      ? "unreached"
-      : ended === "stopped"
-        ? "stopped"
-        : "failed";
+  if (ended) return !began || ended === "complete" ? "unreached" : "stopped";
   if (!began) return "upcoming";
   return stalled ? "recovering" : phase === "warmup" ? "warmup" : "running";
 }
 
-/** Reasons earlier builds saved under the name they had then. */
-const RENAMED = new Map<string, FailureReason>([
-  ["preparation-failed", "path-failed"],
-  ["server-busy", "server-capacity"],
-]);
-
 /** A reason this build does not know, as a newer build may save, reads as a measurement issue. */
 export function reasonLabel(saved: string): string {
-  const reason = RENAMED.get(saved) ?? saved;
-  return Object.hasOwn(FAILURE_REASONS, reason)
-    ? FAILURE_REASONS[reason as FailureReason]
-    : "Measurement issue";
+  const reason = knownReason(saved);
+  return reason ? FAILURE_REASONS[reason] : "Measurement issue";
 }
 
 /** Idle latency is probed in the latency stage, loaded latency during the transfers. */
@@ -400,16 +389,16 @@ export const TIP = {
     "HTTP/1.1 stream limit\nParallel HTTP/1.1 requests per direction\nHTTP/2 and HTTP/3 choose their own",
   datagramThroughput:
     "Datagram throughput\nAdds WebTransport datagrams as a path\nNever resent; expect lower rates than streams",
-  pathEvidence: "Evidence\nThe HTTP version each side observed",
-  uploadFeed: "Upload feed\nHow the server reports upload bytes back",
+  pathEvidence: "HTTP version\nThe HTTP version the browser and the server each saw",
+  uploadFeed: "Upload progress\nHow the server reports the upload bytes it received",
   clientAddress:
     "Your address\nAs the server saw it: proxy header or socket\nHidden until you press the eye beside it",
   serverLoad:
-    "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
+    "Server load\nTests on the server, of the most it admits, when its paths were checked\nPast half of them, they share the bandwidth",
   client: "Client\nThis page's build of the browser client",
   serverInstance: "Server\nEngine version; the instance changes on restart",
   pathCheckRoundTrip:
-    "Path check round trip\nMedian round trip of the path check\nThe shown server's sizes the warmup",
+    "Round trip when checked\nMedian round trip while its paths were checked\nThe latency server's stretches each warmup to ten round trips, up to 4 s",
 } as const;
 
 export const preflightNote = (ms: string) =>

@@ -2,13 +2,16 @@
 import type { LatencyBucket } from "../engine/measure/buckets";
 import type { LatencySummary } from "../engine/measure/latency";
 import type { Clock } from "../engine/run/clock";
-import type {
-  MultiServerResult,
-  RunResult,
-  ServerFailure,
-  StagePlans,
-  StageResults,
-  StageStatus,
+import {
+  grid,
+  type CellStatus,
+  type Grid,
+  type StageStatus,
+  type MultiServerResult,
+  type RunResult,
+  type ServerFailure,
+  type StagePlans,
+  type StageResults,
 } from "../engine/run/result";
 import {
   Run,
@@ -92,7 +95,7 @@ export type Preparation =
   | "blocked"
   | "failed";
 /** What the console shows; `data-phase` carries it. */
-export type ShownPhase = "idle" | Phase | "complete" | "aborted" | "error";
+export type ShownPhase = "idle" | Phase | "complete" | "aborted";
 type Step = "preparing" | "running" | "finalizing";
 
 interface ServerSeries {
@@ -132,10 +135,10 @@ export function createRun(env: RunEnvironment) {
   /** Bumped when the series of a run that went are let go. */
   const seriesReset = signal(0);
   const results = signal(NO_RESULTS);
-  const statuses = signal<Partial<Record<Stage, StageStatus>>>({});
+  /** Each settled stage as the run reported it. */
+  const settled = signal<Partial<Record<Stage, StageStatus>>>({});
   const details = signal<MultiServerResult | null>(null);
   const result = signal<RunResult | null>(null);
-  const error = signal<{ reason: FailureReason; message: string } | null>(null);
   const plan = signal<RunPlan | null>(null);
   const preparation = signal<Preparation>("idle");
   const startError = signal("");
@@ -158,8 +161,30 @@ export function createRun(env: RunEnvironment) {
   /** The planned length of the current run, which the throughput series is compacted against. */
   let spanMs = 0;
 
-  const running = computed(() => !["idle", "complete", "aborted", "error"].includes(phase()));
+  const running = computed(() => !["idle", "complete", "aborted"].includes(phase()));
   const queued = computed(() => preparation() === "waiting");
+  /** The shown run as servers by stages: the finished result's, or so far, the running stage as each server stands. */
+  const table = computed<Grid | null>(() => {
+    const finished = result();
+    if (finished) return grid(finished);
+    const shown = details();
+    if (!shown) return null;
+    const reported = settled();
+    const stages = Object.fromEntries(
+      STAGES.map((name) => [name, reported[name] ?? "not-run"]),
+    ) as Record<Stage, StageStatus>;
+    // A stopped run keeps the stage it stopped in as it stood.
+    const current = running() || phase() === "aborted" ? stage() : null;
+    return grid({ ...results(), stages, multiServer: shown }, current);
+  });
+  /** Each settled stage as the grid judges it. */
+  const statuses = computed(() => {
+    const judged = table();
+    const reported = settled();
+    return Object.fromEntries(
+      STAGES.filter((name) => reported[name]).map((name) => [name, judged!.columns[name]]),
+    ) as Partial<Record<Stage, CellStatus>>;
+  });
   const preparing = computed(() =>
     ["authenticating", "checking", "launching"].includes(preparation()),
   );
@@ -187,10 +212,9 @@ export function createRun(env: RunEnvironment) {
       warmupRtt.set({});
       stageBytes.set(0);
       results.set(NO_RESULTS);
-      statuses.set({});
+      settled.set({});
       details.set(null);
       result.set(null);
-      error.set(null);
       plan.set(null);
       startError.set("");
       refusal.set("");
@@ -276,17 +300,19 @@ export function createRun(env: RunEnvironment) {
           return details.set(current.details());
         case "stageEnd":
           return batch(() => {
-            statuses.set({ ...statuses.peek(), [event.stage]: event.status });
+            settled.set({ ...settled.peek(), [event.stage]: event.status });
             results.set(event.results);
             details.set(current.details());
           });
         case "complete": {
           const { result: finished, plans } = event;
+          // A run that measured nothing puts every path it used in doubt.
+          if (!grid(finished).measured) env.recheck(null);
           batch(() => {
             live.set(null);
             stall.set(null);
             result.set(finished);
-            statuses.set(finished.stages);
+            settled.set(finished.stages);
             results.set(finished);
             details.set(finished.multiServer);
             stage.set(null);
@@ -297,16 +323,6 @@ export function createRun(env: RunEnvironment) {
           releaseRun();
           return settle();
         }
-        case "error":
-          env.recheck(null);
-          batch(() => {
-            live.set(null);
-            stall.set(null);
-            error.set({ reason: event.reason, message: event.message });
-            phase.set("error");
-          });
-          releaseRun();
-          return settle();
         case "aborted":
           batch(() => {
             live.set(null);
@@ -586,10 +602,10 @@ export function createRun(env: RunEnvironment) {
       return series(id);
     },
     results: results as Read<StageResults>,
-    statuses: statuses as Read<Partial<Record<Stage, StageStatus>>>,
+    statuses,
+    table,
     details: details as Read<MultiServerResult | null>,
     result: result as Read<RunResult | null>,
-    error: error as Read<{ reason: FailureReason; message: string } | null>,
     plan: plan as Read<RunPlan | null>,
     preparation: preparation as Read<Preparation>,
     startError: startError as Read<string>,

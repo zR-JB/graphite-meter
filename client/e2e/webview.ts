@@ -582,8 +582,15 @@ function locatorExpect(locator: Locator) {
     toBeFocused: assert((s) => !!s[0]?.focused, "focused"),
     toHaveAttribute: (name: string, value: Name) =>
       assert((s) => same(s[0]?.attrs[name], value), `attribute ${name}`)(),
-    toHaveText: (value: Name, options?: { timeout?: number }) =>
-      assert((s) => same(text(s), value), "text")(options),
+    /** A list matches each element's text in order, as a list of rows reads. */
+    toHaveText: (value: Name | readonly Name[], options?: { timeout?: number }) =>
+      assert(
+        (s) =>
+          Array.isArray(value)
+            ? s.length === value.length && value.every((each, i) => same(text([s[i]!]), each))
+            : same(text(s), value as Name),
+        "text",
+      )(options),
     toContainText: (value: Name) => assert((s) => same(text(s), value, false), "contains")(),
     toHaveValue: (value: string) => assert((s) => s[0]?.value === value, `value ${value}`)(),
   };

@@ -312,3 +312,65 @@ test("Yesterday is the calendar day before, even after a 23-hour day", () => {
     process.env.TZ = zone;
   }
 });
+
+test("a partial value keeps its number with a mark, says partial in its name, and its tip says who fell short", () => {
+  const frankfurt = { id: "f", name: "Frankfurt", url: "" };
+  const oslo = { id: "o", name: "Oslo", url: "" };
+  const ran = {
+    latency: "complete",
+    download: "complete",
+    upload: "complete",
+    bidirectional: "not-run",
+  };
+  const lanes = { latency: { reportedMs: 12 }, download: rate(1e6), upload: rate(1e6) };
+  const lost = (stage: string, reason: string) => ({
+    serverId: "o",
+    stage,
+    scope: "throughput",
+    reason,
+  });
+  const twoServers = saved("a", NOW, {
+    stages: { ...ran, download: "partial", upload: "partial" },
+    outcome: "partial",
+    multiServer: {
+      selection: [frankfurt, oslo],
+      servers: [
+        { server: frankfurt, latencyTarget: {}, ...lanes, stages: ran },
+        {
+          server: oslo,
+          latencyTarget: {},
+          ...lanes,
+          upload: null,
+          stages: { ...ran, download: "partial", upload: "not-run" },
+        },
+      ],
+      failures: [lost("download", "connection-lost")],
+    },
+  });
+  const row = present(twoServers, context([twoServers]));
+  if (row.kind !== "result") throw new Error("unreadable");
+  expect(row.cells.map(({ column, partial }) => [column, partial])).toEqual([
+    ["download", "2 of 2 servers. Oslo: connection lost"],
+    ["upload", "1 of 2 servers. Oslo: connection lost in Download"],
+    ["bidirectional", ""],
+    ["idle", ""],
+    ["loaded", ""],
+  ]);
+  expect(row.label).toContain("Download 200.0 Mbit/s, partial");
+  expect(row.label).toContain("Upload 40.00 Mbit/s, partial");
+  // One server alone says only why.
+  const alone = saved("b", NOW, {
+    stages: { ...ran, upload: "partial" },
+    outcome: "partial",
+    multiServer: {
+      selection: [frankfurt],
+      servers: [
+        { server: frankfurt, latencyTarget: {}, ...lanes, stages: { ...ran, upload: "partial" } },
+      ],
+      failures: [{ ...lost("upload", "insufficient-evidence"), serverId: "f" }],
+    },
+  });
+  const one = present(alone, context([alone]));
+  if (one.kind !== "result") throw new Error("unreadable");
+  expect(one.cells[1]!.partial).toBe("Too little measured time");
+});

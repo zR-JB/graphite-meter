@@ -282,6 +282,9 @@
     align-items: baseline;
     justify-content: end;
     column-gap: var(--space-2);
+    & .status-dot {
+      margin-inline-end: 0.4em;
+    }
 
     /* Deeper than --tone-ink, so a note keeps 4.5:1 on a row's wash as on the page. */
     & .note {
@@ -329,8 +332,7 @@
     & .value {
       grid-area: value;
       justify-self: end;
-      font: 500 var(--type-md) / 1.35 var(--font-sans);
-      font-variant-numeric: tabular-nums;
+      font: 500 var(--type-md) / 1.35 var(--font-mono);
       white-space: nowrap;
     }
     /* A status word in a value's place is prose, not a figure. */
@@ -466,11 +468,6 @@
     /* In the head's margin on the pane's edge, a step from the title. */
     & .fold {
       margin-inline: calc(-1 * (var(--space-3) + var(--hit-pad))) calc(-1 * var(--space-3));
-    }
-    & dd.status {
-      display: flex;
-      align-items: baseline;
-      gap: var(--space-2);
     }
   }
   .detail-body {

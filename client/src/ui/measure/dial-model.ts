@@ -1,6 +1,9 @@
-// The dial's pure rules: the ring's geometry, the rate curve, the result arcs and the needle's course.
-import type { TransferStage } from "../../engine/run/schedule";
-import { STAGE } from "../../view/words";
+// The dial's pure rules: the ring's geometry, the rate curve, the result arcs, the needle's course and how a run ended.
+import type { Grid } from "../../engine/run/result";
+import { STAGES, type TransferStage } from "../../engine/run/schedule";
+import { listed, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
+import { causeAt, causePlace, lower } from "./cards-model";
+import { DIAL } from "./copy";
 
 /** The ring opens downward: clockwise from the bottom left, angles from +x with y down. */
 export const SWEEP_DEG = 270;
@@ -319,4 +322,47 @@ export class Needle {
     this.#ms = ms;
     this.#end = end;
   }
+}
+
+/** The note under a finished run that is not complete: the stage it lacks first, else each cause once by reason; a run
+ *  that measured nothing names its causes, as every stage lacks a result. */
+export function endingHint(table: Grid): string {
+  const { rows, columns, causes } = table;
+  const first = causes[0];
+  if (!first) return "";
+  if (table.outcome === "incomplete" && table.measured) {
+    const stage =
+      STAGES.find((each) => columns[each] === "failed") ??
+      STAGES.find((each) => columns[each] === "unreached")!;
+    const cause = rows.map(({ cells }) => cells[stage].cause).find(Boolean) ?? first;
+    const word = STAGE_STATE[columns[stage] === "failed" ? "failed" : "unreached"].label;
+    return `${STAGE[stage].label} ${lower(word)}: ${cause.stage === stage ? lower(reasonLabel(cause.reason)) : causeAt(cause)}`;
+  }
+  const troubled = rows.filter((row) => row.causes.length);
+  if (troubled.length > 1 && table.measured) return DIAL.troubled(troubled.length);
+  if (rows.length === 1) {
+    // One server: "Latency and Download: connection lost".
+    const reasons = Map.groupBy(causes, (cause) => reasonLabel(cause.reason));
+    return [...reasons.values()]
+      .map(
+        (group) =>
+          `${listed([...new Set(group.map(causePlace))])}: ${lower(reasonLabel(group[0]!.reason))}`,
+      )
+      .join("; ");
+  }
+  // Each server says its causes once; servers that say the same share a line: "Frankfurt and Oslo: connection lost in Download".
+  const said = Map.groupBy(
+    rows.filter((row) => row.causes.length),
+    ({ causes }) =>
+      [...Map.groupBy(causes, (cause) => cause.reason).values()]
+        .map((group) => causeAt(...group))
+        .join(", "),
+  );
+  const lines = [...said].map(
+    ([what, named]) => `${listed(named.map((row) => row.server.name))}: ${what}`,
+  );
+  // The grid lists every cause, so a long ending names two and counts the servers left.
+  if (lines.length <= 2) return lines.join("; ");
+  const rest = [...said.values()].slice(2).flat().length;
+  return `${lines.slice(0, 2).join("; ")}; ${DIAL.more(rest)}`;
 }
