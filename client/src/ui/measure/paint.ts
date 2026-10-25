@@ -113,23 +113,30 @@ export function inView(element: Element, initial: boolean): Read<boolean> {
 
 type Size = { width: number; height: number };
 
-const measured = new Map<Element, { size: Size; follow: Set<(size: Size) => void> }>();
+const measured = new Map<HTMLElement, { size: Size; follow: Set<(size: Size) => void> }>();
+const fresh = new Set<HTMLElement>();
 let sizer: ResizeObserver | null = null;
 
-/** Each element's size in whole CSS px, so sub-pixel steps draw nothing; one shared observer batches a frame's resizes. */
-export function measure<K extends string>(elements: Record<K, Element>): Record<K, Read<Size>> {
+function resized(element: HTMLElement): boolean {
+  const entry = measured.get(element);
+  const [width, height] = [element.offsetWidth, element.offsetHeight];
+  if (!entry || (entry.size.width === width && entry.size.height === height)) return false;
+  entry.size = { width, height };
+  for (const follow of entry.follow) follow(entry.size);
+  return true;
+}
+
+function seed() {
+  const boxes = [...fresh].filter((element) => element.checkVisibility());
+  fresh.clear();
+  for (let pass = 0; pass < 4; pass++) if (!batch(() => boxes.filter(resized)).length) break;
+}
+
+/** Each element's whole-px size, read before the first frame (Chrome counts a 0x0 start's relayout as a shift), then by one observer. */
+export function measure<K extends string>(elements: Record<K, HTMLElement>): Record<K, Read<Size>> {
   sizer ??= new ResizeObserver((records) =>
     batch(() => {
-      for (const record of records) {
-        const entry = measured.get(record.target);
-        if (!entry) continue;
-        const box = record.borderBoxSize[0];
-        const width = Math.round(box?.inlineSize ?? record.contentRect.width);
-        const height = Math.round(box?.blockSize ?? record.contentRect.height);
-        if (entry.size.width === width && entry.size.height === height) continue;
-        entry.size = { width, height };
-        for (const follow of entry.follow) follow(entry.size);
-      }
+      for (const record of records) resized(record.target as HTMLElement);
     }),
   );
   const sizes = {} as Record<K, Read<Size>>;
@@ -140,6 +147,8 @@ export function measure<K extends string>(elements: Record<K, Element>): Record<
       entry = { size: { width: 0, height: 0 }, follow: new Set() };
       measured.set(element, entry);
       sizer.observe(element);
+      if (!fresh.size) queueMicrotask(seed);
+      fresh.add(element);
     }
     const size = signal(entry.size);
     const follow = (next: Size) => size.set(next);
@@ -149,6 +158,7 @@ export function measure<K extends string>(elements: Record<K, Element>): Record<
       views.delete(follow);
       if (views.size) return;
       measured.delete(element);
+      fresh.delete(element);
       sizer!.unobserve(element);
     });
     sizes[key] = size;

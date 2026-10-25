@@ -32,11 +32,15 @@ export interface Views {
   connectivity(shell: Shell): Node;
 }
 
-// Moments that mark a result arriving play when it arrives; what the console mounts with shows settled.
-const SETTLES = new Set(["result-sweep", "pop", "grow-x"]);
-const finishSettled = (stage: HTMLElement) => {
-  for (const animation of stage.getAnimations({ subtree: true }))
-    if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName))
+// Mounting changes nothing, so its own CSS motion ends at once; a sheet the link opens, and the moves it makes, play.
+const settle = (frame: HTMLElement) => {
+  for (const animation of frame.getAnimations({ subtree: true }))
+    if (
+      (animation instanceof CSSAnimation || animation instanceof CSSTransition) &&
+      animation.timeline === document.timeline &&
+      Number.isFinite(animation.effect!.getComputedTiming().endTime) &&
+      !(animation.effect as KeyframeEffect).target!.closest(".sheet-layer")
+    )
       animation.finish();
 };
 
@@ -147,8 +151,8 @@ export function mountConsole(
       <LegalDialog open={ctl.legalOpen} invoker={ctl.legalInvoker} onClose={ctl.closeLegal} />,
     ]);
 
-    finishSettled(measurement);
-    nextFrame(() => finishSettled(measurement));
+    settle(frame);
+    nextFrame(() => settle(frame));
     ctl.start();
     onCleanup(markScrolled());
     return shell;
