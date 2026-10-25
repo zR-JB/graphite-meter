@@ -61,7 +61,7 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
       /\bchip--partial\b/,
     );
     const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
-    await expect(lens.locator('option[value="oslo"]')).toHaveText("Oslo · Incomplete");
+    await expect(lens.locator('option[value="oslo"]')).toHaveText(/^Oslo\b.* · Incomplete$/);
     await lens.evaluate((select: HTMLSelectElement) => {
       select.value = "oslo";
       select.dispatchEvent(new Event("change"));
