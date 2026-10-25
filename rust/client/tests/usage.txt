@@ -9,11 +9,11 @@ Options:
   --latency-origin <origin>            Latency origin from discovery, or auto (default: auto)
   --latency-transport <name>           Latency transport: auto, websocket or webtransport (default: auto)
   --legal                              Print the licenses of the bundled software and exit
-  --loaded-latency                     Measure latency while transfer stages are loaded (default: true)
   --loaded-ping <cadence>              Loaded probe interval: reply-driven, fast, medium, slow or a duration from 80ms to 15s (default: medium)
   --ping <cadence>                     Idle probe interval: reply-driven, fast, medium, slow or a duration from 80ms to 15s (default: reply-driven)
   --report                             Run once without the console and print the final report (automatic when stdout is not a terminal)
   --server <id>                        Test server ID from the server catalog; repeat for up to 4 (default: its default selection)
+  --skip-loaded-latency                Skip loaded latency if the Latency stage is off (default: true)
   --stages <list>                      Comma-separated stages: latency (ping), download (down), upload (up) or bidirectional (bidi) (default: latency,download,upload)
   --streams <count>                    Exact stream count per server and direction; 0 is automatic (default: 0)
   --throughput-origin <origin>         Throughput origin from discovery, or auto (default: auto)

@@ -15,7 +15,7 @@ use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
 /// Short stages; transfers get 2 s so a slow lane start on a loaded runner still leaves 800 ms of evidence.
-const SHORT: [&str; 11] = [
+const SHORT: [&str; 12] = [
     "-stages",
     "latency,download,upload,bidirectional",
     "-latency-duration",
@@ -27,6 +27,7 @@ const SHORT: [&str; 11] = [
     "-bidirectional-duration",
     "2s",
     "-insecure",
+    "-skip-loaded-latency=false",
 ];
 
 /// The stages whose lanes differ by transport; the HTTP/1.1 run covers the rest once.

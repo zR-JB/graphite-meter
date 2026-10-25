@@ -71,7 +71,7 @@ against a protected server it ends with "Sign-in required" and status 1.
 ## Flags
 
 Durations take units such as `800ms`, `4s` or `1m30s`. Boolean flags accept `true`, `false`, `1` or `0`
-(`--loaded-latency=false`).
+(`--skip-loaded-latency=false`).
 
 | Flag                                             | Default                   | Meaning                                                                                   |
 | ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------- |
@@ -87,7 +87,7 @@ Durations take units such as `800ms`, `4s` or `1m30s`. Boolean flags accept `tru
 | `--latency-transport`                            | `auto`                    | `websocket` or `webtransport`.                                                            |
 | `--ping`                                         | `reply-driven`            | Idle probe interval: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or 80 ms to 15 s. |
 | `--loaded-ping`                                  | `medium`                  | Loaded probe interval, the same values.                                                   |
-| `--loaded-latency`                               | `true`                    | Probe latency during transfer stages.                                                     |
+| `--skip-loaded-latency`                          | `true`                    | Skip loaded latency if the Latency stage is off; with that stage on, transfers probe.     |
 | `--auto-streams`                                 | `6`                       | HTTP/1.1 stream limit per direction, 1 to 14.                                             |
 | `--streams`                                      | `0`                       | Exact stream count per server and direction, 1 to 14; `0` is automatic.                   |
 | `--insecure`                                     | `false`                   | Skip TLS certificate verification. Sign-in is refused.                                    |

@@ -62,6 +62,7 @@ fn config(address: SocketAddr) -> Config {
         &url,
         "-stages",
         "download",
+        "-skip-loaded-latency=false",
         "-download-duration",
         "2s",
     ])

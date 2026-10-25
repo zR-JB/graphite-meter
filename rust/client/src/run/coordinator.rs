@@ -211,7 +211,7 @@ impl Run<'_> {
         });
         let latency = match stage {
             Stage::Latency => Some(config.ping),
-            _ => config.loaded_latency.then_some(config.loaded_ping),
+            _ => config.loaded_latency().then_some(config.loaded_ping),
         };
         let plan = StagePlan {
             stage,

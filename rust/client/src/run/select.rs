@@ -355,9 +355,9 @@ mod tests {
             ("", "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249, websocket 7246"),
             ("-throughput-transport webtransport -latency-transport websocket",
                 "webtransport http3 7249, websocket 7246"),
-            ("-throughput-origin https://meter.example:7248 -stages down -loaded-latency=false",
+            ("-throughput-origin https://meter.example:7248 -stages down",
                 "fetch-stream http2 7248"),
-            ("-throughput-protocol http3 -stages up -loaded-latency=false",
+            ("-throughput-protocol http3 -stages up",
                 "fetch-stream http3 7249, webtransport http3 7249"),
             ("-latency-transport webtransport -stages ping",
                 "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249"),
@@ -385,7 +385,7 @@ mod tests {
         }
         let elsewhere = |args| paths(args, "https://meter.example", &native, &own);
         assert_eq!(
-            elsewhere("-stages down -loaded-latency=false").unwrap(),
+            elsewhere("-stages down").unwrap(),
             "webtransport http3 7249"
         );
         let several = "several throughput origins are offered; select one";
