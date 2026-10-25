@@ -37,7 +37,9 @@ import {
 import { pageClock, RunClock, type Clock } from "./clock";
 import {
   failureScope,
+  failureSentence,
   graded,
+  shortSentence,
   lanes,
   stageStatus,
   type MultiServerResult,
@@ -361,7 +363,9 @@ export class Run {
     const charged = (this.#segments.find(({ activity }) => activity.transfer.length) ?? first)
       .activity.stage;
     for (const { server, reason, message } of this.#dropped) {
-      const failure = this.#record(server.id, "throughput", reason, message, charged);
+      const failure = this.#record(server.id, "throughput", reason, message, charged, {
+        start: true,
+      });
       if (failure) this.#emit({ type: "failure", failure });
     }
     // A handler may have stopped the run.
@@ -1182,7 +1186,10 @@ export class Run {
     if (!failure || !unreached(failure.reason)) return;
     Object.assign(failure, {
       reason: "sign-in-required",
-      message: `Sign in to ${server.prepared.server.name}`,
+      message: failureSentence(
+        { reason: "sign-in-required", scope: failure.scope, stage },
+        server.prepared.server.name,
+      ),
     });
     this.#emit({ type: "failure", failure });
   }
@@ -1502,11 +1509,16 @@ export class Run {
           ? [this.#focus().id]
           : (this.#aggregate.intervals.findLast((interval) => interval.stage === name)
               ?.participants ?? this.#participants().map(({ id }) => id));
-      const message = short
+      const detail = short
         ? "Measured too little of the planned time"
         : "Too little measured evidence for a result";
+      // A stage cut short says so; one without evidence says what each server sent.
+      const named = (id: string) =>
+        this.#servers.find((server) => server.id === id)?.prepared.server.name ?? id;
       for (const id of ids)
-        this.#record(id, failureScope(name), "insufficient-evidence", message, name);
+        this.#record(id, failureScope(name), "insufficient-evidence", detail, name, {
+          message: short ? shortSentence(name as TransferStage, named(id)) : "",
+        });
     }
     // A server that stayed but measured too little for its own result says so, as the run does; the stage's status counts it.
     if (stage)
@@ -1580,25 +1592,32 @@ export class Run {
     return paths.length ? combinedModel(paths) : null;
   }
 
+  /** Records a failure in the run's own words, `detail` being what the lane, check or server said. */
   #record(
     serverId: string,
     scope: Role,
     reason: FailureReason,
-    message: string,
+    detail: string,
     stage: Stage,
+    { start = false, message = "" } = {},
   ): ServerFailure | null {
     if (
       this.#failures.some((f) => f.serverId === serverId && f.stage === stage && f.scope === scope)
     )
       return null;
-    // Server-supplied detail is bounded and filtered before it can reach saved history.
+    const name =
+      this.#servers.find(({ id }) => id === serverId)?.prepared.server.name ??
+      this.#dropped.find(({ server }) => server.id === serverId)?.server.name ??
+      serverId;
     const failure = {
       serverId,
       stage,
       atMs: this.#clock.runMs(),
       scope,
       reason,
-      message: safeDetail(message),
+      message: message || failureSentence({ reason, scope, stage: start ? "start" : stage }, name),
+      // Server-supplied text is bounded and filtered before it can reach saved history.
+      detail: safeDetail(detail),
     };
     this.#failures.push(failure);
     return failure;

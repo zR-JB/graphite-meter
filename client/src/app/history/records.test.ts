@@ -85,7 +85,8 @@ const full: HistoryRecord = {
           atMs: 3e4,
           scope: "throughput",
           reason: "timeout",
-          message: "",
+          message: "Edge stopped moving data in both directions.",
+          detail: "",
         },
       ],
     },
@@ -334,6 +335,16 @@ function twoServers(oslo: "left" | "dropped", schemaVersion: 5 | 6): unknown {
     },
   };
 }
+
+test("an older record's failure reads as a sentence naming its server and stage, its own text kept as detail", () => {
+  const { detail: _, ...older } = full.result.multiServer.failures[0]!;
+  const row = altered(full, "result.multiServer.failures", [
+    { ...older, message: "lane 2 failed" },
+  ]);
+  expect(readHistoryRecord(row)!.result.multiServer.failures).toEqual([
+    { ...older, message: "Edge stopped moving data in both directions.", detail: "lane 2 failed" },
+  ]);
+});
 
 test("an older record's stage measured without a selected server reads partial, and a Start drop makes every stage so", () => {
   const read = (row: unknown) => {

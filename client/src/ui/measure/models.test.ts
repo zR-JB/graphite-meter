@@ -446,8 +446,13 @@ test("the server grid reads each server's value or word per planned stage, then 
         },
       ],
       failures: [
-        failure("o", "download", "connection-lost", "download lane 2 failed: network error"),
-        failure("b", "download", "server-capacity"),
+        failure("o", "download", "connection-lost", "Download from Oslo lost its connection."),
+        failure(
+          "b",
+          "download",
+          "server-capacity",
+          "Bergen had no room for another test when this one started.",
+        ),
       ],
     },
   } as unknown as RunResult;
@@ -467,20 +472,15 @@ test("the server grid reads each server's value or word per planned stage, then 
     ["Oslo", "Incomplete", "4.00 warn", "Not reached"],
     ["Bergen", "Incomplete", "Not reached", "Not reached"],
   ]);
-  // The engine's own text stays in the cell's tip.
-  expect(view.rows[1]!.cells[0]!.tip).toBe(
-    "Partial\nConnection lost\ndownload lane 2 failed: network error",
-  );
+  expect(view.rows[1]!.cells[0]!.tip).toBe("Partial\nDownload from Oslo lost its connection.");
   expect(view.notes).toEqual([
     {
       tone: "warn",
-      head: "Oslo · Download",
-      text: "Connection lost. Upload was not reached.",
+      text: "Download from Oslo lost its connection. Upload was not reached.",
     },
     {
       tone: "warn",
-      head: "Bergen · Start",
-      text: "Server at capacity. Download and Upload were not reached.",
+      text: "Bergen had no room for another test when this one started. Download and Upload were not reached.",
     },
   ]);
 
@@ -500,12 +500,12 @@ test("the server grid reads each server's value or word per planned stage, then 
           stages: { ...ran, download: "failed" },
         },
       ],
-      failures: [failure("p", "download", "timeout")],
+      failures: [failure("p", "download", "timeout", "Porto stopped delivering download data.")],
     },
   } as unknown as RunResult;
   const failedView = gridView(failed, grid(failed), BITS);
   expect(failedView.rows[1]!.cells[0]).toMatchObject({ text: "Failed", measured: false });
   expect(failedView.notes).toEqual([
-    { tone: "err", head: "Porto · Download", text: "Stopped delivering data." },
+    { tone: "err", text: "Porto stopped delivering download data." },
   ]);
 });

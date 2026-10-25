@@ -708,8 +708,8 @@ export function createServers(env: ServersEnv): Servers {
         return;
       }
       const connection = connections.peek().get(failure.serverId);
-      if (failure.reason === "sign-in-required")
-        connection?.requireSignIn(failure.message || undefined);
+      // Settings asks to sign in again in its own words.
+      if (failure.reason === "sign-in-required") connection?.requireSignIn();
       // A channel that worked and then broke says nothing against its path; the discovery re-read watches the server.
       else if (failure.reason === "path-failed" || failure.reason === "protocol-error")
         connection?.invalidate([failure.scope], true);

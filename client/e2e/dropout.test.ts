@@ -59,7 +59,7 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
     // Under the cards, each server's result by stage and Oslo's cause.
     await expect(page.locator(".results .server-grid tbody tr")).toHaveCount(3);
     await expect(page.locator(".results .server-grid .causes li")).toHaveText([
-      "Oslo · Download Connection lost. Upload was not reached.",
+      "Download from Oslo lost its connection. Upload was not reached.",
     ]);
     await expect(page.getByRole("switch", { name: /^Upload stage/ })).toHaveAttribute(
       "class",

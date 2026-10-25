@@ -440,7 +440,12 @@ test("server failure text is bounded and dropped when it could disguise itself",
   );
   h.start();
   const { failures } = (await h.result()).multiServer;
-  expect(failures.map(({ message }) => message)).toEqual(["", "x".repeat(256)]);
+  expect(failures.map(({ detail }) => detail)).toEqual(["", "x".repeat(256)]);
+  // The run says each in its own words.
+  expect(failures.map(({ message }) => message)).toEqual([
+    "a sent a reply this page cannot read during the download.",
+    "b sent a reply this page cannot read during the download.",
+  ]);
 });
 
 test("several servers that all fail end the run; a sole server skips to its next stage", async () => {
@@ -583,7 +588,10 @@ test("a server dropped at Start reads not reached in every stage, so each stage 
       "skipped",
     ],
   });
-  expect(grid(result).rows[2]!.cells.latency.cause?.message).toBe("Bergen is at capacity");
+  expect(grid(result).rows[2]!.cells.latency.cause).toMatchObject({
+    message: "Bergen had no room for another test when this one started.",
+    detail: "Bergen is at capacity",
+  });
   expect(result.stages).toMatchObject({ latency: "partial", download: "partial" });
   expect(stageEnds(h.events)).toEqual({ latency: "partial", download: "partial" });
   // Bergen is named as the timeline starts, before any stage ends.
@@ -941,7 +949,12 @@ test("a grant refused while the next stage prepares asks for sign-in", async () 
   h.start();
   const result = await h.result();
   expect(result.multiServer.failures).toMatchObject([
-    { serverId: "a", stage: "upload", reason: "sign-in-required", message: "Sign in to a" },
+    {
+      serverId: "a",
+      stage: "upload",
+      reason: "sign-in-required",
+      message: "The sign-in to a ended during the upload.",
+    },
   ]);
 });
 
@@ -1011,7 +1024,12 @@ test("an expired grant at the final checkpoint asks for sign-in and removes only
   h.start();
   const result = await h.result();
   expect(result.multiServer.failures).toMatchObject([
-    { serverId: "a", stage: "upload", reason: "sign-in-required", message: "Sign in to a" },
+    {
+      serverId: "a",
+      stage: "upload",
+      reason: "sign-in-required",
+      message: "The sign-in to a ended during the upload.",
+    },
   ]);
   expect(result.multiServer.participants).toEqual(["b"]);
 });
@@ -1226,7 +1244,7 @@ test("evidence that stops below the silence limit ends with its stage unless a f
     serverId: "a",
     stage: "download",
     reason: "connection-lost",
-    message: "quiet",
+    detail: "quiet",
   });
   expect(result.multiServer.participants).toEqual(["b"]);
   expect(h.calls.filter((call) => call === "measure:a")).toHaveLength(1);
@@ -1239,7 +1257,7 @@ test("evidence that stops below the silence limit ends with its stage unless a f
   early.start();
   const dropped = await early.result();
   expect(dropped.multiServer.failures).toMatchObject([
-    { serverId: "a", reason: "timeout", message: "down direction carried no data" },
+    { serverId: "a", reason: "timeout", detail: "down direction carried no data" },
   ]);
   const [, survivors] = dropped.multiServer.intervals;
   expect(survivors).toMatchObject({ reason: "dropout", participants: ["b"] });
@@ -1422,7 +1440,7 @@ test("ending while a stage prepares ignores what tearing it down reports", async
   reject(new Error("torn down"));
   const result = await h.result();
   expect(
-    result.multiServer.failures.map(({ serverId, message }) => `${serverId}:${message}`),
+    result.multiServer.failures.map(({ serverId, detail }) => `${serverId}:${detail}`),
   ).toEqual(["a:Signed out", "b:Signed out"]);
   expect(result.multiServer.participants).toEqual(["a", "b"]);
 });
@@ -1494,7 +1512,7 @@ test("a server still retrying a failure it did not describe names the direction 
   const result = await h.result();
   // b stayed, silent too, and says why it has no result of its own.
   expect(result.multiServer.failures).toMatchObject([
-    { serverId: "a", message: "down direction carried no data" },
+    { serverId: "a", detail: "down direction carried no data" },
     { serverId: "b", reason: "insufficient-evidence" },
   ]);
   const b = result.multiServer.servers.find(({ server }) => server.id === "b")!;
@@ -1899,7 +1917,7 @@ test("a stage that cannot prepare reports the reason its lanes gave", async () =
   );
   h.start();
   expect((await h.result()).multiServer.failures).toMatchObject([
-    { reason: "protocol-error", message: expect.stringContaining("HTTP 400") },
+    { reason: "protocol-error", detail: expect.stringContaining("HTTP 400") },
   ]);
 });
 
@@ -1941,7 +1959,7 @@ test("lanes a later stage cannot be dealt end the run with what earlier stages m
   expect(result.download?.reportedBytesPerSec).toBeGreaterThan(0);
   expect([result.stages.upload, result.outcome]).toEqual(["failed", "incomplete"]);
   expect(result.multiServer.failures).toMatchObject([
-    { stage: "upload", message: "No lanes for this stage" },
+    { stage: "upload", detail: "No lanes for this stage" },
   ]);
 });
 

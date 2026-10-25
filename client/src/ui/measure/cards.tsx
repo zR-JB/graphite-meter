@@ -317,9 +317,7 @@ function ServerGrid(props: { view: Read<GridView> }): Node {
               props.view().notes.map((note) => (
                 <li>
                   <span class="status-dot inline" data-tone={note.tone} />
-                  <span>
-                    <strong>{note.head}</strong> {note.text}
-                  </span>
+                  <span>{note.text}</span>
                 </li>
               ))
             }

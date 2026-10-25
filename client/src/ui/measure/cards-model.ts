@@ -557,8 +557,7 @@ export interface GridCell {
 }
 export interface GridNote {
   tone: "err" | "warn";
-  /** Server and where the cause arose, or only where when one server ran. */
-  head: string;
+  /** The cause's sentence, which names its server and stage, then what it cost. */
   text: string;
 }
 export interface GridView {
@@ -569,13 +568,10 @@ export interface GridView {
   notes: GridNote[];
 }
 
-const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
-
 /** The result grid in words: every server's value or word per planned stage, then each cause and what it cost. */
 export function gridView(result: RunResult, table: Grid, units: RateUnits): GridView {
   const stages = STAGES.filter((stage) => table.columns[stage] !== "skipped");
   const tier = units.tier ?? 0;
-  const several = table.rows.length > 1;
   const value = (stage: Stage, id: string): string => {
     const server = result.multiServer.servers.find((entry) => entry.server.id === id);
     if (stage === "latency") return server?.latency ? fmtMs(server.latency.reportedMs) : MISSING;
@@ -595,12 +591,8 @@ export function gridView(result: RunResult, table: Grid, units: RateUnits): Grid
       const { status, cause } = cells[stage];
       const shown = status === "complete" || status === "partial";
       const word = status === "complete" ? null : STAGE_STATE[status];
-      // A server that left says where; one that failed here says why, then what the engine recorded.
-      const why = !cause
-        ? []
-        : status === "unreached"
-          ? [leftLine(cause)]
-          : [reasonLabel(cause.reason), cause.message];
+      // A server that left says where; one that failed here says what happened.
+      const why = !cause ? [] : status === "unreached" ? [leftLine(cause)] : [cause.message];
       return {
         stage,
         text: shown ? value(stage, server.id) : word!.label,
@@ -611,9 +603,9 @@ export function gridView(result: RunResult, table: Grid, units: RateUnits): Grid
     }),
   }));
   // One server's cards already say each cause of their stage; its list keeps only what no card shows.
-  const notes = table.rows.flatMap(({ server, cells, causes }) =>
+  const notes = table.rows.flatMap(({ cells, causes }) =>
     causes
-      .filter((cause) => several || loaded(cause))
+      .filter((cause) => table.rows.length > 1 || loaded(cause))
       .map((cause): GridNote => {
         const after = stages.filter(
           (stage) => cells[stage].status === "unreached" && cells[stage].cause === cause,
@@ -621,12 +613,10 @@ export function gridView(result: RunResult, table: Grid, units: RateUnits): Grid
         const failed = stages.some(
           (stage) => cells[stage].status === "failed" && cells[stage].cause === cause,
         );
-        const place = causePlace(cause);
         return {
           tone: failed ? "err" : "warn",
-          head: several ? `${server.name} · ${place}` : place,
           text: [
-            sentence(reasonLabel(cause.reason)),
+            cause.message,
             after.length ? GRID.unreached(after.map((stage) => STAGE[stage].label)) : "",
           ]
             .filter(Boolean)

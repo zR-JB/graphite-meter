@@ -205,12 +205,13 @@ pins:
 When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB,
 a run that failed once its stages began among them; a refused Start and a stop are never kept.
 A record holds the build and the result. The result covers the selected servers and survivors, each server's engine
-version, path evidence and stage statuses, latency populations with exact probe counts, at most 128 recent intervals,
-failures with reasons, byte totals, and the headline with its peak, stability and wire estimate. Missing
-measurements stay null, and grants and leases are never saved. Records that earlier releases saved at
-schemas 4 and 5 are upgraded to the current schema 6 once when the database opens, and records that cannot be read
-stay in storage, are skipped and are reported. A failure earlier releases saved as `preparation-failed` reads as
-`path-failed`, and one saved as `server-busy` as `server-capacity`.
+version, path evidence and stage statuses, latency populations with exact probe counts, at most 128 recent
+intervals, failures with reasons, each said as a sentence with the lane's or server's own text kept beside it, byte
+totals, and the headline with its peak, stability and wire estimate. Missing measurements stay null, and grants and
+leases are never saved. Records that earlier releases saved at schemas 4 and 5 are upgraded to the current schema 6
+once when the database opens, and records that cannot be read stay in storage, are skipped and are reported. A
+failure earlier releases saved as `preparation-failed` reads as `path-failed`, and one saved as `server-busy` as
+`server-capacity`.
 
 Before saving, a result must be coherent: every failure has one of the eight reasons; every selected server that
 did not complete a stage names why, by its own failure in the stage's scope or by the failure that took it out in
