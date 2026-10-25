@@ -200,7 +200,10 @@ test("stopping during download freezes elapsed time, and a rerun starts afresh a
   await ready(page);
   await runButton(page, "Start test").click();
   await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
-  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
+  // The download's own rate, not the latency figure the dial hands over from.
+  await expect(page.locator('.results .card[data-tone="download"] .headline .num')).toHaveText(
+    /\d/,
+  );
   await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
   // The dial keeps the rate the download reached, under Stopped.

@@ -132,8 +132,8 @@ function Card(props: {
     );
   });
   const unknown = computed(() => card().facts.every((fact) => fact.value === MISSING));
-  // The quiet line: a failure's reason, else the wire rate, else latency's jitter; then time without data.
-  const reason = computed(() => (quiet() ? "" : props.reason()));
+  // The line: a failure's reason, which a card never reached keeps too, else the wire rate, else latency's jitter.
+  const reason = props.reason;
   const wire = computed(() => card().wire?.value ?? "");
   const overhead = computed(() => card().wire?.overhead ?? "");
   const wireTip = computed(() => card().wire?.tip ?? "");
