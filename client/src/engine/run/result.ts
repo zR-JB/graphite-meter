@@ -1,5 +1,5 @@
 // What a finished run reports and the rules that judge it; History keeps these shapes as schema 6.
-import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
+import { FAILURE_REASONS, knownReason, type FailureReason } from "../../protocol/reasons";
 import {
   coveredMs,
   directions,
@@ -11,7 +11,7 @@ import {
 import type { AddedLatency, LatencyResult, LatencySummary } from "../measure/latency";
 import type { WireModel } from "../measure/overhead";
 import { minCoverage } from "../measure/stability";
-import type { HttpProtocol, Role, ServerIdentity } from "../types";
+import type { Direction, HttpProtocol, Role, ServerIdentity } from "../types";
 import { STAGES, type Stage, type TransferStage } from "./schedule";
 
 export type StageStatus = "complete" | "partial" | "failed" | "not-run";
@@ -111,65 +111,90 @@ const DURING: Record<Stage, string> = {
   upload: "during the upload",
   bidirectional: "during the bidirectional transfer",
 };
-/** What a server short of evidence did too little of. */
-const SHORT: Record<TransferStage, string> = {
-  download: "sent too little download data",
-  upload: "received too little upload data",
-  bidirectional: "exchanged too little data in both directions",
-};
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-/** A transfer stage whose evidence spans too little of its planned time, on one of its servers. */
 export const shortSentence = (stage: TransferStage, server: string) =>
-  `${TRANSFER[stage](server)} covered less of its planned time than a result needs.`;
+  `${TRANSFER[stage](server)} covered less of its planned time than a complete result needs.`;
 
-/** A failure as a reader of the result says it: what happened, to which server, in which stage or at Start. */
+/** A failure as a reader of the result says it, naming its server and where; never its reason's label again. */
 export function failureSentence(
-  { reason, stage, scope }: Pick<Cause, "reason" | "stage" | "scope">,
+  {
+    reason,
+    stage,
+    scope,
+    direction,
+  }: { reason: string; stage: Stage | "start"; scope: Role; direction?: Direction },
   server: string,
 ): string {
+  const known = knownReason(reason);
   if (stage === "start")
-    switch (reason) {
+    switch (known) {
       case "server-capacity":
         return `${server} had no room for another test when this one started.`;
       case "client-limit":
-        return `${server} already runs a test for this address or sign-in.`;
+        return `${server} already ran a test for your address or sign-in when this one started.`;
       case "sign-in-required":
-        return `${server} admits only signed-in tests.`;
+        return `${server} asked for a sign-in when this test started.`;
       case "protocol-error":
-        return `${server} answered its check at Start in a way this page cannot read.`;
+        return `${server} sent a reply this page cannot read when this test started.`;
+      case "connection-lost":
+      case "timeout":
+        return `${server} stopped answering as this test started.`;
       default:
-        return `${server} did not answer its check at Start.`;
+        return `${server} could not be reached on its selected paths when this test started.`;
     }
-  const probes = scope === "latency";
-  const transfer = stage === "latency" ? null : stage;
-  const loaded = transfer && probes ? ` ${DURING[transfer]}` : "";
-  switch (reason) {
+  const during = DURING[stage];
+  if (scope === "latency") {
+    const loaded = stage === "latency" ? "" : ` ${during}`;
+    switch (known) {
+      case "connection-lost":
+        return `Latency probes to ${server} lost their connection${loaded}.`;
+      case "timeout":
+        return `${server} stopped answering latency probes${loaded}.`;
+      case "path-failed":
+        return `Latency probes could not reach ${server}${loaded}.`;
+      case "sign-in-required":
+        return `Latency probes to ${server} stopped when its sign-in ended ${during}.`;
+      case "client-limit":
+        return `${server} refused latency probes for your address or sign-in ${during}.`;
+      case "server-capacity":
+        return `${server} had no room for latency probes ${during}.`;
+      case "protocol-error":
+        return `${capital(during)}, ${server} sent a latency reply this page cannot read.`;
+      case "insufficient-evidence":
+        return loaded
+          ? `${capital(during)}, ${server} answered too few latency probes for a result.`
+          : `${server} answered too few latency probes for a result.`;
+      default:
+        return `${capital(during)}, latency probes to ${server} ran into a problem this page does not name.`;
+    }
+  }
+  const transfer = stage as TransferStage;
+  const lane = transfer !== "bidirectional" ? transfer : direction === "up" ? "upload" : "download";
+  const within = transfer === "bidirectional" && direction ? " in the bidirectional transfer" : "";
+  switch (known) {
     case "connection-lost":
-      return !transfer || probes
-        ? `Latency probes to ${server} lost their connection${loaded}.`
-        : `${TRANSFER[transfer](server)} lost its connection.`;
+      return `${TRANSFER[transfer](server)} lost its connection.`;
     case "timeout":
-      return !transfer || probes
-        ? `${server} stopped answering latency probes${loaded}.`
-        : transfer === "bidirectional"
-          ? `${server} stopped moving data in both directions.`
-          : `${server} stopped delivering ${transfer} data.`;
+      return transfer === "bidirectional" && !direction
+        ? `The bidirectional transfer with ${server} stopped moving data.`
+        : `${capital(lane)} data ${lane === "upload" ? "to" : "from"} ${server} stopped arriving${within}.`;
     case "path-failed":
-      return !transfer || probes
-        ? `Latency probes could not reach ${server}${loaded}.`
-        : `${TRANSFER[transfer](server)} could not start.`;
+      return `${TRANSFER[transfer](server)} could not start.`;
     case "sign-in-required":
-      return `The sign-in to ${server} ended ${DURING[stage]}.`;
+      return `The sign-in to ${server} ended ${during}.`;
     case "client-limit":
-      return `${server} refused more connections for this address or sign-in ${DURING[stage]}.`;
+      return `${server} refused more connections for your address or sign-in ${during}.`;
     case "server-capacity":
-      return `${server} had no room for more connections ${DURING[stage]}.`;
+      return `${server} had no room for more connections ${during}.`;
     case "protocol-error":
-      return `${server} sent a reply this page cannot read ${DURING[stage]}.`;
+      return `${capital(during)}, ${server} sent a reply this page cannot read.`;
     case "insufficient-evidence":
-      return !transfer || probes
-        ? `${server} answered too few latency probes for a result${loaded}.`
-        : `${server} ${SHORT[transfer]} for a result.`;
+      return transfer === "bidirectional" && !direction
+        ? `${server} exchanged too little data in the bidirectional transfer for a result.`
+        : `${server} ${lane === "upload" ? "received" : "sent"} too little ${lane} data${within} for a result.`;
+    default:
+      return `${capital(during)}, ${server} ran into a problem this page does not name.`;
   }
 }
 
@@ -325,7 +350,7 @@ export function graded<T extends Graded>(result: T): T & { outcome: Outcome } {
   const said = failures.map((failure) => {
     if (failure.detail !== undefined) return failure;
     const ran = servers.some(({ server }) => server.id === failure.serverId);
-    const name = selection.find(({ id }) => id === failure.serverId)?.name ?? failure.serverId;
+    const name = selection.find(({ id }) => id === failure.serverId)?.name || failure.serverId;
     const where = { ...failure, stage: ran ? failure.stage : ("start" as const) };
     return { ...failure, detail: failure.message, message: failureSentence(where, name) };
   });

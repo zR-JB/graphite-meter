@@ -443,8 +443,8 @@ test("server failure text is bounded and dropped when it could disguise itself",
   expect(failures.map(({ detail }) => detail)).toEqual(["", "x".repeat(256)]);
   // The run says each in its own words.
   expect(failures.map(({ message }) => message)).toEqual([
-    "a sent a reply this page cannot read during the download.",
-    "b sent a reply this page cannot read during the download.",
+    "During the download, a sent a reply this page cannot read.",
+    "During the download, b sent a reply this page cannot read.",
   ]);
 });
 
@@ -1406,6 +1406,12 @@ test("a bidirectional stage whose download never moves fails however long upload
     expect(result.stages.bidirectional).toBe("failed");
     expect(result.bidirectional?.down).toBeNull();
     expect(result.multiServer.failures).toMatchObject([{ stage: "bidirectional", reason }]);
+    // It names the direction that stopped, not both.
+    expect(result.multiServer.failures[0]!.message).toBe(
+      reason === "timeout"
+        ? "Download data from self stopped arriving in the bidirectional transfer."
+        : "self sent too little download data in the bidirectional transfer for a result.",
+    );
   }
 });
 

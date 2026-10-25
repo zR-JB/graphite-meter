@@ -1132,10 +1132,16 @@ export class Run {
       seat.server,
       stall?.reason ?? "timeout",
       stall?.detail || `${direction} direction carried no data`,
+      direction,
     );
   }
 
-  #remove(server: Participant, reason: FailureReason, message: string): void {
+  #remove(
+    server: Participant,
+    reason: FailureReason,
+    message: string,
+    direction?: Direction,
+  ): void {
     const stage = this.#stage;
     if (server.removed || !stage || !this.#current(stage)) return;
     const seat = stage.seats.get(server.id);
@@ -1161,7 +1167,7 @@ export class Run {
       seat.resources.discard(true);
     }
     this.#live.drop(server.id);
-    this.#failure(server, "throughput", reason, message);
+    this.#failure(server, "throughput", reason, message, direction);
     if (unreached(reason)) void this.#signedOut(server, stage.activity.stage);
     this.#updateStalled();
     const survivors = this.#participants();
@@ -1512,13 +1518,24 @@ export class Run {
       const detail = short
         ? "Measured too little of the planned time"
         : "Too little measured evidence for a result";
-      // A stage cut short says so; one without evidence says what each server sent.
-      const named = (id: string) =>
-        this.#servers.find((server) => server.id === id)?.prepared.server.name ?? id;
-      for (const id of ids)
+      // A stage cut short says so, as does a latency focus without a path to probe.
+      const missing = stage.activity.transfer.filter(
+        (_, index) => !lanes(this.#results, name)[index],
+      );
+      const direction = name === "bidirectional" && missing.length === 1 ? missing[0] : undefined;
+      for (const id of ids) {
+        const prepared = this.#servers.find((server) => server.id === id)?.prepared;
+        const server = prepared?.server.name ?? id;
+        const message = short
+          ? shortSentence(name as TransferStage, server)
+          : name === "latency" && prepared && !prepared.latency
+            ? `Latency probes had no path to ${server}.`
+            : "";
         this.#record(id, failureScope(name), "insufficient-evidence", detail, name, {
-          message: short ? shortSentence(name as TransferStage, named(id)) : "",
+          message,
+          direction,
         });
+      }
     }
     // A server that stayed but measured too little for its own result says so, as the run does; the stage's status counts it.
     if (stage)
@@ -1531,6 +1548,7 @@ export class Run {
                 this.#own.set(`${name}\t${dir}\t${id}`, result);
                 return result;
               });
+        const missing = stage.activity.transfer.filter((_, index) => !own[index]);
         if (!own.every(Boolean) && !this.#failed(name, id))
           this.#record(
             id,
@@ -1538,6 +1556,7 @@ export class Run {
             "insufficient-evidence",
             "Too little measured evidence for a result",
             name,
+            { direction: missing.length === 1 ? missing[0] : undefined },
           );
       }
     const status = stageStatus(lanes(this.#results, name), this.#failed(name));
@@ -1592,22 +1611,25 @@ export class Run {
     return paths.length ? combinedModel(paths) : null;
   }
 
-  /** Records a failure in the run's own words, `detail` being what the lane, check or server said. */
   #record(
     serverId: string,
     scope: Role,
     reason: FailureReason,
     detail: string,
     stage: Stage,
-    { start = false, message = "" } = {},
+    {
+      start = false,
+      message = "",
+      direction,
+    }: { start?: boolean; message?: string; direction?: Direction } = {},
   ): ServerFailure | null {
     if (
       this.#failures.some((f) => f.serverId === serverId && f.stage === stage && f.scope === scope)
     )
       return null;
     const name =
-      this.#servers.find(({ id }) => id === serverId)?.prepared.server.name ??
-      this.#dropped.find(({ server }) => server.id === serverId)?.server.name ??
+      this.#servers.find(({ id }) => id === serverId)?.prepared.server.name ||
+      this.#dropped.find(({ server }) => server.id === serverId)?.server.name ||
       serverId;
     const failure = {
       serverId,
@@ -1615,7 +1637,9 @@ export class Run {
       atMs: this.#clock.runMs(),
       scope,
       reason,
-      message: message || failureSentence({ reason, scope, stage: start ? "start" : stage }, name),
+      message:
+        message ||
+        failureSentence({ reason, scope, stage: start ? "start" : stage, direction }, name),
       // Server-supplied text is bounded and filtered before it can reach saved history.
       detail: safeDetail(detail),
     };
@@ -1623,9 +1647,15 @@ export class Run {
     return failure;
   }
 
-  #failure(server: Participant, scope: Role, reason: FailureReason, message: string): void {
+  #failure(
+    server: Participant,
+    scope: Role,
+    reason: FailureReason,
+    message: string,
+    direction?: Direction,
+  ): void {
     const stage = this.#stage?.activity.stage;
-    const failure = stage && this.#record(server.id, scope, reason, message, stage);
+    const failure = stage && this.#record(server.id, scope, reason, message, stage, { direction });
     if (failure) this.#emit({ type: "failure", failure });
   }
 
