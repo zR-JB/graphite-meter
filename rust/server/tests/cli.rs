@@ -276,6 +276,79 @@ fn a_verbose_server_logs_requests_and_throughput_and_sigterm_ends_its_running_do
 }
 
 #[cfg(unix)]
+fn ask_retired(address: &str, times: usize) {
+    use std::io::Read;
+    for _ in 0..times {
+        let mut old = std::net::TcpStream::connect(address).unwrap();
+        old.write_all(b"POST /upload/session HTTP/1.1\r\nHost: test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        old.read_to_end(&mut Vec::new()).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_route_an_earlier_release_served_is_logged_once_a_minute_per_client() {
+    let (child, address, next) = listening(&[]);
+    ask_retired(&address, 2);
+    assert_eq!(
+        next(),
+        format!(
+            "POST /upload/session from 127.0.0.1: a route Graphite Meter 0.13.5 removed, 1 since its last line; \
+             update that client to {ENGINE_VERSION} (app::gate)"
+        )
+    );
+    terminate(child);
+    assert!(
+        next().starts_with("stop requested"),
+        "the second request waits for the next minute"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_retired_route_is_logged_before_sign_in_refuses_it() {
+    use graphite_meter_testkit::Scratch;
+    use std::io::{BufRead, BufReader};
+    let hash = server(&["hash-password"], &[], b"secret\nsecret\n");
+    let scratch = Scratch::new().unwrap();
+    let file = scratch.file("hash", text(&hash.stdout)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+        .env_clear()
+        .envs([
+            ("GM_H1_ADDR", "127.0.0.1:0"),
+            ("TOKIO_WORKER_THREADS", "2"),
+            ("GM_AUTH_MODE", "password"),
+            ("GM_AUTH_PUBLIC_URL", "https://meter.example.com"),
+            ("GM_AUTH_PASSWORD_HASH_FILE", file.to_str().unwrap()),
+            ("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"),
+            ("GM_PUBLIC_ORIGINS", "self"),
+        ])
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stderr.take().unwrap())
+        .lines()
+        .map(Result::unwrap);
+    let listen = lines
+        .by_ref()
+        .map(|line| logged(&line).2.to_owned())
+        .find(|message| message.contains("/tcp"))
+        .unwrap();
+    let address = listen.split_once("/tcp").unwrap().0.to_owned();
+    assert!(lines.by_ref().any(|line| logged(&line).2 == "ready"));
+    ask_retired(&address, 1);
+    let line = lines.next().unwrap();
+    assert!(
+        logged(&line)
+            .2
+            .starts_with("POST /upload/session from 127.0.0.1: a route"),
+        "{line}"
+    );
+    terminate(child);
+}
+
+#[cfg(unix)]
 #[test]
 fn connections_past_a_client_share_are_logged_once_a_minute_with_a_count() {
     use std::io::Read;

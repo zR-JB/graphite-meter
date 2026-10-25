@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{
     admission,
-    peer::{Address, Peer},
+    config::ENGINE_VERSION,
+    log,
+    log::PerPeer,
+    peer::{Address, ClientKey, ClientKeys, Peer},
     transport::body::Body,
 };
 use graphite_meter_proto::route::{Kind, Route};
@@ -36,6 +39,9 @@ impl App {
             request.headers(),
             &self.config.trusted_proxies,
         );
+        if route.is_none() {
+            log_retired_route(request, address);
+        }
         let peer = Peer::new(address);
         let origin = request.headers().get(header::ORIGIN);
         // A token naming no live lease of this `Origin` is ignored, as after a restart: the request has none.
@@ -134,4 +140,29 @@ fn methods(route: Route) -> impl Iterator<Item = &'static str> {
 
 fn allows(route: Route, method: &Method) -> bool {
     methods(route).any(|allowed| allowed == method.as_str())
+}
+
+const RETIRED: [&str; 3] = ["/upload/session", "/ws/session", "/wt/session"];
+static RETIRED_LOG: PerPeer<ClientKey> = PerPeer::new();
+
+fn log_retired_route<B>(request: &Request<B>, address: Address) {
+    let path = request.uri().path();
+    if !RETIRED.contains(&path) {
+        return;
+    }
+    let ip = address.ip();
+    let Some(held) = ClientKeys::address(ip)
+        .narrowest()
+        .and_then(|key| RETIRED_LOG.admit(key))
+    else {
+        return;
+    };
+    let asked = held + 1;
+    log!(
+        Warn,
+        "request",
+        "{} {path} from {ip}: a route Graphite Meter 0.13.5 removed, {asked} since its last line; update that client \
+         to {ENGINE_VERSION}",
+        request.method()
+    );
 }
