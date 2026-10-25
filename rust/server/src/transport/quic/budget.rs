@@ -341,6 +341,7 @@ mod tests {
         assert!(!window.widen(MAX_SEND_WINDOW, &budget));
         assert_eq!(window.limit, MIN_SEND_WINDOW);
         drop(pressure);
+        assert!(!window.widen(MIN_SEND_WINDOW + SEND_WINDOW_STEP - 1, &budget));
         assert!(window.widen(MAX_SEND_WINDOW, &budget));
         assert_eq!(window.limit, MAX_SEND_WINDOW);
     }
