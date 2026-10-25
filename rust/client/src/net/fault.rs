@@ -47,9 +47,9 @@ pub enum Class {
 impl Fault {
     pub fn reason(&self) -> FailureReason {
         match self {
-            Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_)) => {
-                FailureReason::PathFailed
-            }
+            Self::Connect(
+                ConnectError::Proxy(_) | ConnectError::Refused(_) | ConnectError::Tls(_),
+            ) => FailureReason::PathFailed,
             Self::Connect(_)
             | Self::Lost
             | Self::Ended(LaneEnding::Finished | LaneEnding::Shutdown) => {
@@ -80,7 +80,9 @@ impl Fault {
             {
                 Class::Redial
             }
-            Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_))
+            Self::Connect(
+                ConnectError::Proxy(_) | ConnectError::Refused(_) | ConnectError::Tls(_),
+            )
             | Self::Status { .. }
             | Self::Refused(_)
             | Self::SignIn(_)

@@ -64,6 +64,7 @@ pub enum ConnectError {
     /// The target or proxy resolved or connected nowhere in the dial timeout, or a handshake overran its bound.
     Unreachable(io::Error),
     Refused(String),
+    TargetUnreachable(String),
     Tls(rustls::Error),
     Io(io::Error),
 }
@@ -73,7 +74,7 @@ impl fmt::Display for ConnectError {
         match self {
             Self::Proxy(unusable) => unusable.fmt(formatter),
             Self::Unreachable(error) | Self::Io(error) => error.fmt(formatter),
-            Self::Refused(reason) => formatter.write_str(reason),
+            Self::Refused(reason) | Self::TargetUnreachable(reason) => formatter.write_str(reason),
             Self::Tls(error) => error.fmt(formatter),
         }
     }
@@ -85,7 +86,7 @@ impl std::error::Error for ConnectError {
         match self {
             Self::Unreachable(error) | Self::Io(error) => error.source(),
             Self::Tls(error) => error.source(),
-            Self::Proxy(_) | Self::Refused(_) => None,
+            Self::Proxy(_) | Self::Refused(_) | Self::TargetUnreachable(_) => None,
         }
     }
 }
@@ -268,10 +269,11 @@ async fn tunnel(
             "proxy sent a malformed CONNECT response".into(),
         ));
     }
-    if code != "200" {
-        return Err(ConnectError::Refused(format!(
-            "proxy refused CONNECT with {rest}"
-        )));
+    let refused = format!("proxy refused CONNECT with {rest}");
+    match code {
+        "200" => {}
+        "502" | "503" | "504" => return Err(ConnectError::TargetUnreachable(refused)),
+        _ => return Err(ConnectError::Refused(refused)),
     }
     Ok(stream)
 }
@@ -333,6 +335,12 @@ async fn socks(
     stream.read_exact(&mut head).await?;
     match head {
         [5, 0, 0, _] => {}
+        [5, code @ (1 | 3..=6), 0, _] => {
+            return Err(ConnectError::TargetUnreachable(format!(
+                "SOCKS5 proxy refused: {}",
+                reply_text(code)
+            )));
+        }
         [5, code, 0, _] => return Err(failed(format!("refused: {}", reply_text(code)))),
         _ => return Err(malformed()),
     }
