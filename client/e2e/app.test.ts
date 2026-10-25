@@ -103,6 +103,41 @@ test("the idle track draws one bar per reply bucket and grows as each closes", a
   expect(live).toBeGreaterThanOrEqual(5);
 });
 
+test("every stage's warmup reads Warmup on the dial, its chip and its card, and the latency warmup's figure moves", async (page) => {
+  await open(page, home.url, {
+    config: { duration: { ...baseConfig.duration, warmupMs: 2000 } },
+  });
+  await ready(page);
+  await page.evaluate(() => {
+    const words: Record<string, string[]> = {};
+    const figures: string[] = [];
+    const text = (selector: string) =>
+      document.querySelector(selector)?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    const sample = () => {
+      const phase = document.getElementById("console")!.dataset.phase;
+      const stage = document.querySelector<HTMLElement>(".chip.chip--warmup")?.dataset.tone;
+      if (phase === "warmup" && stage) {
+        const seen = `${text(".gauge-status")}|${text(`.chip[data-tone="${stage}"] .chip-tag`)}|${text(`.results .card[data-tone="${stage}"] .name .status`)}`;
+        if (!(words[stage] ??= []).includes(seen)) words[stage].push(seen);
+        if (stage === "latency" && figures.at(-1) !== text(".gauge-value"))
+          figures.push(text(".gauge-value"));
+      }
+      Object.assign(window, { warmups: { words, figures } });
+      if (phase !== "complete") requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await run(page, 30_000);
+  const { words, figures } = await page.evaluate(() => (window as any).warmups);
+  expect(words).toEqual({
+    latency: ["Warmup|Warmup|Warmup"],
+    download: ["Warmup|Warmup|Warmup"],
+    upload: ["Warmup|Warmup|Warmup"],
+  });
+  // The figure follows the warmup's own replies, not the path check's one round trip.
+  expect(figures.filter((figure: string) => /\d/.test(figure)).length).toBeGreaterThan(1);
+});
+
 // Every page reports a policy violation as an error, so a run that trips Trusted Types fails whichever test made it.
 test("the page requires Trusted Types and refuses script it did not make", async (page) => {
   const policy = (await fetch(`${home.http}/`)).headers.get("content-security-policy");

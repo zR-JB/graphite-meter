@@ -1,12 +1,14 @@
 // The instrument's own words: the dial's notes and the labels of the chips, lanes, cards, lens and toast.
 import type { ShownPhase } from "../../app/run";
-import { listed, READINESS_TIP, TIP } from "../../view/words";
+import { listed, PHASE, READINESS_TIP, TIP } from "../../view/words";
 
 /** What the dial's note says between measurements; the explainer, when there is one, is the hint's tip. */
-export const PHASE_HINT: Partial<Record<ShownPhase, { text: string; tip?: string }>> = {
+export const PHASE_HINT: Partial<
+  Record<ShownPhase, { status?: string; text: string; tip?: string }>
+> = {
   idle: { text: "Ready to measure your connection" },
   connecting: { text: "Verifying the selected paths", tip: READINESS_TIP.checking },
-  warmup: { text: "Warming up, not counted", tip: TIP.warmup },
+  warmup: { status: PHASE.warmup, text: "Not counted", tip: TIP.warmup },
 };
 
 export const DIAL = {

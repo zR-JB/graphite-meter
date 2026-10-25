@@ -99,6 +99,8 @@ export function createRun(env: RunEnvironment) {
   const progress = signal({ elapsedMs: 0, budgetMs: 0 });
   const stall = signal<Stall | null>(null);
   const live = signal<LiveSample | null>(null);
+  /** Each server's latest latency-warmup median; null when its replies timed out. */
+  const warmupRtt = signal<Readonly<Record<string, number | null>>>({});
   const stageBytes = signal(0);
   const throughput: ThroughputSample[] = [];
   const throughputVersion = signal(0);
@@ -154,6 +156,7 @@ export function createRun(env: RunEnvironment) {
       progress.set({ elapsedMs: 0, budgetMs: 0 });
       stall.set(null);
       live.set(null);
+      warmupRtt.set({});
       stageBytes.set(0);
       results.set(NO_RESULTS);
       statuses.set({});
@@ -229,6 +232,8 @@ export function createRun(env: RunEnvironment) {
             throughputVersion.set(throughputVersion.peek() + 1);
           });
         }
+        case "warmupReply":
+          return warmupRtt.set({ ...warmupRtt.peek(), [event.serverId]: event.rttMs });
         case "latency": {
           const entry = series(event.serverId);
           upsertLatency(entry.buckets, event.bucket);
@@ -485,6 +490,7 @@ export function createRun(env: RunEnvironment) {
     progress: progress as Read<{ elapsedMs: number; budgetMs: number }>,
     stall: stall as Read<Stall | null>,
     live: live as Read<LiveSample | null>,
+    warmupRtt: warmupRtt as Read<Readonly<Record<string, number | null>>>,
     stageBytes: stageBytes as Read<number>,
     throughput: throughput as readonly ThroughputSample[],
     throughputVersion: throughputVersion as Read<number>,

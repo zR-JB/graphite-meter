@@ -159,20 +159,33 @@ function setup(...args: Parameters<typeof harness>) {
   return h;
 }
 
-test("warmup probes never enter a measured population", async () => {
+test("warmup replies move the live round trip and never enter a bucket, a summary or the result", async () => {
   const h = setup(
     [
       {
         id: "self",
-        prepare: (_, events) => later(50, () => probe(900, 5)(events)),
+        prepare: (_, events) => {
+          later(50, () => probe(900, 5)(events));
+          later(100, () => probe(700, 3)(events));
+          later(300, () => probe(500, 1)(events));
+        },
         measure: probe(10, 4),
       },
     ],
     { latency: true },
-    { warmupMs: 200, latencyMs: 400 },
+    { warmupMs: 400, latencyMs: 400 },
   );
   h.start();
-  expect((await h.result()).latencyByStage.latency).toMatchObject({ probeCount: 4, maxMs: 10 });
+  const result = await h.result();
+  expect(result.latencyByStage.latency).toMatchObject({ probeCount: 4, maxMs: 10 });
+  // The first replies show at once, later ones as one median per 200 ms.
+  expect(h.events.flatMap((event) => (event.type === "warmupReply" ? [event.rttMs] : []))).toEqual([
+    900, 700,
+  ]);
+  for (const event of h.events) {
+    if (event.type === "latency") expect(event.bucket.maxRttMs).toBeLessThan(100);
+    if (event.type === "summary") expect(event.summary?.maxMs ?? 0).toBeLessThan(100);
+  }
 });
 
 test("loaded latency ends with the stage's window, however late its final checkpoint answers", async () => {
