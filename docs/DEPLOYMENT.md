@@ -301,7 +301,9 @@ gateway as the trusted proxy. Do not list Traefik's clients in `forwardedHeaders
   `/upload/progress`.
 - Expire idle upstream connections within 15 s, because Graphite Meter closes them then.
 - Keep the whole route family on one backend and add no `forward_auth`, because Graphite Meter owns authentication.
-- Redact the `/auth/oidc/callback` query string from logs, and keep bandwidth policy off measurement routes.
+- Redact the `/auth/oidc/callback` query string and the `lease=` parameter of `/ws/ping` and `/ws/progress` from
+  logs: whoever presents a live lease measures as the client that took it, and as its sign-in.
+- Keep bandwidth policy off measurement routes.
 
 ## Authentication
 
