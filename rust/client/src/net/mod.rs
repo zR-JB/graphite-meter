@@ -420,7 +420,7 @@ struct Taken {
 }
 
 impl Connections {
-    /// The answer's head by `deadline`; a request failing unanswered on a reused connection retries once on a new one.
+    /// The answer's head by `deadline`; one cut unanswered on a reused connection retries once if unsent or idempotent.
     async fn send(
         &self,
         client: &Client,
@@ -461,7 +461,7 @@ impl Connections {
         slots.entry((origin.clone(), via)).or_default().clone()
     }
 
-    /// One try; its fault says whether it failed on a reused connection before any answer.
+    /// One try; its fault says whether the request may go again on a new connection.
     async fn attempt(
         &self,
         client: &Client,
@@ -489,11 +489,16 @@ impl Connections {
         };
         match timeout_at(deadline, conn.send(head, payload)).await {
             Ok(Ok(answer)) => Ok(slot.keep(conn, answer)),
-            Ok(Err(Failed { fault, again })) => {
-                if again {
+            Ok(Err(Failed {
+                fault,
+                broken,
+                unsent,
+            })) => {
+                if broken {
                     slot.retire(serial);
                 }
-                Err((fault, again && reused))
+                let again = broken && reused && (unsent || request.method.is_idempotent());
+                Err((fault, again))
             }
             Err(_) => {
                 slot.retire(serial);
