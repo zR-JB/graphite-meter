@@ -108,7 +108,12 @@ test("Automatic gives each candidate its own budget, names why it fell back, and
   }));
   expect(refused).toEqual({
     at: 0,
-    failure: { message: "Sign in to Meter", retry: "needs-user", signIn: true },
+    failure: {
+      message: "Sign in to Meter",
+      retry: "needs-user",
+      signIn: true,
+      reason: "sign-in-required",
+    },
   });
   expect(net?.requests.map(({ url }) => url.origin + url.pathname)).toEqual([
     `${page.origin}/preflight`,
@@ -132,7 +137,12 @@ test("a latency path needs its probe and a bus answering within 3.5 s; five repl
   const quiet = await check(checkLatency, "auto", offer, () => ({ body: PROBE }), silent);
   expect(quiet).toEqual({
     at: 3_500,
-    failure: { message: "Latency channel did not become ready", retry: "retryable", signIn: false },
+    failure: {
+      message: "Latency channel did not become ready",
+      retry: "retryable",
+      signIn: false,
+      reason: "path-failed",
+    },
   });
   expect(silent.opened.every(({ disposed }) => disposed)).toBe(true);
 });
@@ -168,7 +178,44 @@ test("a throttled page's Automatic latency uses WebSocket and says why; a chosen
   );
   expect(chosen).toEqual({
     at: 0,
-    failure: { message: THROTTLED, retry: "needs-user", signIn: false },
+    failure: { message: THROTTLED, retry: "needs-user", signIn: false, reason: "path-failed" },
   });
   expect(buses.opened.map(({ options }) => options.target.transport)).toEqual(["websocket"]);
+});
+
+test("a start proves a WebTransport path by its HTTP view alone, unless a fetch there never reached HTTP/3", async () => {
+  // No WebTransport exists here: a session opened only to prove the path would fail the check.
+  const origin = "https://meter.example:8443";
+  const start = (
+    context: CheckContext,
+    known: Discovery,
+    selection: Selection,
+    signal: AbortSignal,
+  ) => checkThroughput(context, known, selection, signal, true);
+  const session = await check(
+    start,
+    "transport:webtransport",
+    { throughput: [wt(origin)] },
+    () => ({
+      body: PROBE,
+      hop: "h3",
+    }),
+  );
+  expect(session).toMatchObject({ value: { target: { transport: "webtransport" } } });
+  const unreached = await check(
+    start,
+    "auto",
+    { throughput: [h(origin, "http3"), wt(origin)] },
+    () => ({ body: PROBE, hop: "h2" }),
+  );
+  expect(unreached).toMatchObject({
+    failure: { message: "The browser used HTTP/2, not HTTP/3", retry: "retryable" },
+  });
+  const elsewhere = await check(
+    start,
+    "auto",
+    { throughput: [h(origin, "http3"), wt("https://meter.example:8444")] },
+    () => ({ body: PROBE, hop: "h2" }),
+  );
+  expect(elsewhere).toMatchObject({ value: { target: { transport: "webtransport" } } });
 });

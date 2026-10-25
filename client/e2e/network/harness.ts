@@ -226,15 +226,28 @@ for (let i = 0; i < +requests; i++)
     }
   })();`;
 
+/** Counts the workers the page creates, and the WebTransport handshakes that fail in them or in the page. */
 function countWorkers() {
   let created = 0;
+  let failed = 0;
   window.Worker = class extends Worker {
     constructor(...args: ConstructorParameters<typeof Worker>) {
       super(...args);
       created++;
+      this.addEventListener("message", ({ data }) => {
+        if (data?.type === "handshake" && !data.opened) failed++;
+      });
     }
   };
+  if (window.WebTransport)
+    window.WebTransport = class extends WebTransport {
+      constructor(...args: ConstructorParameters<typeof WebTransport>) {
+        super(...args);
+        this.ready.catch(() => failed++);
+      }
+    };
   Object.defineProperty(window, "__gmWorkers", { get: () => created });
+  Object.defineProperty(window, "__gmFailedHandshakes", { get: () => failed });
 }
 
 /**
@@ -357,8 +370,11 @@ export async function start(page: Page, fleet: Fleet) {
             protocol === "http3" || (transport && transport !== "fetch-stream") ? 2 : 0;
           const sessions = summary?.throughput.transport === "webtransport" ? dial : 1;
           const bus = summary?.latencyTarget?.transport === "webtransport" ? dial : 0;
+          // Start probes an HTTP/3 origin no fetch lane then reuses: a WebTransport path's, or a WebTransport bus's.
+          const probe =
+            (transport && transport !== "fetch-stream") || (bus && protocol !== "http3") ? 1 : 0;
           // A run that saved nothing for the server names no paths to plan for.
-          const quicPlan = summary ? transfer * sessions + bus : Infinity;
+          const quicPlan = summary ? transfer * sessions + probe + bus : Infinity;
           return { id: server.id, ...counts, quicPlan };
         }),
       };

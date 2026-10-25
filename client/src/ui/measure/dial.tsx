@@ -180,7 +180,8 @@ export function Dial(props: {
         ?.endT ?? run.shownAt();
     return newest - answered >= 1_000 ? newest - answered : null;
   });
-  // A failed check names the path the first selected server's check failed on; else why the start was refused.
+  // A failed check names the path the first selected server's check failed on, or the cause when only the user can
+  // clear it; else why the start was refused.
   const refusal = computed(() => {
     const preparation = live.preparation();
     const detail = run.startError() || app.blocker();
@@ -190,6 +191,9 @@ export function Dial(props: {
     const throughput = view?.throughput.state === "failed";
     const latency = live.latencyEnabled() && view?.latency.state === "failed";
     if (!throughput && !latency) return { status: PHASE["start-failed"], detail };
+    const roles = [throughput ? view.throughput : null, latency ? view.latency : null];
+    const waiting = roles.find((role) => role?.waits && role.message);
+    if (waiting) return { status: CHECK_FAILED, detail: waiting.message! };
     return { status: CHECK_FAILED, detail: DIAL.unavailable(throughput, latency) };
   });
   const ending = computed(() => {
