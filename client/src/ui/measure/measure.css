@@ -1328,6 +1328,7 @@
   .server-grid {
     display: grid;
     gap: var(--space-2);
+    max-inline-size: 760px;
     overflow-x: auto;
     & table {
       width: 100%;
@@ -1374,9 +1375,6 @@
     }
     & .status-dot.inline {
       margin-inline-end: 0.4em;
-    }
-    & table {
-      width: min(100%, 760px);
     }
     /* Causes are a ruled list with a dot in their tone, never tinted boxes: the cards already carry the alarm. */
     & .causes {
