@@ -98,8 +98,12 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
     if (!shell.shown("settings")) confirming.set(false);
   });
 
-  // Until the catalog first answers, the list's length is unknown: the panel shows its head and waits.
-  const answered = computed(() => !!servers.catalog() || !servers.loading());
+  // The groups wait for the catalog's first answer, so the server list's length moves nothing; a retry keeps them.
+  let seen = false;
+  const answered = computed(() => (seen ||= !!servers.catalog() || !servers.loading()));
+  // Announced here, as the list that shows them mounts only once they may already be set.
+  announceChanges(() => (servers.unresolved().length ? "The saved selection has changed." : ""));
+  announceChanges(() => (servers.catalog() || servers.loading() ? "" : servers.loadError()));
   const readiness = computed(() => (app.blocker() ? "blocked" : servers.selectionState()));
   const badge = computed(() => READINESS[readiness()]);
   // Settings stays mounted: only a problem is worth interrupting for.
@@ -190,7 +194,6 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
           </Show>
         </section>
 
-        {/* The rest arrives with the server list, so nothing below it moves as the catalog answers. */}
         <Show when={answered}>
           {() => (
             <>

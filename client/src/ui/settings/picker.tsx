@@ -1,4 +1,4 @@
-// A path picker: the role's choices on the selected servers, unavailable ones folded, and the role's check.
+// A path picker: the chosen path on the selected servers, the others behind one fold, and the role's check.
 import type { App } from "../../app/app";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
@@ -34,16 +34,12 @@ export function ConnectionPicker(props: {
     );
   });
   // The chosen path shows alone, so the picker keeps its height however many paths the checks find. Opened, the
-  // others follow it in their order; the one chosen at opening stays first, so a pick never moves a row.
+  // others follow in their order, unavailable ones with their reason; the one chosen at opening stays first.
   const opened = signal(false);
-  const first = signal(selected.peek());
-  const lead = computed(() => (opened() ? first() : selected()));
+  let first = selected.peek();
+  const lead = computed(() => (opened() ? first : selected()));
   const chosen = computed(() => options().filter((option) => option.value === lead()));
   const others = computed(() => options().filter((option) => option.value !== lead()));
-  // Unavailable paths fold into one line after the available ones.
-  const unfolded = signal(false);
-  const folded = computed(() => others().filter((option) => option.unavailable !== null));
-  const listed = computed(() => others().filter((option) => option.unavailable === null));
   let picker: HTMLDivElement;
 
   const choose = (value: string) =>
@@ -125,49 +121,23 @@ export function ConnectionPicker(props: {
         </span>
       </div>
       <div class="kv choices">
-        {/* The list follows the servers and their checks at once. Only rows a person unfolds unfold. */}
         <For each={chosen} by={(option) => option.value}>
           {row}
         </For>
         <Unfold when={opened}>
-          {() => [
-            <For each={listed} by={(option) => option.value}>
+          {() => (
+            <For each={others} by={(option) => option.value}>
               {row}
-            </For>,
-            <Unfold when={unfolded}>
-              {() => (
-                <For each={folded} by={(option) => option.value}>
-                  {row}
-                </For>
-              )}
-            </Unfold>,
-            <Show when={() => folded().length > 0}>
-              {() => (
-                <button
-                  class="fold"
-                  type="button"
-                  aria-expanded={() => String(unfolded())}
-                  ref={tip(() =>
-                    [
-                      "Unavailable paths",
-                      ...folded().map((option) => `${option.label}: ${option.unavailable}`),
-                    ].join("\n"),
-                  )}
-                  onclick={() => unfolded.set(!unfolded.peek())}
-                >
-                  {() => (unfolded() ? "Hide unavailable" : `${folded().length} more unavailable`)}
-                </button>
-              )}
-            </Show>,
-          ]}
+            </For>
+          )}
         </Unfold>
         <button
           class="fold"
           type="button"
           aria-expanded={() => String(opened())}
-          disabled={() => !others().length}
+          disabled={() => !opened() && !others().length}
           onclick={() => {
-            first.set(selected.peek());
+            first = selected.peek();
             opened.set(!opened.peek());
           }}
         >

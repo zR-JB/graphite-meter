@@ -82,7 +82,7 @@ graphite-meter-client --url https://meter.example.net --server frankfurt --serve
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/phones-dark.png">
-  <img src="docs/assets/phones-light.png" width="700" alt="Two phone screens: Settings with three test servers and the throughput paths, and History with four results">
+  <img src="docs/assets/phones-light.png" width="700" alt="Two phone screens: Settings with three test servers and their chosen paths, and History with four results">
 </picture>
 
 <sub>Browser app 0.13.5 in Chrome on a phone.</sub>
