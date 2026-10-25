@@ -165,7 +165,7 @@ async fn connect_answers_other_than_200_are_refused_and_502_to_504_name_an_unrea
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
+async fn a_proxy_that_accepts_and_stays_silent_fails_within_the_dial_timeout() {
     for scheme in ["http", "https", "socks5"] {
         let (address, _proxy) = peer(|stream| async move {
             std::future::pending::<()>().await;
@@ -185,13 +185,8 @@ async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
         let ConnectError::Unreachable(error) = &refused else {
             panic!("{scheme}: {refused:?}");
         };
-        // Paused time may jump while the loopback connect is in flight, though never past the dial's 9 s.
-        let elapsed = started.elapsed();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{scheme}");
-        assert!(
-            (Duration::from_secs(60)..Duration::from_secs(69)).contains(&elapsed),
-            "{scheme}: {elapsed:?}"
-        );
+        assert_eq!(started.elapsed(), Duration::from_secs(9), "{scheme}");
     }
 }
 
@@ -366,7 +361,7 @@ async fn socks5_offers_a_login_only_when_the_proxy_url_carries_one() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_target_that_accepts_and_never_answers_tls_fails_after_ten_seconds() {
+async fn a_target_that_accepts_and_never_answers_tls_fails_within_the_dial_timeout() {
     let (address, _target) = peer(|stream| async move {
         std::future::pending::<()>().await;
         drop(stream);
@@ -382,5 +377,5 @@ async fn a_target_that_accepts_and_never_answers_tls_fails_after_ten_seconds() {
         panic!("{:?}", refused.err());
     };
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-    assert!((Duration::from_secs(10)..Duration::from_secs(19)).contains(&started.elapsed()));
+    assert_eq!(started.elapsed(), Duration::from_secs(9));
 }

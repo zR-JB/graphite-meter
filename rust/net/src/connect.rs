@@ -8,18 +8,15 @@ use graphite_meter_proto::{
     origin::{Host, Origin, Scheme},
 };
 use rustls::pki_types::ServerName;
-use std::{fmt, io, net::IpAddr, time::Duration};
+use std::{fmt, io, net::IpAddr};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
+    time::Instant,
 };
 use tokio_rustls::TlsConnector;
 
 const MAX_HEAD_BYTES: usize = 64 * 1024;
-/// A proxy's handshake may take this long past the TCP connect.
-const PROXY_TIMEOUT: Duration = Duration::from_mins(1);
-/// The target's TLS handshake may take this long past the proxy.
-const TLS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Reads beneath rustls are this big, since its own 4 KiB reads keep Linux receive autotuning from growing the window.
 pub const TLS_READ_BYTES: usize = 64 << 10;
@@ -120,6 +117,7 @@ impl Connector {
         alpn: Option<Protocol>,
     ) -> Result<Connection, ConnectError> {
         let tls = target.scheme == Scheme::Https;
+        let deadline = Instant::now() + dial::TIMEOUT;
         let (stream, form) = match self.proxy.route(target)? {
             None => (
                 Box::new(reach(&target.host, target.port).await?) as Box<dyn Stream>,
@@ -129,7 +127,7 @@ impl Connector {
                 let (host, port) = upstream.address();
                 let stream = reach(host, port).await?;
                 bounded(
-                    PROXY_TIMEOUT,
+                    deadline,
                     "proxy",
                     self.through(upstream, stream, target, tls),
                 )
@@ -146,7 +144,7 @@ impl Connector {
         let config = client_config(&self.verify, alpn).await;
         let stream = BufReader::with_capacity(TLS_READ_BYTES, stream);
         let stream = bounded(
-            TLS_TIMEOUT,
+            deadline,
             "TLS",
             secure(&TlsConnector::from(config), &target.host, stream),
         )
@@ -201,11 +199,11 @@ impl Connector {
 }
 
 async fn bounded<T>(
-    limit: Duration,
+    deadline: Instant,
     what: &str,
     handshake: impl Future<Output = Result<T, ConnectError>>,
 ) -> Result<T, ConnectError> {
-    tokio::time::timeout(limit, handshake)
+    tokio::time::timeout_at(deadline, handshake)
         .await
         .unwrap_or_else(|_| {
             let silent = io::Error::new(
