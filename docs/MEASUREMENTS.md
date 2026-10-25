@@ -94,7 +94,8 @@ server moved no bytes in a direction for 500 ms, the run stalled, a server left 
 before every stage, including latency. It lasts the configured 0 to 4 s, stretched to ten idle RTTs but at most 4 s.
 Stage readiness is bounded per client. Hidden browser pages keep measuring. Workers time bytes and probes, the
 browser's run clock ticks from a worker so a page hidden for hours keeps its pace, and the schedule never skips past
-the current segment.
+the current segment. On an HTTPS page, one test runs per site in a browser profile at a time: another tab's Start says
+it waits, and runs once the first test ends.
 
 Stages, durations and early finish change the running test, and while it starts they shape the run it begins. Servers,
 paths, streams and probe settings changed while a test starts or runs show "Applies to the next test" and apply once

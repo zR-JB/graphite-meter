@@ -31,6 +31,27 @@ const local = () => {
   }
 };
 
+async function holdRun(signal: AbortSignal, queued: () => void): Promise<() => void> {
+  if (!navigator.locks) return () => {};
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const take = (options: LockOptions) =>
+    new Promise<boolean>((taken, failed) => {
+      navigator.locks
+        .request("graphite-meter-run", options, (lock) => {
+          taken(lock !== null);
+          return lock && held;
+        })
+        .catch(failed);
+    });
+  if (!(await take({ ifAvailable: true }))) {
+    signal.throwIfAborted();
+    queued();
+    await take({ signal });
+  }
+  return release;
+}
+
 export function createApp() {
   const preferences = createPreferences(local(), window);
   const page = readPageConfig();
@@ -108,6 +129,7 @@ export function createApp() {
       ready.release();
       throw new Error(refused);
     },
+    lock: holdRun,
     fits: servers.fits,
     recheck: servers.recheck,
     finished: (finished) => (finished ? saver.offer(historyRecord(finished)) : saver.withdraw()),

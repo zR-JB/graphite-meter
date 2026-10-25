@@ -1,4 +1,4 @@
-// Section 2.5: a second tab idle on the app, which in Firefox is a user context of its own.
+// Section 2.5: a second tab idle on the app, which in Firefox is a user context of its own, sharing no Web Locks.
 import {
   attempt,
   link,
@@ -44,7 +44,7 @@ test(
   { timeout: 180_000 },
 );
 
-test(
+test.chrome(
   "T2: a second tab's Start waits while the first tab runs",
   async (page) => {
     const fleet = await shapedFleet([link(20, 200)], { signIn: true });
@@ -60,10 +60,16 @@ test(
         false,
       );
       await run.end();
+      await expect
+        .poll(() => other!.evaluate(() => !!document.querySelector(".run-button.running")), {
+          timeout: 20_000,
+        })
+        .toBe(true);
+      await runButton(other, /^(Stop test|Cancel)$/).click();
     } finally {
       await other?.close();
       await fleet.close();
     }
   },
-  { timeout: 120_000, failing: "until step 13: tabs share no lock on runs" },
+  { timeout: 120_000 },
 );
