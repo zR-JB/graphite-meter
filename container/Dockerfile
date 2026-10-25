@@ -123,11 +123,12 @@ RUN bun --bun install --frozen-lockfile
 COPY client/ ./
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
-# The static musl server with reviewed notices and the browser app.
+# The static musl server with reviewed notices and the browser app; CI's E2E server seeds Cargo from .server-target.
 FROM rust-${TARGETARCH} AS server-build
 ARG TARGETARCH
 ARG PROFILE
 COPY --from=source / /src/
+COPY .server-targe[t] /src/rust/target/
 COPY --from=pgo-server /pgo/ /src/rust/target/pgo/
 COPY --from=browser /src/client/ /src/client/
 # The legal scan names the bundled packages at their paths in Bun's installation cache.
@@ -135,10 +136,14 @@ COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
 COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
 ARG VERSION
 RUN target=$(python3 scripts/ci/workspace.py target server "linux/$TARGETARCH") \
+    && find rust -path rust/target -prune -o -type f -exec touch {} + \
     && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" \
         --version "$VERSION" --out rust/target/server-notices --browser-assets client/dist \
         --browser-scan /tmp/browser-modules.json \
     && cp "rust/target/$target/$PROFILE/graphite-meter-server" /graphite-meter
+
+FROM scratch AS server-target
+COPY --from=server-build /src/rust/target/ /
 
 # The source offer, which the image's SOURCE.txt names, is a release asset, not image content.
 FROM scratch AS server-artifacts

@@ -202,12 +202,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up pinned Buildx
-        uses: ./.github/actions/setup-buildx
+      - parallel:
+          - name: Set up pinned Buildx
+            uses: ./.github/actions/setup-buildx
+          - id: target
+            name: Restore the target directory of an earlier E2E server build
+            uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+            env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
+            with:
+              path: .server-target
+              key: e2e-server-target-${{ hashFiles('rust/rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.lock', 'container/Dockerfile') }}
+              restore-keys: e2e-server-target-${{ hashFiles('rust/rust-toolchain.toml') }}-
       - name: Build the image's amd64 server
         run: |
-          docker buildx build --file container/Dockerfile --target server --platform linux/amd64 \
-            --build-arg VERSION="$VERSION" --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 \
+          docker buildx build --file container/Dockerfile --platform linux/amd64 --build-arg VERSION="$VERSION" \
+            --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 --target server \
             --output "type=local,dest=$RUNNER_TEMP/server" .
           mv "$RUNNER_TEMP/server/graphite-meter" "$RUNNER_TEMP/graphite-meter-server"
       - name: Upload the amd64 server
@@ -217,6 +226,14 @@ jobs:
           path: ${{ runner.temp }}/graphite-meter-server
           if-no-files-found: error
           retention-days: 7
+      - name: Keep the target directory for the next E2E server build
+        if: steps.target.outputs.cache-hit != 'true'
+        run: |
+          docker buildx build --file container/Dockerfile --platform linux/amd64 --build-arg VERSION="$VERSION" \
+            --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 --target server-target \
+            --output "type=local,dest=$RUNNER_TEMP/server-target" .
+          rm -rf .server-target
+          mv "$RUNNER_TEMP/server-target" .server-target
 
   image:
     name: Build server image
