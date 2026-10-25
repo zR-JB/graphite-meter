@@ -47,8 +47,6 @@ test.chrome(
         fleet.logs[0]!.lines(from).flatMap(
           (line) => /request:\s+CONNECT \/wt\/\S+ .*: (\d+)$/.exec(line)?.[1] ?? [],
         );
-      // Every dial that reached the server was admitted under the lease.
-      expect(dials().filter((status) => status !== "200")).toEqual([]);
       // The page dials WebTransport no more once its cap is spent, and says why and what resets it.
       const before = dials().length;
       const paused = await attempt(page, fleet);
@@ -57,6 +55,9 @@ test.chrome(
       await page.reload();
       await ready(page, 30_000);
       expect(measured(await attempt(page, fleet))).toEqual({ outcome: "complete", failures: [] });
+      // Every dial that reached the server was admitted under the lease.
+      expect(dials().length).toBeGreaterThan(before);
+      expect(dials().filter((status) => status !== "200")).toEqual([]);
     } finally {
       await fleet.close();
     }

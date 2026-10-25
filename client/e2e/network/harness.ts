@@ -290,6 +290,7 @@ export interface ServerBudget {
   companionLanes: number;
   /** Answers 429 or 503. */
   refused: number;
+  requests: number;
 }
 export interface Attempt {
   /** The result this run saved, or none when it ended without one. */
@@ -315,13 +316,15 @@ function budget(log: ConnectionLog, from: number, to: number) {
     uploadPreflights: 0,
     companionLanes: 0,
     refused: 0,
+    requests: 0,
   };
   for (const line of log.lines(from, to)) {
     const [, peer, event] = QUIC.exec(line) ?? [];
     if (event === "accepted") own.add(peer!);
     if (event === "ended") own.delete(peer!);
     counts.quic = Math.max(counts.quic, own.size);
-    const [, method, path, endpoint, status] = REQUEST.exec(line) ?? [];
+    const [request, method, path, endpoint, status] = REQUEST.exec(line) ?? [];
+    if (request) counts.requests++;
     if (/^\/(ws|wt)\/ping$/.test(path ?? "") && /^(101|200)$/.test(status!)) counts.buses++;
     if (path === "/download" && method === "GET") counts.downloads++;
     if (path === "/upload") counts[method === "OPTIONS" ? "uploadPreflights" : "uploads"]++;
@@ -426,10 +429,13 @@ function overBudget(pages: Attempt[][]) {
   );
 }
 
-/** T7 over the runs a file's scenarios recorded, one list per page; workers are judged from a page's second run. */
+/** T7 over a file's runs, one list per page; workers count from a page's second run, and a log nothing parsed fails. */
 export function budgetTest(runs: string, pages: Attempt[][]) {
   test(`T7: ${runs} keep one bus, their workers and the QUIC plan`, () => {
-    expect(pages.flat().length).toBeGreaterThan(0);
+    const servers = pages.flat().flatMap((run) => run.servers);
+    expect(servers.some((server) => server.requests > 0)).toBe(true);
+    if (servers.some((server) => server.quicPlan > 0 && server.quicPlan < Infinity))
+      expect(servers.some((server) => server.quic > 0)).toBe(true);
     expect(overBudget(pages)).toEqual([]);
   });
 }
