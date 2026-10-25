@@ -41,7 +41,8 @@ impl Address {
             Err(fault) => {
                 REFUSALS.write(format_args!(
                     "request from trusted proxy {socket} names no client: {fault}; set the proxy to overwrite \
-                     X-Real-IP with the address it accepted the connection from (docs/DEPLOYMENT.md, Reverse proxies)"
+                     X-Real-IP with the address it accepted the connection from and end any X-Forwarded-For with that \
+                     address (docs/DEPLOYMENT.md, Reverse proxies)"
                 ));
                 Self::Ambiguous(socket)
             }
