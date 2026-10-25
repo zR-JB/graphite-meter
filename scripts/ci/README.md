@@ -34,9 +34,10 @@ runs the checks job alone; every other change, every push to main and the daily 
 `mise run ci` runs CI's check, secret-scan, target, delayed-download and browser gates locally, but not the image,
 archive, Windows or release-staging jobs; the policy fails if one of its steps has no CI job. Cargo caches are keyed
 by job, toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the same toolchain;
-only CI writes caches. The target checks' Ubuntu cross compilers and the Firefox network jobs' `certutil` install
-from `.deb`s cached per runner image (`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold
-cache. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
+only CI writes caches. The target checks' Ubuntu cross compilers install from `.deb`s cached per runner image
+(`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold cache; the Firefox network jobs take
+the image's own `certutil`.
+Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
 unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.
 `rust-check` checks the locked crates and the Cargo forks' advisory verdicts against the RustSec database it
 fetches, so a new advisory fails every pull request that runs the Rust checks; `advisories.yml` repeats both daily
