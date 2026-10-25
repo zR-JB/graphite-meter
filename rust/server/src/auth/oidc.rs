@@ -204,7 +204,7 @@ impl Oidc {
         let (access_token, id_token) = self
             .exchange(provider, code, &transaction.verifier, security)
             .await?;
-        let verified = provider.verify(&self.client, &id_token).await;
+        let verified = provider.verify(&self.client, &id_token, security).await;
         let verified = verified.ok_or(Reason::IdTokenVerification)?;
         let (issuer, client) = (&settings.issuer, &settings.client_id);
         let (subject, names) =
@@ -270,14 +270,18 @@ impl Oidc {
             .client
             .send(&provider.token, authorization, Some(form))
             .await;
-        let answer = answer.inspect_err(|error| {
-            security.debug(format_args!("OIDC token exchange failed: {error}"));
+        let tokens = answer.and_then(|answer| {
+            let tokens = serde_json::from_slice::<Tokens>(&answer.body);
+            let tokens = tokens.map_err(|error| format!("answer unreadable: {error}"))?;
+            match tokens.access_token.is_empty() {
+                true => Err("answer names no access_token".into()),
+                false => Ok(tokens),
+            }
         });
-        let tokens = answer
-            .ok()
-            .and_then(|answer| serde_json::from_slice::<Tokens>(&answer.body).ok());
-        let tokens = tokens.filter(|tokens| !tokens.access_token.is_empty());
-        let tokens = tokens.ok_or(Reason::TokenExchange)?;
+        let tokens = tokens.map_err(|error| {
+            security.debug(format_args!("OIDC token exchange failed: {error}"));
+            Reason::TokenExchange
+        })?;
         let Some(Value::String(id_token)) = tokens.id_token else {
             return Err(Reason::MissingIdToken);
         };
@@ -303,7 +307,7 @@ impl Oidc {
             return Some(answer.body);
         }
         let token = std::str::from_utf8(&answer.body).ok()?;
-        let verified = provider.verify(&self.client, token).await?;
+        let verified = provider.verify(&self.client, token, security).await?;
         let (issuer, client) = (&self.settings.issuer, &self.settings.client_id);
         jwt::addressed(&verified.payload, issuer, client).then_some(verified.payload)
     }
@@ -405,7 +409,11 @@ async fn sign_in(
     );
     let (principal, name) = identify
         .await
-        .unwrap_or(Err(Reason::TokenExchange))
+        .unwrap_or_else(|_| {
+            let outlasted = format_args!("OIDC provider requests outlasted the callback's bound");
+            auth.security.debug(outlasted);
+            Err(Reason::TokenExchange)
+        })
         .map_err(fail)?;
     let page = response::html(page::continuing(transaction.challenge.as_ref(), false));
     let identity = Identity {
