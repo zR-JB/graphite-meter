@@ -337,7 +337,7 @@ function twoServers(oslo: "left" | "dropped", schemaVersion: 5 | 6): unknown {
 
 test("an older record's stage measured without a selected server reads partial, and a Start drop makes every stage so", () => {
   const read = (row: unknown) => {
-    const { stages, outcome } = (readHistoryRecord(row) ?? upgradeRecord(row))!.result;
+    const { stages, outcome } = readHistoryRecord(upgradeRecord(row) ?? row)!.result;
     return { ...stages, outcome };
   };
   for (const schema of [6, 5] as const) {
@@ -360,7 +360,7 @@ test("an older record's stage measured without a selected server reads partial, 
 
 test("an older build's row upgrades to this build's form, and the row itself stays as stored", () => {
   const server = "result.multiServer.servers.0";
-  const cases: [string, unknown, unknown, [string, unknown]?][] = [
+  const cases: [string, unknown, unknown][] = [
     // Older builds saved no peak without a 500 ms window.
     ["result.download.peakBytesPerSec", null, 9e7],
     ["result.bidirectional.up.peakBytesPerSec", undefined, 3e7],
@@ -379,15 +379,14 @@ test("an older build's row upgrades to this build's form, and the row itself sta
     // Views look stage statuses up: one this build does not know reads as not run.
     ["result.stages.download", "aborted", "not-run"],
     ["result.stages.upload", undefined, "not-run"],
-    // A server's stage read as not run is one it never reached, so the whole stage is partial.
-    [`${server}.stages.latency`, "running", "not-run", ["result.stages.latency", "partial"]],
+    [`${server}.stages.latency`, "running", "not-run"],
     [`${server}.stages.bidirectional`, "toString", "not-run"],
   ];
-  for (const [path, stored, read, [also, judged] = [path, read]] of cases) {
+  for (const [path, stored, read] of cases) {
     const row = altered(v5, path, stored);
     const before = structuredClone(row);
     expect(upgradeRecord(row), `${path} = ${stored}`).toEqual(
-      altered(altered(full, path, read), also, judged) as HistoryRecord,
+      altered(full, path, read) as HistoryRecord,
     );
     expect(row, path).toEqual(before);
   }
@@ -560,23 +559,15 @@ test("a schema 4 row upgrades to schema 6 with its servers, without its grade or
   const saved = { ...full.result.multiServer, servers: [{ ...unversioned, stages: {} }] };
   const cases: [string, unknown, unknown][] = [
     ["one server, its grade dropped and its wire rate a model", flat, lifted()],
-    [
-      "its own outcome kept where its stages read better",
-      {
-        ...flat,
-        stages: { ...flat.stages, upload: { status: "not-run", result: null } },
-        outcome: "partial",
-      },
-      lifted({ stages: { ...statuses4, upload: "not-run" }, outcome: "partial" }),
-    ],
+    ["its own outcome kept", { ...flat, outcome: "partial" }, lifted({ outcome: "partial" })],
     [
       "both bidirectional lanes, with one wire model",
       {
         ...flat,
-        stages: { ...flat.stages, upload: { status: "not-run", result: null }, bidirectional },
+        stages: { ...flat.stages, upload: { status: "complete", result: null }, bidirectional },
       },
       lifted({
-        stages: { ...statuses4, upload: "not-run", bidirectional: "partial" },
+        stages: { ...statuses4, upload: "complete", bidirectional: "partial" },
         outcome: "partial",
         bidirectional: {
           down: bidirectional.down,
@@ -586,16 +577,12 @@ test("a schema 4 row upgrades to schema 6 with its servers, without its grade or
       }),
     ],
     [
-      "one bidirectional lane, without a wire model, read as this build judges it",
+      "one bidirectional lane, without a wire model",
       { ...flat, stages: { ...flat.stages, bidirectional: { ...bidirectional, up: null } } },
-      altered(
-        lifted({
-          stages: { ...statuses4, bidirectional: "partial" },
-          bidirectional: { down: bidirectional.down, up: null, wire: null },
-        }),
-        "result.stages.bidirectional",
-        "failed",
-      ),
+      lifted({
+        stages: { ...statuses4, bidirectional: "partial" },
+        bidirectional: { down: bidirectional.down, up: null, wire: null },
+      }),
     ],
     [
       "nothing optional",

@@ -141,23 +141,21 @@ export function grid(result: Graded): Grid {
     // A server outside the run failed its start check; its failure was charged to a stage it never reached.
     const start: Cause | null = summary || !own[0] ? null : { ...own[0], stage: "start" };
     const cell = (stage: Stage): Cell => {
-      // A server without a latency path takes no part in the latency stage by plan, not by failure.
-      if (
-        result.stages[stage] === "not-run" ||
-        (stage === "latency" && summary?.latencyTarget === null)
-      )
+      if (result.stages[stage] === "not-run") return { status: "skipped", cause: null };
+      if (!summary) return { status: "unreached", cause: start };
+      const status = summary.stages[stage];
+      const failure = own.find((f) => f.stage === stage && f.scope === failureScope(stage));
+      // A server without a latency path takes no part in the latency stage by plan, unless charged for it.
+      if (stage === "latency" && summary.latencyTarget === null && !failure)
         return { status: "skipped", cause: null };
-      const status = summary?.stages[stage] ?? "not-run";
-      if (status !== "not-run")
-        return {
-          status,
-          cause: own.find((f) => f.stage === stage && f.scope === failureScope(stage)) ?? null,
-        };
+      if (status !== "not-run") return { status, cause: failure ?? null };
+      // Charged for a stage it never ran, as a focus without a latency path is: it failed there.
+      if (failure) return { status: "failed", cause: failure };
       const before = STAGES.indexOf(stage);
       const left = own.findLast(
         (f) => f.scope === failureScope(f.stage) && STAGES.indexOf(f.stage) < before,
       );
-      return { status: "unreached", cause: start ?? left ?? null };
+      return { status: "unreached", cause: left ?? null };
     };
     return { server, cells: perStage(cell) };
   });
@@ -218,8 +216,16 @@ export function incoherence(result: RunResult, plans: StagePlans): string[] {
       problems.push(`unknown failure reason ${failure.reason}`);
   for (const stage of STAGES) {
     const status = result.stages[stage];
+    const cells = rows.map((row) => row.cells[stage]);
     // A server that left earlier, or at Start, explains a stage it never reached.
-    const explained = rows.some(({ cells }) => cells[stage].cause);
+    const explained = cells.some(({ cause }) => cause);
+    // What its servers measured is whole when none of them failed in it, however many never reached it.
+    const whole =
+      lanes(result, stage).every(Boolean) &&
+      cells.every((cell) => cell.status !== "partial" && cell.status !== "failed");
+    for (const { status: cell, cause } of cells)
+      if (!cause && cell !== "complete" && cell !== "skipped")
+        problems.push(`${stage} is ${cell} for a server without a stated reason`);
     const spans = intervals.filter((interval) => interval.stage === stage);
     const { planned, durationMs, early } = plans[stage];
     if (planned === (status === "not-run"))
@@ -232,12 +238,13 @@ export function incoherence(result: RunResult, plans: StagePlans): string[] {
       problems.push(`${stage} is not-run but has evidence`);
     if (
       stage === "latency" ||
-      status !== "complete" ||
+      !whole ||
+      status === "not-run" ||
       (omittedIntervals > 0 && STAGES.indexOf(stage) <= firstKept)
     )
       continue;
     if (!directions(stage).every((dir) => spans.some(({ headline }) => sufficient(headline, dir))))
-      problems.push(`${stage} is complete without ${MIN_EVIDENCE_MS} ms of evidence`);
+      problems.push(`${stage} is ${status} without ${MIN_EVIDENCE_MS} ms of evidence`);
     const covered = coveredMs(intervals, stage);
     if (covered < durationMs * minCoverage(early))
       problems.push(`${stage} covers ${Math.round(covered)} of ${durationMs} ms`);

@@ -121,6 +121,10 @@ const cells = (result: RunResult) =>
     ]),
   );
 const columns = (result: RunResult): CellStatus[] => Object.values(grid(result).columns);
+const stageEnds = (events: RunEvent[]) =>
+  Object.fromEntries(
+    events.flatMap((event) => (event.type === "stageEnd" ? [[event.stage, event.status]] : [])),
+  );
 
 /** Lanes report at the end of each 20 ms period, so rates are within 5%. */
 const near = (value: number | undefined, expected: number) =>
@@ -403,6 +407,8 @@ test("a server lost in the latency stage is not prepared for the later stages", 
     { serverId: "d", stage: "latency", scope: "latency", reason: "path-failed" },
     { serverId: "a", stage: "latency", scope: "latency" },
     { serverId: "c", stage: "latency", scope: "latency" },
+    // The survivor answered no probe, so it has no latency of its own.
+    { serverId: "b", stage: "latency", reason: "insufficient-evidence" },
   ]);
   // Measured without three of its four servers, Download is partial.
   expect(stages.download).toBe("partial");
@@ -546,6 +552,7 @@ test("a server dropped at Start reads not reached in every stage, so each stage 
   });
   expect(grid(result).rows[2]!.cells.latency.cause?.message).toBe("Bergen is at capacity");
   expect(result.stages).toMatchObject({ latency: "partial", download: "partial" });
+  expect(stageEnds(h.events)).toEqual({ latency: "partial", download: "partial" });
   expect(result.outcome).toBe("partial");
   near(result.download?.reportedBytesPerSec, 4_000);
 });
@@ -710,6 +717,8 @@ test("a server that left the run reports the stages it never began as not run, w
   const result = await h.result();
   const { multiServer, stages } = result;
   expect(stages.upload).toBe("partial");
+  // The live view hears the same word the result keeps.
+  expect(stageEnds(h.events)).toEqual({ download: "partial", upload: "partial" });
   expect(cells(result)).toEqual({
     a: [
       "skipped",
@@ -725,6 +734,75 @@ test("a server that left the run reports the stages it never began as not run, w
   expect(multiServer.servers.map(({ stages }) => [stages.download, stages.upload])).toEqual([
     ["failed", "not-run"],
     ["complete", "complete"],
+  ]);
+});
+
+test("a server not reached names its latest failure before the stage, not its first", async () => {
+  const h = setup(
+    two(
+      {
+        measure: (events, { stage }) => {
+          if (stage === "latency") later(100, () => events.failed("protocol-error", "odd reply"));
+          if (stage === "download") fail(200)(events);
+        },
+      },
+      { measure: probe(10, 4) },
+    ),
+    { latency: true, download: true, upload: true },
+    { latencyMs: 400, downloadMs: 1_000, uploadMs: 1_000 },
+    { focus: "b" },
+  );
+  h.start();
+  const result = await h.result();
+  expect(cells(result).a).toEqual([
+    "failed: protocol-error in latency",
+    "failed: connection-lost in download",
+    "unreached: connection-lost in download",
+    "skipped",
+  ]);
+});
+
+test("a server with no latency of its own fails its latency stage, coherently", async () => {
+  const timedOut = (events: StageEvents) =>
+    events.probes(
+      Array.from({ length: 4 }, () => ({
+        rttMs: 0,
+        timedOut: true,
+        handlingMs: null,
+        observedAt: clock.t,
+        inWindow: true,
+      })),
+    );
+  const silent = setup(
+    two(
+      { measure: probe(10, 4) },
+      { measure: (events, { stage }) => void (stage === "latency" && timedOut(events)) },
+    ),
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
+  );
+  silent.start();
+  const result = await silent.result();
+  expect(cells(result).b).toEqual([
+    "failed: insufficient-evidence in latency",
+    "complete",
+    "skipped",
+    "skipped",
+  ]);
+  expect([result.stages.latency, result.outcome]).toEqual(["partial", "partial"]);
+
+  // A focus without a latency path is charged for the stage it could not run.
+  const pathless = setup(
+    two({ latency: false }, { measure: probe(10, 4) }),
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
+  );
+  pathless.start();
+  expect(cells(await pathless.result()).a).toEqual([
+    "failed: insufficient-evidence in latency",
+    "complete",
+    "skipped",
+    "skipped",
   ]);
 });
 

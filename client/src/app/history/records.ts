@@ -180,7 +180,10 @@ export function upgradeRecord(value: unknown): HistoryRecord | null {
   if (!isRecord(value) || !plain(value)) return null;
   try {
     const saved = value.schemaVersion === 4 && liftable(value) ? lift(value) : value;
-    return stored(saved) ? readHistoryRecord(current(saved as Schema5)) : null;
+    if (!stored(saved)) return null;
+    // Stored as its release saved it; reading judges it again.
+    const record = current(saved as Schema5);
+    return plain(record) && readable(record) ? record : null;
   } catch {
     return null;
   }

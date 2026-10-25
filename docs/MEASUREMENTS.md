@@ -204,12 +204,12 @@ schemas 4 and 5 are upgraded to the current schema 6 once when the database open
 stay in storage, are skipped and are reported. A failure earlier releases saved as `preparation-failed` reads as
 `path-failed`, and one saved as `server-busy` as `server-capacity`.
 
-Before saving, a result must be coherent: every failure has one of the eight reasons; a failed or partial stage has
-a failure in its scope, or a selected server that never reached it and the failure that took that server out; a
-complete stage has none, every lane and, for transfers, an interval with 800 ms of evidence;
-a skipped stage has no evidence; some stage ran; a complete transfer stage's intervals span at least 75 % of its
-planned time (52 % with early finish); and the outcome follows the stage statuses, so any failed stage makes it
-Incomplete and otherwise any failure makes it Partial. The run applies the same span rule as each stage ends, so
-History agrees with what was shown. An incoherent result is logged as an error and saved as Incomplete. History
-judges every record's stages again as it reads them, so a stage an earlier release saved as Complete without one of
-its selected servers reads Partial.
+Before saving, a result must be coherent: every failure has one of the eight reasons; every selected server that
+did not complete a stage names why, by its own failure in the stage's scope or by the failure that took it out in
+an earlier stage or at Start; a complete stage has no failure and every lane; a skipped stage has no evidence; some
+stage ran; a transfer stage whose servers all measured it in full has an interval with 800 ms of evidence, and
+intervals that span at least 75 % of its planned time (52 % with early finish); and the outcome follows the stages,
+so any stage without a result makes it Incomplete and otherwise any failure or partial stage makes it Partial. The
+run applies the same span rule as each stage ends, so History agrees with what was shown. An incoherent result is
+logged as an error and saved as Incomplete. History judges every record's stages again as it reads them, so a stage
+an earlier release saved as Complete without one of its selected servers reads Partial.

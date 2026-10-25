@@ -1484,13 +1484,16 @@ export class Run {
         this.#record(id, failureScope(name), "insufficient-evidence", message, name);
     }
     // A server that stayed but measured too little for its own result says so, as the run does; the stage's status counts it.
-    if (stage && name !== "latency")
-      for (const id of stage.seats.keys()) {
-        const own = stage.activity.transfer.map((dir) => {
-          const result = this.#aggregate.serverResult(name, dir, id);
-          this.#own.set(`${name}\t${dir}\t${id}`, result);
-          return result;
-        });
+    if (stage)
+      for (const [id, seat] of stage.seats) {
+        const own =
+          name === "latency"
+            ? [seat.server.latency.result()]
+            : stage.activity.transfer.map((dir) => {
+                const result = this.#aggregate.serverResult(name, dir, id);
+                this.#own.set(`${name}\t${dir}\t${id}`, result);
+                return result;
+              });
         if (!own.every(Boolean) && !this.#failed(name, id))
           this.#record(
             id,
