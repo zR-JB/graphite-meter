@@ -46,7 +46,7 @@ def check(schema: dict[str, Any], value: Any, root: dict[str, Any], at: str = "$
     if isinstance(value, str):
         if not schema.get("minLength", 0) <= len(value) <= schema.get("maxLength", len(value)):
             fail("length out of bounds")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        if "pattern" in schema and not re.search(re.sub(r"(?<!\\)\$$", r"\\Z", schema["pattern"]), value):
             fail(f"{value!r} does not match {schema['pattern']}")
     if isinstance(value, int) and not isinstance(value, bool):
         if not schema.get("minimum", value) <= value <= schema.get("maximum", value):
@@ -103,16 +103,24 @@ class ApiSchemaTests(unittest.TestCase):
             ("preflight", "item count", lambda document: throughput(document).extend(throughput(document) * 7)),
             ("probe", "out of bounds", lambda document: document["load"].update(max=0)),
             ("servers", "duplicate", lambda document: document["defaultSelection"].append("self")),
+            ("preflight", "length", lambda document: document["server"].update(name="x" * 257)),
+            ("preflight", "out of bounds", lambda document: document["capabilities"].update(maxStageMs=86_400_001)),
+            ("preflight", "not integer", lambda document: document.update(apiVersion="2")),
+            ("preflight", "not object", lambda document: document.update(lease=None)),
+            ("servers", "item count", lambda document: document.update(servers=[])),
+            ("servers", "does not match", lambda document: document["servers"][1].update(id="fra\n")),
         ]
         for name, error, mutate in drifted:
             schema, document = load(f"{name}.schema.json"), load(f"{name}.golden.json")
             mutate(document)
             with self.subTest(name=name, error=error), self.assertRaisesRegex(ValueError, error):
                 check(schema, document, schema)
-        schema = load("preflight.schema.json")
-        schema["properties"]["server"]["properties"]["name"]["format"] = "hostname"
-        with self.assertRaisesRegex(ValueError, "unsupported schema keywords"):
-            require_supported(schema)
+        for unsupported in ({"format": "hostname"}, {"type": "number"}, {"$ref": "other.json#/name"},
+                            {"additionalProperties": {}}):
+            schema = load("preflight.schema.json")
+            schema["properties"]["server"]["properties"]["name"].update(unsupported)
+            with self.subTest(unsupported=unsupported), self.assertRaisesRegex(ValueError, "unsupported schema"):
+                require_supported(schema)
 
 
 if __name__ == "__main__":
