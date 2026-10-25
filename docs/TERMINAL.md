@@ -108,13 +108,13 @@ check leaves the test, and the test continues and ends Partial.
 | Keys                       | Where         | Action                                                             |
 | -------------------------- | ------------- | ------------------------------------------------------------------ |
 | enter, space, r            | console       | Start a test, or run again.                                        |
-| esc                        | during a test | Stop the test.                                                     |
+| esc, space, r              | console, test | Stop the test; esc first closes Settings, Details or Keys.         |
 | 1, 2, 3, 4                 | console       | Switch latency, download, upload or bidirectional on or off.       |
 | s, d, ?                    | console       | Settings, Details, Keys; esc or the same key closes them.          |
 | l                          | console       | With several test servers, the server whose latency is shown.      |
 | v                          | console       | Check the server again.                                            |
 | ↑ ↓ (k j, tab), ← →        | settings      | Move; change the focused value.                                    |
-| enter, space, r            | settings      | Edit or open the row; switch it on or off; start a test.           |
+| enter, space, r            | settings      | Edit or open the row; switch it on or off; start or stop a test.   |
 | ← →, home, end, enter, esc | editing       | Move the cursor, apply, cancel.                                    |
 | tab                        | address card  | Remember this server, or forget it.                                |
 | ↑ ↓, space, enter, esc     | test servers  | Move, select, apply, cancel.                                       |
