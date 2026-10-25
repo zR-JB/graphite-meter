@@ -50,6 +50,17 @@ impl Scratch {
         Ok(path)
     }
 
+    /// `file` with the Unix permission bits `mode`, whatever the umask.
+    #[cfg(unix)]
+    pub fn file_with_mode(&self, name: &str, contents: &str, mode: u32) -> io::Result<PathBuf> {
+        use std::os::unix::fs::PermissionsExt;
+        let path = self.inside(name)?;
+        std::fs::create_dir_all(path.parent().unwrap_or(&self.0))?;
+        std::fs::write(&path, contents)?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))?;
+        Ok(path)
+    }
+
     pub fn dir(&self, name: &str) -> io::Result<PathBuf> {
         let path = self.inside(name)?;
         std::fs::create_dir_all(&path)?;

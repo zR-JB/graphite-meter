@@ -9,6 +9,7 @@ ARG TARGETARCH
 ARG PROFILE=release
 # Empty builds every TUI platform; CI and release requests build one per runner.
 ARG TUI_PLATFORM
+ARG PGO=train
 
 FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.1-slim-trixie@sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51 AS python
 
@@ -53,20 +54,32 @@ COPY scripts/ scripts/
 COPY legal/ legal/
 COPY rust/ rust/
 
-# A release's PGO profile per architecture in /pgo, trained on that architecture's own code: amd64 natively, arm64
-# under QEMU. The ci profile trains none.
-FROM rust-amd64 AS pgo-amd64-release
+# A release's PGO profile per architecture in /pgo: trained (pgo-ARCH-trained exports it) or, with PGO=supplied, pgo/.
+FROM rust-amd64 AS pgo-amd64-train
 COPY --from=source / /src/
 RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/amd64)" --profile release \
     && mkdir /pgo && cp rust/target/pgo/*.profdata /pgo/
 
-FROM rust-arm64 AS pgo-arm64-release
+FROM rust-arm64 AS pgo-arm64-train
 RUN apt-get update && apt-get install -y --no-install-recommends qemu-user=1:10.0.13+ds-0+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=source / /src/
 RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/arm64)" --profile release \
         --runner qemu-aarch64 \
     && mkdir /pgo && cp rust/target/pgo/*.profdata /pgo/
+
+FROM scratch AS pgo-amd64-trained
+COPY --from=pgo-amd64-train /pgo/ /
+FROM scratch AS pgo-arm64-trained
+COPY --from=pgo-arm64-train /pgo/ /
+
+FROM scratch AS pgo-amd64-supplied
+COPY pgo/x86_64.profdata /pgo/
+FROM scratch AS pgo-arm64-supplied
+COPY pgo/aarch64.profdata /pgo/
+
+FROM pgo-amd64-${PGO} AS pgo-amd64-release
+FROM pgo-arm64-${PGO} AS pgo-arm64-release
 
 FROM rust-amd64 AS pgo-ci
 RUN mkdir /pgo

@@ -78,6 +78,15 @@ def build_offer(package: str, platform: str) -> str:
     return f"{build_name(package, platform)}_third-party-source.tar.gz"
 
 
+def pgo_architecture(target: str) -> str | None:
+    """The architecture whose trained profile a reviewed build of `target` uses; Linux cannot train Windows arm64."""
+    return None if target.endswith("-gnullvm") else target.split("-")[0]
+
+
+def build_profile(build: str) -> str:
+    return f"builds/{build}/pgo.profdata"
+
+
 def source_url(repository: str, version: str) -> str:
     """The source a build of `version` names: a stable release's tag, otherwise the repository."""
     return f"{repository}/tree/v{version}" if STABLE.fullmatch(version) else repository

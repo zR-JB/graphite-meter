@@ -5,7 +5,7 @@ use crossterm::event::{
 };
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
-    config::{self, Config},
+    config::{self, Config, PathChoice},
     controller::{Command, Kind},
     events::{Event, Probed, SignInEnd, SignInPrompt},
     measure::{
@@ -26,7 +26,7 @@ use graphite_meter_client::{
 };
 use graphite_meter_proto::{
     catalog::{ServerEntry, ServerId},
-    discovery::{IpFamily, Protocol, ThroughputTransport},
+    discovery::{IpFamily, LatencyTransport, Protocol, ThroughputTransport},
     origin::{BaseUrl, Origin},
     reason::FailureReason,
 };
@@ -186,12 +186,9 @@ fn prompt(now: Instant) -> SignInPrompt {
 /// A run of `plan` over `names`, started with enter and prepared at `now`.
 fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     let stages = plan.iter().map(|(stage, _)| *stage).collect();
-    let mut app = App::new(
-        Config { stages, ..config() },
-        None,
-        (Profile::Plain, Palette::new(true)),
-        now,
-    );
+    let settings = Config { stages, ..config() };
+    let loaded_latency = settings.loaded_latency();
+    let mut app = App::new(settings, None, (Profile::Plain, Palette::new(true)), now);
     assert_matches!(
         command(&press(&mut app, KeyCode::Enter, now)),
         Command::Run(_)
@@ -213,6 +210,7 @@ fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
             plan: plan.to_vec(),
             focus: id(names[0]),
             at: now,
+            loaded_latency,
         },
         now,
     );
@@ -284,6 +282,71 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
     let config = checked(app.tick(now + REST));
     let ids: Vec<_> = config.servers.iter().map(ServerId::as_str).collect();
     assert_eq!(ids, ["a", "b", "c", "d"]);
+}
+
+#[test]
+fn explicit_origins_stay_only_while_the_one_checked_server_stays_selected() {
+    let origin = Origin::parse("https://a.example:8443").ok();
+    let explicit = PathChoice {
+        throughput_origin: origin.clone(),
+        protocol: Some(Protocol::Http2),
+        throughput_transport: Some(ThroughputTransport::FetchStream),
+        latency_origin: origin,
+        latency_transport: Some(LatencyTransport::WebSocket),
+    };
+    let automatic = PathChoice {
+        throughput_origin: None,
+        latency_origin: None,
+        ..explicit
+    };
+    let chooser = [
+        KeyCode::Char('s'),
+        KeyCode::Down,
+        KeyCode::Down,
+        KeyCode::Enter,
+    ];
+    let (space, down, enter) = (KeyCode::Char(' '), KeyCode::Down, KeyCode::Enter);
+    let mut address = vec![KeyCode::Char('s'), KeyCode::Enter];
+    address.extend([KeyCode::Backspace; 40]);
+    address.extend("other.example".chars().map(KeyCode::Char));
+    address.push(KeyCode::Enter);
+    for (keys, servers, paths) in [
+        ([&chooser[..], &[enter]].concat(), vec![id("a")], &explicit),
+        (
+            [&chooser[..], &[space, enter]].concat(),
+            Vec::new(),
+            &automatic,
+        ),
+        (
+            [&chooser[..], &[down, space, enter]].concat(),
+            vec![id("a"), id("b")],
+            &automatic,
+        ),
+        (
+            [&chooser[..], &[space, down, space, enter]].concat(),
+            vec![id("b")],
+            &automatic,
+        ),
+        (address, Vec::new(), &automatic),
+    ] {
+        let now = Instant::now();
+        let config = Config {
+            paths: explicit.clone(),
+            ..config()
+        };
+        let mut app = App::new(config, None, (Profile::Plain, Palette::new(true)), now);
+        app.tick(now);
+        app.event(&prepared(), now);
+        for code in &keys {
+            press(&mut app, *code, now);
+        }
+        let checked = checked(app.tick(now + REST));
+        assert_eq!(
+            (&checked.servers, &checked.paths),
+            (&servers, paths),
+            "{keys:?}"
+        );
+    }
 }
 
 #[test]
@@ -523,12 +586,51 @@ fn a_held_run_key_never_stops_the_test_it_started_and_a_second_tap_does() {
     );
 
     let mut app = started(now);
-    let release = KeyEvent::new_with_kind(space, KeyModifiers::NONE, KeyEventKind::Release);
-    app.input(Input::Key(release), after(100));
+    let release = |code| KeyEvent::new_with_kind(code, KeyModifiers::SHIFT, KeyEventKind::Release);
+    app.input(Input::Key(release(space)), after(100));
     assert_eq!(
         command(&press(&mut app, space, after(200))),
         &Command::Stop,
         "a terminal that reports the release lets the next press stop at once"
+    );
+    app.event(&ended(Outcome::Stopped), after(250));
+    for at in [after(1000), after(2900)] {
+        assert_eq!(
+            press(&mut app, space, at),
+            [],
+            "once releases arrive, a key is held until its own"
+        );
+    }
+    app.input(Input::Key(release(KeyCode::Char('x'))), after(3000));
+    assert_eq!(press(&mut app, space, after(3100)), []);
+    app.input(Input::Key(release(space)), after(3200));
+    assert_matches!(
+        command(&press(&mut app, space, after(3300))),
+        Command::Run(_)
+    );
+
+    let mut app = started(now);
+    let key = find(&mut app, now, "Stop test");
+    assert_eq!(command(&click(&mut app, now, key)), &Command::Stop);
+    app.event(&ended(Outcome::Stopped), now);
+    let key = find(&mut app, now, "Run again");
+    assert_matches!(command(&click(&mut app, now, key)), Command::Run(_));
+    assert_eq!(
+        command(&press(&mut app, space, after(100))),
+        &Command::Stop,
+        "a press after a click is no repeat"
+    );
+
+    let mut app = App::new(config(), None, (Profile::Plain, Palette::new(true)), now);
+    assert_matches!(
+        command(&press(&mut app, KeyCode::Char('r'), now)),
+        Command::Run(_)
+    );
+    app.input(Input::Key(release(KeyCode::Char('R'))), after(100));
+    assert_eq!(
+        command(&press(&mut app, KeyCode::Char('r'), after(200))),
+        &Command::Stop,
+        "a shifted release ends the held key"
     );
 }
 
@@ -984,6 +1086,29 @@ fn the_progress_bar_counts_a_stage_that_ended_partial() {
     assert_eq!(progress(&mut app, later), Progress::Share(50));
 }
 
+#[test]
+fn a_finished_run_keeps_its_loaded_latency_lanes_whatever_the_next_run_s_settings() {
+    let now = Instant::now();
+    let plan = [(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 10)];
+    let mut app = running(&["a"], &plan, now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    app.event(&Event::StageFinished(result_of(Stage::Download)), now);
+    app.event(&ended(Outcome::Complete), now);
+    assert!(shows(&mut app, now, "Loaded down"));
+    press(&mut app, KeyCode::Char('1'), now);
+    assert!(
+        shows(&mut app, now, "Loaded down"),
+        "turning the Latency stage off, which skips loaded latency next time, leaves this run's"
+    );
+    let mut app = running(&["a"], &plan[1..], now);
+    app.event(&ended(Outcome::Complete), now);
+    press(&mut app, KeyCode::Char('1'), now);
+    assert!(
+        !shows(&mut app, now, "Loaded down"),
+        "a run that skipped loaded latency gets no lane from the next run's settings"
+    );
+}
+
 fn downloaded(now: Instant) -> App {
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     measuring(&mut app, Stage::Download, SECOND * 10, now);
@@ -1032,6 +1157,7 @@ fn results_stay_until_the_next_run_starts_and_a_start_that_ends_first_keeps_them
             plan: vec![(Stage::Upload, SECOND * 10)],
             focus: id("a"),
             at: now,
+            loaded_latency: true,
         },
         now,
     );

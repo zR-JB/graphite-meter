@@ -106,6 +106,7 @@ fn console(palette: Palette) -> Buffer {
             plan: config.plan(),
             focus: home.clone(),
             at: now,
+            loaded_latency: config.loaded_latency(),
         },
         now,
     );

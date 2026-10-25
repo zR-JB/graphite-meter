@@ -16,8 +16,8 @@ mise run pipeline-test     # ty type check, control-plane, API schema and legal 
 
 `Gate` is the only required status check. A pull request that changes only documentation (`.github/ci-paths.yml`)
 runs the checks job alone. A draft also runs Rust checks if it changes code, and no more; its Gate fails until it is
-marked ready for review, which runs the rest. Every other pull request, every push to main and the daily run on main
-run every job:
+marked ready for review, which runs the rest. Every other pull request, every merge queue group, every push to main
+and the daily run on main run every job:
 
 | Job | Runs |
 |---|---|
@@ -48,6 +48,31 @@ fetches, and CI checks the client packages against the registry's advisories, so
 request that runs the code checks; `advisories.yml` repeats all three daily. Pull requests and pushes test the browsers
 `mise.toml` pins; the daily CI run tests the latest stable Chrome for Testing and Firefox, without caches, and
 `mise run browser-bump` moves the pins to them.
+
+### Merge queue
+
+Pull requests merge through GitHub's merge queue. It squashes each queued pull request onto main and the entries
+ahead of it, runs CI on that `merge_group` commit with every job, and moves main to it once Gate passes. Moving main
+is a push, so main's head always gets the push run that `release.py` requires before a release; when several entries
+merge at once, main moves to the last of them in one push, and only that commit gets one. The owner adds a
+`merge_queue` rule to the `main` ruleset (Settings, Rules), which no workflow can change:
+
+| Setting (API parameter) | Value | Why |
+|---|---|---|
+| Merge method (`merge_method`) | Squash | main takes only squashes and stays linear |
+| Build concurrency (`max_entries_to_build`) | 2 | each entry's run takes about 28 jobs of the account's concurrent runners |
+| Minimum group size (`min_entries_to_merge`) | 1 | a passing entry merges at once; the wait time then never applies |
+| Maximum group size (`max_entries_to_merge`) | 5 | entries that passed merge together, in one push to main |
+| Require all queue entries to pass required checks (`grouping_strategy`) | on (`ALLGREEN`) | every entry's own run must pass Gate |
+| Status check timeout (`check_response_timeout_minutes`) | 120 | a run takes about 9 minutes, but over an hour when runners queue |
+
+Keep `Gate` from GitHub Actions as the required status check, and "Require branches to be up to date before merging"
+off: the queue tests each entry on top of main. Code scanning merge protection does not apply to merge groups, so the
+queue never waits for CodeQL; a pull request still needs it to join the queue.
+
+The squashed commit's message comes from the repository's squash setting (Settings, General, "Allow squash merging"),
+currently "Default message", which titles a one-commit pull request after its commit. "Default to pull request title"
+gives `<title> (#N)` alone, and "Default to pull request title and description" adds the pull request's whole body.
 
 ## Releases
 

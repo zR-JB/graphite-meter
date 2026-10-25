@@ -24,11 +24,12 @@ pub enum Event {
     /// A server asks for sign-in until `SignInEnded`.
     SignIn(SignInPrompt),
     SignInEnded(SignInEnd),
-    /// The run's plan, its first latency server and its clock's origin.
+    /// The run's plan, its first latency server, its clock's origin and whether its transfers probe latency.
     RunStarted {
         plan: Vec<(Stage, Duration)>,
         focus: ServerId,
         at: Instant,
+        loaded_latency: bool,
     },
     StageStarted(StagePlan),
     Measuring(Stage),
@@ -220,6 +221,7 @@ impl Running {
 #[derive(Debug, Clone, Default)]
 pub struct Run {
     pub plan: Vec<(Stage, Duration)>,
+    pub loaded_latency: bool,
     pub at: Option<Instant>,
     /// The latency server: the first selected one, or a survivor that measured latency once it left.
     pub focus: Option<ServerId>,
@@ -280,8 +282,17 @@ impl View {
                     self.check = Check::SignIn;
                 }
             }
-            Event::RunStarted { plan, focus, at } => {
-                (self.run, self.starting) = (Some(Run::new(plan, focus, *at)), false);
+            Event::RunStarted {
+                plan,
+                focus,
+                at,
+                loaded_latency,
+            } => {
+                let run = Run {
+                    loaded_latency: *loaded_latency,
+                    ..Run::new(plan, focus, *at)
+                };
+                (self.run, self.starting) = (Some(run), false);
             }
             Event::RunFinished {
                 outcome,

@@ -33,6 +33,7 @@ self.onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
     else dial(command);
   } else if (data.type === "renew") renew();
   else if (data.type === "measure") prober.measure();
+  else if (data.type === "warm") prober.warm();
   else if (data.type === "pace") prober.pace(data.intervalMs, data.maxInFlight);
   else prober.stop(data.id);
 };

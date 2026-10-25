@@ -36,6 +36,9 @@ use tokio_util::sync::CancellationToken;
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 /// How long a departed server's receiver may take to answer its finalize.
 const DEPART: Duration = Duration::from_secs(1);
+/// How long a receiver may take to finish, and once the run stopped.
+const FINISH: Duration = Duration::from_secs(10);
+const STOPPED_FINISH: Duration = Duration::from_secs(1);
 
 pub struct UploadSession {
     start: Start,
@@ -187,8 +190,8 @@ impl UploadSession {
         feed.map_or(lanes, |fault| LaneHealth::Failed(fault.failure()))
     }
 
-    /// Ends the lanes, then asks the receiver to finalize and waits for its `complete` record, within `budget`.
-    pub async fn finish(self, budget: Duration) {
+    /// Ends the lanes, then asks the receiver to finalize and waits for its `complete` record, cut short by a stop.
+    pub async fn finish(self) {
         let Upload {
             id,
             lanes,
@@ -202,7 +205,14 @@ impl UploadSession {
             let ended = |progress: &Progress| progress.complete || progress.ended.is_some();
             let _ = progress.wait_for(ended).await;
         };
-        let _ = timeout(budget, finished).await;
+        let stopped = async {
+            self.start.token.cancelled().await;
+            sleep(STOPPED_FINISH).await;
+        };
+        tokio::select! {
+            _ = timeout(FINISH, finished) => {}
+            () = stopped => {}
+        }
         token.cancel();
         self.start.token.cancel();
     }

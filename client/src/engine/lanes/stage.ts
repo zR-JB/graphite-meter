@@ -235,6 +235,7 @@ class Stage implements StageResources {
         this.#notify();
       },
       outcomes: (outcomes) => events.probes(outcomes),
+      unmeasured: (rtts) => events.warmupReplies(rtts),
       interrupted: (count, reason) => events.probesInterrupted(count, reason),
       stalled: (detail) => {
         this.#probesReady = false;
@@ -259,6 +260,8 @@ class Stage implements StageResources {
         { target, auth: server.auth, control: server.server.url, intervalMs, maxInFlight },
         own,
       );
+    // The latency warmup shows its replies before its window counts any.
+    if (activity.stage === "latency") this.#probes.warm();
   }
 
   /** Mints an upload id and opens its receiver; HTTP lanes write only once the feed is open, so it reports from the first byte. */
@@ -286,7 +289,7 @@ class Stage implements StageResources {
   /** Opens one direction's carrier and its lanes now, or none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
     if (this.#throughputEnded) return null;
-    const { server, streams, uploadLanes, gating } = this.#setup;
+    const { server, streams, uploadLanes } = this.#setup;
     const { auth } = server;
     const { target, fetch } = server.throughput;
     const count = streams[direction];
@@ -297,7 +300,7 @@ class Stage implements StageResources {
         pool: server.link.workers,
         worker: WORKERS.lane,
         lanes: count,
-        gating: direction === "down" ? Math.min(count, gating?.down ?? count) : 0,
+        gating: direction === "down" ? count : 0,
         session: false,
         open: (_, epoch) =>
           this.#signedIn((): LaneCommand => {

@@ -113,6 +113,14 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Selects `servers`; explicit origins are ports of the one server `checked` and go automatic for any other.
+    pub fn select(&mut self, servers: Vec<ServerId>, checked: Option<&ServerId>) {
+        if !matches!(&servers[..], [only] if Some(only) == checked) {
+            (self.paths.throughput_origin, self.paths.latency_origin) = (None, None);
+        }
+        self.servers = servers;
+    }
+
     pub fn duration(&self, stage: Stage) -> Duration {
         self.durations[stage.index()]
     }

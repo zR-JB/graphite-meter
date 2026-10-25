@@ -8,7 +8,12 @@ import { createRun } from "./run";
 
 function setup(
   config: Partial<TestConfig> = {},
-  options: { authorize?: Promise<void>; servers?: Peer[]; fits?: (ms: number) => boolean } = {},
+  options: {
+    authorize?: Promise<void>;
+    servers?: Peer[];
+    fits?: (ms: number) => boolean;
+    lock?: RunLock;
+  } = {},
 ) {
   const clock = new FakeClock();
   const preferences = createPreferences(null, new EventTarget());
@@ -29,6 +34,7 @@ function setup(
       focus: "self",
       release: () => leases.released++,
     }),
+    lock: options.lock ?? (async () => () => {}),
     fits: (ms) => options.fits?.(ms) ?? true,
     recheck: () => {},
     finished: (finished) => offers.push(finished ? "offer" : "withdraw"),
@@ -59,6 +65,8 @@ const only = (
   stages: { latency: false, download: false, upload: false, bidirectional: false, ...stages },
   duration: { ...DEFAULT_CONFIG.duration, warmupMs: 0, ...duration },
 });
+
+type RunLock = (signal: AbortSignal, queued: () => void) => Promise<() => void>;
 
 test("a Start never looks idle on its way to running", async () => {
   const h = setup(only({ download: true }, { downloadMs: 1_000 }));
@@ -156,16 +164,32 @@ test("a finished run is offered to History once, and the next start withdraws it
   expect(h.offers).toEqual(["withdraw", "offer", "withdraw"]);
 });
 
-test("the gauge maximum changes while a start prepares, and the start goes on", async () => {
+test("a start takes what changes while it prepares, and the next test what the run cannot", async () => {
   const { promise, resolve } = Promise.withResolvers<void>();
   const h = setup(only({ download: true }, { downloadMs: 1_000 }), { authorize: promise });
+  const streams = { mode: "forced", count: 3 } as const;
   h.run.toggle();
   expect(h.run.configure({ visualization: { throughputMaxBytesPerSec: 125e6 } })).toBe(true);
-  expect(h.run.configure({ adaptive: true })).toBe(false);
+  expect(h.run.configure({ adaptive: true })).toBe(true);
+  expect(h.run.configure({ transferStreams: streams })).toBe(true);
+  expect(h.run.waiting()).toEqual({ adaptive: true, transferStreams: streams });
+  expect(h.run.upcoming().transferStreams).toEqual(streams);
   resolve();
+  await h.clock.advance(100);
+  expect([h.run.plan()?.adaptive, h.preferences.config().adaptive]).toEqual([true, true]);
+  expect(h.run.waiting()).toEqual({ transferStreams: streams });
+  expect(
+    h.run.configure({ transports: { throughputTarget: "protocol:http2", latencyTarget: "auto" } }),
+  ).toBe(true);
+  expect(h.preferences.config().transports.throughputTarget).toBe("auto");
   await h.clock.advance(3_000);
   expect(h.run.phase()).toBe("complete");
-  expect(h.preferences.config().visualization.throughputMaxBytesPerSec).toBe(125e6);
+  expect(h.run.waiting()).toEqual({});
+  expect(h.preferences.config()).toMatchObject({
+    visualization: { throughputMaxBytesPerSec: 125e6 },
+    transferStreams: streams,
+    transports: { throughputTarget: "protocol:http2" },
+  });
 });
 
 test("a refusal speaks only for the change that caused it", async () => {
@@ -191,4 +215,29 @@ test("the first stage's switch locks once its warmup begins, as a later stage's 
   h.run.toggle();
   await h.clock.advance(300);
   expect(seen.at(-1)).toEqual(["warmup", true]);
+});
+
+test("a start waits while another tab holds the run, runs once it frees, and lets it go as it ends", async () => {
+  const { promise: freed, resolve: free } = Promise.withResolvers<void>();
+  let held = 0;
+  const h = setup(only({ download: true }, { downloadMs: 1_000 }), {
+    lock: async (_, queued) => {
+      queued();
+      await freed;
+      held++;
+      return () => held--;
+    },
+  });
+  h.run.toggle();
+  await h.clock.advance(100);
+  expect([h.run.preparation(), h.run.preparing(), h.run.phase()]).toEqual([
+    "waiting",
+    false,
+    "idle",
+  ]);
+  free();
+  await h.clock.advance(100);
+  expect(held).toBe(1);
+  await h.clock.advance(3_000);
+  expect([h.run.phase(), held]).toEqual(["complete", 0]);
 });

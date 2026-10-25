@@ -211,6 +211,7 @@ export const openProbeChannel: OpenProbeChannel = ({ target, intervalMs }, event
   }, rttMs);
   return {
     measure() {},
+    warm() {},
     pace: (ms) => void (interval = ms ?? rttMs),
     stop: async () => {},
     dispose: () => clearTimeout(timer),

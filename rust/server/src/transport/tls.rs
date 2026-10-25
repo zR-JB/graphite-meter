@@ -272,12 +272,12 @@ fn warn_readable(key: &Path) {
         return;
     };
     let mode = metadata.permissions().mode() & 0o777;
-    if mode & 0o077 != 0 {
+    if mode & 0o027 != 0 {
         let key = key.display();
         log!(
             Warn,
             "tls",
-            "private key {key} has permissions {mode:04o}; remove group and other access"
+            "private key {key} has permissions {mode:04o}; remove group write and other access"
         );
     }
 }

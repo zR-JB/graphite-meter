@@ -132,7 +132,15 @@ export async function choosePath(
 ) {
   const group = settings.getByRole("group", { name: picker });
   const others = group.getByRole("button", { name: "Other paths", exact: true });
-  if ((await others.state()).length) await others.click();
+  if ((await others.state()).length) {
+    await others.click();
+    // A row clicked while it unfolds is not yet where it is drawn.
+    await group.evaluate((el: HTMLElement) =>
+      Promise.all(
+        el.getAnimations({ subtree: true }).map(({ finished }) => finished.catch(() => {})),
+      ),
+    );
+  }
   await group.getByRole("radio", { name }).click();
 }
 

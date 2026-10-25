@@ -7,7 +7,7 @@ use crate::{
     peer::ClientKeys,
 };
 use graphite_meter_proto::{
-    lease::{LEASE_HEADER, LEASE_PARAMETER},
+    lease::{LEASE_HEADER, LEASE_PARAMETER, UNUSED_BOUND},
     refusal::Refusal,
 };
 use http::{HeaderValue, Request};
@@ -18,16 +18,12 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 use tokio::{
     sync::Notify,
     time::{Instant, sleep_until},
 };
 use tokio_util::sync::CancellationToken;
-
-/// A lease with nothing live ends after this long.
-pub const UNUSED_BOUND: Duration = Duration::from_secs(30);
 
 /// What a lease holds: measurements, of them WebTransport transfer sessions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

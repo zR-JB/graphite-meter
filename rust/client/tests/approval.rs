@@ -5,6 +5,7 @@ use graphite_meter_client::net::{
 };
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{origin::Origin, reason::FailureReason};
+use http::StatusCode;
 use std::{assert_matches, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -123,4 +124,84 @@ async fn network_failures_last_until_the_deadline_which_reports_one_unless_the_l
         })
         .await;
     assert_eq!(recovered, Err(Unapproved::Expired));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_server_error_or_timeout_polls_on_and_another_answer_ends_sign_in_at_once() {
+    let (approval, started, mut polls) = (fresh(), Instant::now(), 0);
+    let granted = approval
+        .wait(|| {
+            polls += 1;
+            let answered = match polls {
+                1 => Err(Fault::SignInAnswer(StatusCode::SERVICE_UNAVAILABLE)),
+                2 => Err(Fault::SignInAnswer(StatusCode::REQUEST_TIMEOUT)),
+                _ => Ok(Some("granted".into())),
+            };
+            async move { answered }
+        })
+        .await;
+    assert_eq!(
+        (granted, started.elapsed()),
+        (Ok("granted".into()), SECOND * 2)
+    );
+    for (status, reason) in [
+        (StatusCode::TOO_MANY_REQUESTS, FailureReason::ClientLimit),
+        (StatusCode::GONE, FailureReason::SignInRequired),
+        (StatusCode::FORBIDDEN, FailureReason::ProtocolError),
+    ] {
+        let started = Instant::now();
+        let refused = fresh()
+            .wait(|| async move { Err(Fault::SignInAnswer(status)) })
+            .await;
+        assert_matches!(refused, Err(Unapproved::Failed(failure)) if failure.reason == reason);
+        assert_eq!(started.elapsed(), Duration::ZERO, "{status}");
+    }
+}
+
+fn exchange(answers: &'static [&'static str]) -> (Approval, Client) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = Origin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let listener = TcpListener::from_std(listener).unwrap();
+    tokio::spawn(async move {
+        let mut answers = answers.iter();
+        while let Ok((mut stream, _)) = listener.accept().await {
+            loop {
+                let mut request = Vec::new();
+                while !request.ends_with(b"}") {
+                    let Ok(byte) = stream.read_u8().await else {
+                        break;
+                    };
+                    request.push(byte);
+                }
+                let Some(answer) = answers.next().filter(|_| request.ends_with(b"}")) else {
+                    break;
+                };
+                stream.write_all(answer.as_bytes()).await.unwrap();
+            }
+        }
+    });
+    (
+        Approval::new(&origin),
+        Client::new(false, Arc::new(Pool::inline())),
+    )
+}
+
+#[tokio::test]
+async fn the_exchange_polls_past_a_gateway_s_passing_error_and_names_a_full_server() {
+    let (approval, client) = exchange(&[
+        "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\ncontent-length: 19\r\n\r\n{\"token\":\"granted\"}",
+    ]);
+    assert_eq!(approval.grant(&client).await, Ok("granted".into()));
+    let (approval, client) =
+        exchange(&["HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\n\r\n"]);
+    let full = approval.grant(&client).await.unwrap_err().failure();
+    assert_eq!(
+        (full.reason, full.text.as_str()),
+        (
+            FailureReason::ClientLimit,
+            "This server's sign-in has reached its limit of authorized clients."
+        )
+    );
 }

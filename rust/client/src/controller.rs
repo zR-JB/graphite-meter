@@ -102,10 +102,19 @@ impl Controller {
         }
     }
 
-    pub async fn settled(&mut self) {
-        if let Some(current) = self.current.take() {
-            self.idle = current.task.await.unwrap_or_default();
+    pub async fn close(mut self) {
+        if let Some(current) = &self.current {
+            current.token.cancel();
         }
+        let closed = async {
+            if let Some(current) = self.current.take() {
+                self.idle = current.task.await.unwrap_or_default();
+            }
+            if let Some(prepared) = self.idle.prepared.take() {
+                prepared.end().await;
+            }
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(2), closed).await;
     }
 
     /// Cancels the current operation and starts one for `config` once it ended.
@@ -271,13 +280,13 @@ impl Work {
                 refuse(&mut prepared, &refusal);
                 return Some(prepared);
             }
+            if let Ok(asked) = prepared {
+                asked.end().await;
+            }
             match self.sign_in(&origin, issuer, &client).await? {
                 Ok(grant) => state.grants.insert(origin.clone(), grant),
                 Err(failure) => return Some(Err(failure)),
             };
-            if let Ok(asked) = prepared {
-                asked.end().await;
-            }
             approved.push(origin);
         }
     }

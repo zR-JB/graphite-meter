@@ -49,7 +49,7 @@ const FRAME: Duration = Duration::from_micros(16_667);
 const SPIN: Duration = Duration::from_millis(80);
 const TOAST: Duration = Duration::from_millis(3200);
 const FIRST_REPEAT: Duration = Duration::from_secs(2);
-const NEXT_REPEAT: Duration = Duration::from_millis(200);
+const NEXT_REPEAT: Duration = Duration::from_millis(150);
 const SMALLEST: (u16, u16) = (60, 16);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -119,7 +119,6 @@ pub struct Exit {
     pub report: bool,
 }
 
-/// The key that last started or stopped a test, which a terminal without release events repeats as presses.
 struct Held {
     key: Key,
     did: Action,
@@ -130,13 +129,11 @@ struct Held {
 impl Held {
     fn repeats(&mut self, now: Instant, releases: bool) -> bool {
         let quiet = now.saturating_duration_since(self.at);
-        let repeat = releases
-            || quiet
-                < if self.repeated {
-                    NEXT_REPEAT
-                } else {
-                    FIRST_REPEAT
-                };
+        let gap = match self.repeated && !releases {
+            true => NEXT_REPEAT,
+            false => FIRST_REPEAT,
+        };
+        let repeat = quiet < gap;
         if repeat {
             (self.at, self.repeated) = (now, true);
         }

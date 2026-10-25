@@ -5,6 +5,8 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   # Pull requests test the pinned browsers; the daily run tests the latest stable ones.

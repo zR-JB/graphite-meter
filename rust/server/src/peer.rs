@@ -160,7 +160,10 @@ impl Peer {
     /// Uploads belong to the lease presented, else to the client `keys` names.
     pub fn owner(&self) -> Option<ClientKeys> {
         match &self.lease {
-            Some(lease) => Some(ClientKeys::Lease(lease.id())),
+            Some(lease) => Some(ClientKeys::Lease(
+                lease.id(),
+                Box::new(lease.keys().clone()),
+            )),
             None => self.keys(),
         }
     }
@@ -194,8 +197,8 @@ pub enum ClientKeys {
     V6(Ipv6Addr),
     /// A login or grant comes first, then the principal it belongs to.
     Auth(Holder, Principal),
-    /// Work presenting a lease, which holds its admission already.
-    Lease(u64),
+    /// Work presenting a lease, which holds its admission already, and the keys of the client that took it.
+    Lease(u64, Box<ClientKeys>),
 }
 
 impl ClientKeys {
@@ -212,6 +215,13 @@ impl ClientKeys {
             Self::Exempt
         } else {
             Self::address(socket)
+        }
+    }
+
+    pub fn charged(&self) -> &Self {
+        match self {
+            Self::Lease(_, creator) => creator,
+            keys => keys,
         }
     }
 
@@ -242,7 +252,7 @@ impl ClientKeys {
                 Some(ClientKey::Principal(principal.clone())),
                 None,
             ],
-            Self::Lease(id) => [Some(ClientKey::Lease(*id)), None, None],
+            Self::Lease(id, _) => [Some(ClientKey::Lease(*id)), None, None],
         };
         keys.into_iter().flatten()
     }
