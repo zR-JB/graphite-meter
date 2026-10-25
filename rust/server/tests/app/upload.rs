@@ -288,6 +288,33 @@ async fn work_on_a_lease_holds_the_clients_share_until_it_ends_also_past_the_lea
 }
 
 #[tokio::test]
+async fn uploads_under_every_lease_a_client_takes_share_its_upload_ids() {
+    let app = app(&ALL_LISTENERS);
+    let mut refusals = Vec::new();
+    for _ in 0..33 {
+        let body = serde_json::json!({"measurements": 1, "sessions": 0, "uploads": 1});
+        let lease =
+            json(take_lease(&app, "192.0.2.1", request("POST", "/lease"), body).await).await;
+        let (token, id) = (lease["token"].as_str().unwrap(), &lease["uploads"][0]);
+        let upload = leased(
+            "POST",
+            &format!("/upload?id={}", id.as_str().unwrap()),
+            token,
+        );
+        let upload = upload.body(chunks(&[b"a"], false)).unwrap();
+        let answer = send_from(&app, Endpoint::Quic, "198.51.100.1", upload).await;
+        refusals.push(header(&answer, "graphite-meter-refusal").map(str::to_owned));
+        send(&app, Endpoint::H1, empty(leased("DELETE", "/lease", token))).await;
+    }
+    assert!(refusals[..32].iter().all(Option::is_none));
+    assert_eq!(
+        refusals[32].as_deref(),
+        Some("client-limit"),
+        "32 per client, as without a lease"
+    );
+}
+
+#[tokio::test]
 async fn a_lease_admits_its_sessions_from_its_url_and_past_them_charges_the_client() {
     let app = app(&[
         ALL_LISTENERS.as_slice(),
