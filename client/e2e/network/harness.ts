@@ -86,18 +86,18 @@ function shape(links: Link[]) {
       ["src", 4 + 2 * i, link.down],
       ["dst", 5 + 2 * i, link.up],
     ] as const;
-    for (const [side, band, { delayMs, mbit, lossPercent = 0 }] of sides) {
-      // tc reads class and handle numbers as hexadecimal.
-      const minor = band.toString(16);
+    for (const [side, band, direction] of sides) {
+      tc(`qdisc add ${netem(band, direction)}`);
       tc(
-        `qdisc add dev lo parent 1:${minor} handle ${minor}0: netem delay ${delayMs}ms loss ${lossPercent}% rate ${mbit}mbit limit 1000`,
-      );
-      tc(
-        `filter add dev lo parent 1: protocol ip prio 1 u32 match ip ${side} ${address(NETWORK_FLEET[i]!)}/32 flowid 1:${minor}`,
+        `filter add dev lo parent 1: protocol ip prio 1 u32 match ip ${side} ${address(NETWORK_FLEET[i]!)}/32 flowid 1:${band.toString(16)}`,
       );
     }
   });
 }
+
+// tc reads class and handle numbers as hexadecimal.
+const netem = (band: number, { delayMs, mbit, lossPercent = 0 }: Direction) =>
+  `dev lo parent 1:${band.toString(16)} handle ${band.toString(16)}0: netem delay ${delayMs}ms loss ${lossPercent}% rate ${mbit}mbit limit 1000`;
 
 /** One server's GM_VERBOSE connection log; a mark is a byte offset, so a window holds what a run caused. */
 export class ConnectionLog {
@@ -162,6 +162,11 @@ export async function shapedFleet(
     signIn,
     children,
     logs: children.map((child) => new ConnectionLog(child.log)),
+    /** Moves server `index`'s link to `to` at once, its queue kept. */
+    reshape(index: number, to: Link) {
+      tc(`qdisc change ${netem(4 + 2 * index, to.down)}`);
+      tc(`qdisc change ${netem(5 + 2 * index, to.up)}`);
+    },
     /** Drops every UDP packet to and from `server` for `ms`. */
     async udpOutage(server: Server, ms: number) {
       const match = `protocol ip prio 2 u32 match ip protocol 17 0xff match ip`;

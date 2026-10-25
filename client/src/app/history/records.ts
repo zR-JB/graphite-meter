@@ -103,6 +103,9 @@ function recordShape(upgraded: boolean): Check {
       ...(upgraded ? { peakBytesPerSec: finite } : {}),
       totalBytes: finite,
       stabilityPct: finite,
+      changes: nullable(
+        list(shape({ atMs: finite, fromBytesPerSec: finite, toBytesPerSec: finite })),
+      ),
       wire: nullable(
         shape({
           totalMultiplier: finite,

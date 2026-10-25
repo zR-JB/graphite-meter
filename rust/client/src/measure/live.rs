@@ -22,6 +22,14 @@ struct Candidate {
     up: bool,
     start: f64,
     reference: f64,
+    before: f64,
+}
+
+/// A confirmed regime change: how much evidence ago the live rate first read it, and the rate it read before.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shift {
+    pub since_ms: f64,
+    pub from: f64,
 }
 
 /// Derives a stage's presented rate from bytes over time. The first delivery only anchors it.
@@ -49,17 +57,17 @@ impl LiveRate {
         Some(self.presented).filter(|&rate| rate > 0.0)
     }
 
-    pub fn observe(&mut self, bytes: f64, ms: f64) -> bool {
+    pub fn observe(&mut self, bytes: f64, ms: f64) -> Option<Shift> {
         self.step(bytes, ms, MAX_SPANS)
     }
 
-    fn step(&mut self, bytes: f64, ms: f64, kept: usize) -> bool {
+    fn step(&mut self, bytes: f64, ms: f64, kept: usize) -> Option<Shift> {
         if !ms.is_finite() || ms <= 0.0 {
-            return false;
+            return None;
         }
         if !self.anchored {
             self.anchored = bytes > 0.0;
-            return false;
+            return None;
         }
         let start = self.evidence;
         self.evidence += ms;
@@ -72,8 +80,8 @@ impl LiveRate {
             total: self.bytes,
         });
         self.recalculate();
-        let changed = self.regime(start);
-        if changed {
+        let shift = self.regime(start);
+        if shift.is_some() {
             self.recalculate();
         }
         let mut keep = (self.evidence - window(self.evidence - self.regime_start))
@@ -91,7 +99,7 @@ impl LiveRate {
         if self.spans.len() - self.head > kept {
             self.coarsen();
         }
-        changed
+        shift
     }
 
     /// Merges the older spans in pairs, all but the fast window and a pending regime change, as the browser does.
@@ -143,20 +151,25 @@ impl LiveRate {
         (self.bytes - first.total + partial) * 1000.0 / ms
     }
 
-    fn regime(&mut self, start: f64) -> bool {
+    fn regime(&mut self, start: f64) -> Option<Shift> {
         let Some(candidate) = self.candidate else {
             if self.evidence - self.regime_start < REGIME_READY_MS || self.presented <= 0.0 {
-                return false;
+                return None;
             }
             let ratio = self.fast / self.presented;
             if !(0.75..=1.2).contains(&ratio) {
+                // What the window read before the fast window that holds the change.
+                let window = window(self.evidence - self.regime_start);
+                let before = (self.presented * window - self.fast * FAST_WINDOW_MS)
+                    / (window - FAST_WINDOW_MS);
                 self.candidate = Some(Candidate {
                     up: ratio > 1.2,
                     start,
                     reference: self.presented,
+                    before,
                 });
             }
-            return false;
+            return None;
         };
         let ratio = if candidate.reference > 0.0 {
             self.fast / candidate.reference
@@ -165,7 +178,7 @@ impl LiveRate {
         };
         if candidate.up && ratio < 1.1 || !candidate.up && ratio > 0.85 {
             self.candidate = None;
-            return false;
+            return None;
         }
         let confirm = if candidate.up {
             UPSHIFT_MS
@@ -173,10 +186,13 @@ impl LiveRate {
             DOWNSHIFT_MS
         };
         if self.evidence - candidate.start < confirm {
-            return false;
+            return None;
         }
         (self.regime_start, self.candidate) = (candidate.start, None);
-        true
+        Some(Shift {
+            since_ms: self.evidence - candidate.start,
+            from: candidate.before,
+        })
     }
 }
 

@@ -4,6 +4,7 @@ import * as format from "./format";
 import {
   fmtAddedMs,
   fmtBytes,
+  speedChange,
   fmtCount,
   fmtCounted,
   fmtDuration,
@@ -44,6 +45,7 @@ test("numbers read as the vectors the terminal clients share", async () => {
     expect(fmtPercent(ratio * 100), `${ratio}`).toBe(out);
   for (const { in: count, out } of vectors.count) expect(fmtCount(count)).toBe(out);
   for (const { in: value, out } of vectors.tick) expect(fmtTick(value), `${value}`).toBe(out);
+  for (const change of vectors.change) expect(speedChange(change, BITS)).toBe(change.out);
   expect(fmtRate(1_048_576, { base: "base2", kind: "bytes" })).toBe("1024 KiB/s");
 });
 

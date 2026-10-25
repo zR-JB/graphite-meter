@@ -7,6 +7,7 @@ import { MISSING } from "../../view/format";
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
 import {
   cardLine,
+  changeLine,
   gridView,
   liveCard,
   serverIssues,
@@ -410,6 +411,33 @@ test("a card's line names who failed in its stage and who never reached it; one 
     },
   } as unknown as RunResult);
   expect(cardLine(both, "download")).toBe("Frankfurt and Oslo: connection lost");
+});
+
+test("a card says each confirmed speed change, naming its server when several ran and its lane when both ran", () => {
+  const drop = { atMs: 130_000, fromBytesPerSec: 112.5e6, toBytesPerSec: 62.5e6 };
+  const rise = { atMs: 2_250, fromBytesPerSec: 12.5e6, toBytesPerSec: 25e6 };
+  const own = (changes: object[]) => ({ ...transfer(1e7), changes });
+  const details = {
+    servers: [
+      {
+        server: { id: "f", name: "Frankfurt" },
+        download: own([drop, rise]),
+        bidirectional: { down: own([]), up: own([rise]) },
+      },
+      { server: { id: "o", name: "Oslo" }, download: own([drop]), bidirectional: null },
+    ],
+  } as unknown as MultiServerResult;
+  const units = { base: "base10", kind: "bits" } as const;
+  expect(changeLine(details, "download", "f", units)).toBe(
+    "Dropped from 900.0 to 500.0 Mbit/s at 2 min 10 s; rose from 100.0 to 200.0 Mbit/s at 2.3 s",
+  );
+  expect(changeLine(details, "download", "", units)).toBe(
+    "Frankfurt: dropped from 900.0 to 500.0 Mbit/s at 2 min 10 s; Frankfurt: rose from 100.0 to 200.0 Mbit/s at 2.3 s; Oslo: dropped from 900.0 to 500.0 Mbit/s at 2 min 10 s",
+  );
+  expect(changeLine(details, "bidirectional", "f", units)).toBe(
+    "Upload rose from 100.0 to 200.0 Mbit/s at 2.3 s",
+  );
+  expect(changeLine(details, "upload", "", units)).toBe("");
 });
 
 test("the server grid reads each server's value or word per planned stage, then each cause and what it cost", () => {

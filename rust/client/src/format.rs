@@ -141,6 +141,21 @@ pub fn duration(duration: Duration) -> String {
     pair(minutes / 60, "h", minutes % 60, "min")
 }
 
+/// A confirmed speed change, both rates in the larger one's unit: `Dropped from 900.0 to 500.0 Mbit/s at 2 min 10 s`.
+pub fn change(from: f64, to: f64, at: Duration) -> String {
+    let larger = from.max(to) * 8.0;
+    let (shown, unit) = tier(larger, 1.2);
+    let step = if shown > 0.0 { larger / shown } else { 1.0 };
+    let verb = if to < from { "Dropped" } else { "Rose" };
+    let speed = |rate: f64| speed(rate * 8.0 / step);
+    format!(
+        "{verb} from {} to {} {unit} at {}",
+        speed(from),
+        speed(to),
+        duration(at)
+    )
+}
+
 /// A planned time: as `duration`, without a whole second's decimal.
 pub fn stage_time(planned: Duration) -> String {
     let seconds = planned.as_secs_f64();

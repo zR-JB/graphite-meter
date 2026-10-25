@@ -7,7 +7,8 @@ test("the live rate the terminal client shares", async () => {
   for (const { name, steps } of (await json("liverate.testvectors.json")).cases) {
     const estimator = new RateEstimator();
     for (const [bytes, ms, presented, changed] of steps) {
-      expect(estimator.observe(bytes, ms), name).toBe(changed);
+      const shift = estimator.observe(bytes, ms);
+      expect(shift && [shift.sinceMs, shift.fromBytesPerSec], name).toEqual(changed || null);
       expect(estimator.presented, name).toBe(presented);
     }
   }

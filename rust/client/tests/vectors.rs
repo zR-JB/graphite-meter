@@ -256,6 +256,11 @@ fn formatting() {
                 "percent" => format::percent(case["ratio"].as_f64().unwrap()),
                 "count" => format::count(case["in"].as_u64().unwrap() as usize),
                 "tick" => format::tick(value()),
+                "change" => format::change(
+                    case["fromBytesPerSec"].as_f64().unwrap(),
+                    case["toBytesPerSec"].as_f64().unwrap(),
+                    ms("atMs"),
+                ),
                 _ => panic!("unknown format {kind}"),
             };
             assert_eq!(actual, case["out"].as_str().unwrap(), "{kind}: {case}");
@@ -271,12 +276,22 @@ fn live_rate() {
         let mut rate = LiveRate::default();
         for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
             let number = |at: usize| step[at].as_f64().unwrap();
-            let changed = rate.observe(number(0), number(1));
-            let (presented, expected) = (rate.presented().unwrap_or_default(), number(2));
-            let close = (presented - expected).abs() <= 1e-9 * expected.max(1.0);
+            let shift = rate.observe(number(0), number(1));
+            let near = |actual: f64, expected: f64| {
+                (actual - expected).abs() <= 1e-9 * expected.abs().max(1.0)
+            };
+            let presented = rate.presented().unwrap_or_default();
+            let confirmed = match (shift, step[3].as_array()) {
+                (None, None) => true,
+                (Some(shift), Some(expected)) => {
+                    near(shift.since_ms, expected[0].as_f64().unwrap())
+                        && near(shift.from, expected[1].as_f64().unwrap())
+                }
+                _ => false,
+            };
             assert!(
-                close && changed == step[3],
-                "{} step {index}: {presented} {changed}",
+                near(presented, number(2)) && confirmed,
+                "{} step {index}: {presented} {shift:?}",
                 case["name"]
             );
         }

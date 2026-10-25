@@ -3,14 +3,14 @@ import { safeDetail } from "../../protocol/documents";
 import type { FailureReason } from "../../protocol/reasons";
 import {
   Aggregate,
+  INTERVAL_LIMIT,
   MIN_EVIDENCE_MS,
   type Boundary,
   type ComponentWindow,
-  type ThroughputResult,
 } from "../measure/aggregate";
 import { LatencyBuckets, type LatencyBucket } from "../measure/buckets";
 import { ServerLatency, type LatencySummary } from "../measure/latency";
-import { LiveRates } from "../measure/live";
+import { LiveRates, type SpeedChange } from "../measure/live";
 import { combinedModel, type WireModel, type WirePath } from "../measure/overhead";
 import { EARLY_FINISH, mayFinishEarly, minCoverage, type Confidence } from "../measure/stability";
 import { protocolFromNextHop } from "../net/paths";
@@ -46,6 +46,7 @@ import {
   type RunResult,
   type ServerFailure,
   type ServerMeasurementSummary,
+  type ServerThroughput,
   type StagePlans,
   type StageResults,
   type StageStatus,
@@ -217,8 +218,11 @@ interface StageRun {
   finishedEarly: boolean;
   /** Where the warmup began, in page ms and the download bytes shown then: its ramp's origin. */
   ramp: { at: number; down: number } | null;
-  /** Page ms the measured window closed at, however long its final evidence takes; Infinity while it is open. */
+  /** Page ms the measured window opened and closed at, however long its final evidence takes; Infinity until then. */
+  opensAt: number;
   sealedAt: number;
+  /** The speed changes each server's live rate confirmed in the window, by server and direction. */
+  changes: Map<string, Partial<Record<Direction, SpeedChange[]>>>;
   /** The plan as the window closed; later changes cannot reach a window that already ended. */
   plan: StagePlans[Stage] | null;
 }
@@ -287,7 +291,7 @@ export class Run {
   #settled = new Map<Stage, { status: StageStatus; plan: StagePlans[Stage] }>();
   #results: StageResults = { latency: null, download: null, upload: null, bidirectional: null };
   /** Each server's own result per stage and direction, taken as the stage settles, before later intervals push it past the limit. */
-  #own = new Map<string, ThroughputResult | null>();
+  #own = new Map<string, ServerThroughput | null>();
   #finishing = false;
   #aggregate = new Aggregate();
   #failures: ServerFailure[] = [];
@@ -627,7 +631,9 @@ export class Run {
       evaluatedAt: -Infinity,
       finishedEarly: false,
       ramp: null,
+      opensAt: Number.POSITIVE_INFINITY,
       sealedAt: Number.POSITIVE_INFINITY,
+      changes: new Map(),
       plan: null,
     };
     this.#stage = stage;
@@ -735,7 +741,7 @@ export class Run {
     const { activity } = stage;
     const cadence = this.#cadence(activity);
     const at = this.#clock.activeMs();
-    const opensAt = this.#clock.read();
+    const opensAt = (stage.opensAt = this.#clock.read());
     for (const seat of seats) {
       // A latency warmup's last replies show as the window opens.
       seat.server.buckets.flush(this.#elapsed);
@@ -766,7 +772,12 @@ export class Run {
         // A feed record heard while the answer was in flight is newer; the answer would take the count back.
         if (!checkpoint || seat.up || stage.phase !== "measuring" || !this.#current(stage)) return;
         this.#hear(seat, checkpoint);
-        this.#live.receiver(seat.server.id, checkpoint, this.#clock.read());
+        this.#changed(
+          stage,
+          seat.server.id,
+          "up",
+          this.#live.receiver(seat.server.id, checkpoint, this.#clock.read()),
+        );
       });
       void Promise.allSettled(answers).then(() => {
         if (stage.phase === "measuring" && this.#current(stage) && this.#boundary(stage))
@@ -816,7 +827,13 @@ export class Run {
         // The first record after a page gap belongs to the interval the gap opens.
         this.#resumeAfterGap(stage);
         this.#hear(seat, checkpoint);
-        if (!this.#stalled) this.#live.receiver(server.id, checkpoint, this.#clock.read());
+        if (!this.#stalled)
+          this.#changed(
+            stage,
+            server.id,
+            "up",
+            this.#live.receiver(server.id, checkpoint, this.#clock.read()),
+          );
         if (this.#boundary(stage)) this.#tick();
       },
       // A latency warmup's replies move the live round trip alone, as a transfer warmup's bytes move the live rate.
@@ -975,6 +992,15 @@ export class Run {
     return !!sample && !final && !this.#stalled && this.#evaluate(stage);
   }
 
+  /** Keeps a speed change a server's live rate confirmed in the window, timed from the window's opening. */
+  #changed(stage: StageRun, id: string, dir: Direction, change: SpeedChange | null): void {
+    if (!change || stage.phase !== "measuring" || change.atMs < stage.opensAt) return;
+    const own = stage.changes.get(id) ?? {};
+    stage.changes.set(id, own);
+    const log = (own[dir] ??= []);
+    if (log.push({ ...change, atMs: change.atMs - stage.opensAt }) > INTERVAL_LIMIT) log.shift();
+  }
+
   #bytes(): number {
     let bytes = 0;
     for (const { id } of this.#servers) {
@@ -992,7 +1018,8 @@ export class Run {
     if (stage.activity.stage === "latency" || !this.#current(stage)) return;
     const seats = active(stage);
     if (!this.#stalled)
-      for (const seat of seats) this.#live.download(seat.server.id, seat.shown, now);
+      for (const { server, shown } of seats)
+        this.#changed(stage, server.id, "down", this.#live.download(server.id, shown, now));
     const rate = (dir: Direction) => {
       if (!transfer.includes(dir)) return null;
       if (this.#stalled) return 0;
@@ -1549,7 +1576,11 @@ export class Run {
             ? [seat.server.latency.result()]
             : stage.activity.transfer.map((dir) => {
                 const result = this.#aggregate.serverResult(name, dir, id);
-                this.#own.set(`${name}\t${dir}\t${id}`, result);
+                const changes = stage.changes.get(id)?.[dir];
+                this.#own.set(
+                  `${name}\t${dir}\t${id}`,
+                  result && changes ? { ...result, changes } : result,
+                );
                 return result;
               });
         const missing = stage.activity.transfer.filter((_, index) => !own[index]);

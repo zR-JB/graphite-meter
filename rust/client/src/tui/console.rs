@@ -864,12 +864,21 @@ impl App {
                 }
             }
         }
-        quiet = match state {
-            State::Ended(status @ (StageStatus::Failed | StageStatus::Partial)) => {
+        let ended = matches!(state, State::Ended(_));
+        let changes = run.filter(|_| ended).and_then(|run| run.change_line(stage));
+        quiet = match (state, changes) {
+            (State::Ended(status @ (StageStatus::Failed | StageStatus::Partial)), changes) => {
                 let (fallback, style) = self.ended(status);
-                Line::styled(self.failure(stage).unwrap_or(fallback.into()), style)
+                let failed = Line::styled(self.failure(stage).unwrap_or(fallback.into()), style);
+                match changes {
+                    Some(changes) => failed
+                        .and("; ", style)
+                        .and(text::lowered(&changes), palette.text),
+                    None => failed,
+                }
             }
-            State::Warmup => Line::styled(self.spinner(), palette.accent)
+            (State::Ended(_), Some(changes)) => Line::styled(changes, palette.text),
+            (State::Warmup, _) => Line::styled(self.spinner(), palette.accent)
                 .and(" Warming up, not counted", palette.muted),
             _ => quiet,
         };

@@ -21,6 +21,7 @@ import { tipGroup } from "../kit/rove";
 import { clip, term, tip } from "../kit/tip";
 import {
   cardLine,
+  changeLine,
   gridView,
   liveCard,
   resultSentence,
@@ -50,6 +51,8 @@ interface Figures {
 function Card(props: {
   card: Read<CardModel>;
   reason: Read<string>;
+  /** The speed changes the stage's servers confirmed, said after any reason. */
+  change: Read<string>;
   lens: Read<string>;
   strip?: () => Node | null;
 }): {
@@ -131,14 +134,17 @@ function Card(props: {
     );
   });
   const unknown = computed(() => card().facts.every((fact) => fact.value === MISSING));
-  // The line: a failure's reason, which a card never reached keeps too, else the wire rate, else latency's jitter.
-  const reason = props.reason;
+  // The line: a failure's reason, which a card never reached keeps too, and speed changes, else the wire rate, else
+  // latency's jitter.
+  const { reason, change } = props;
   const wire = computed(() => card().wire?.value ?? "");
   const overhead = computed(() => card().wire?.overhead ?? "");
   const wireTip = computed(() => card().wire?.tip ?? "");
   const jitter = computed(() => (quiet() ? "" : (card().jitter ?? "")));
   const noData = computed(() => (quiet() ? "" : (card().noData ?? "")));
-  const line = computed(() => (reason() ? "reason" : wire() ? "wire" : jitter() ? "jitter" : null));
+  const line = computed(() =>
+    reason() ? "reason" : change() ? "change" : wire() ? "wire" : jitter() ? "jitter" : null,
+  );
   const strip = computed(() => props.strip?.() ?? null);
   const element = (
     <article
@@ -173,12 +179,19 @@ function Card(props: {
       <span class="line">
         {() => {
           const kind = line();
+          const changed = () => (
+            <span class="change" ref={clip()}>
+              {change}
+            </span>
+          );
           if (kind === "reason")
-            return (
+            return [
               <span class="reason" ref={clip()}>
                 {reason}
-              </span>
-            );
+              </span>,
+              <Show when={change}>{changed}</Show>,
+            ];
+          if (kind === "change") return changed();
           if (kind === "wire")
             return (
               <span class="wire">
@@ -370,6 +383,7 @@ export function ResultSummary(props: {
           : liveCard(stage, "unreached", NONE, props.units());
       }),
       reason: computed(() => cardLine(table(), stage, lens())),
+      change: computed(() => changeLine(props.result().multiServer, stage, lens(), props.units())),
       lens,
     }).element;
   return (
@@ -544,6 +558,9 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
         const table = run.table();
         return table ? cardLine(table, stage, lens()) : "";
       }),
+      change: computed(() =>
+        settled(evidence().status[stage]) ? changeLine(details(), stage, lens(), units()) : "",
+      ),
       lens,
       strip: strip(stage),
     });

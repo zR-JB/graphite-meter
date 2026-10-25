@@ -12,7 +12,8 @@ use std::{
 const MIN_EVIDENCE: Duration = Duration::from_millis(800);
 /// A peak window spans at least this much on every clock.
 const MIN_PEAK: Duration = Duration::from_millis(500);
-const MAX_INTERVALS: usize = 128;
+/// A result keeps this many latest intervals, and the view this many speed changes per stage and direction.
+pub const MAX_INTERVALS: usize = 128;
 
 /// Holds one upload receiver's counters. A replacement receiver has a higher `id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

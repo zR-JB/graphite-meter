@@ -11,6 +11,7 @@
     "e2e/faults.test.ts": 38856,
     "e2e/app.test.ts": 38618,
     "e2e/network/throttle.test.ts": 36000,
+    "e2e/network/change.test.ts": 30000,
     "e2e/interaction.test.ts": 31348,
     "e2e/access.test.ts": 25100,
     "e2e/controls.test.ts": 22683,

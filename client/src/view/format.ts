@@ -144,6 +144,18 @@ export function fmtDuration(ms: Value, digits = 1): string {
   return pair(Math.floor(minutes / 60), "h", minutes % 60, "min");
 }
 
+/** A confirmed speed change, both rates in the larger one's unit: "Dropped from 900.0 to 500.0 Mbit/s at 2 min 10 s". */
+export function speedChange(
+  change: { atMs: number; fromBytesPerSec: number; toBytesPerSec: number },
+  units: RateUnits,
+): string {
+  const { fromBytesPerSec: from, toBytesPerSec: to } = change;
+  const tier = units.tier ?? rateTier(Math.max(from, to), units);
+  const speed = (rate: number) => fmtSpeed(toRateUnit(rate, units, tier));
+  const verb = to < from ? "Dropped" : "Rose";
+  return `${verb} from ${speed(from)} to ${speed(to)} ${rateUnit(units, tier)} at ${fmtDuration(change.atMs)}`;
+}
+
 /** A stage's planned time as the steppers show it: 0.5 s, 45 s, 1 min 30 s, 2 h. */
 export const fmtStageTime = guarded((ms) => {
   const seconds = Math.max(0, ms) / 1000;
