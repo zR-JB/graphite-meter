@@ -16,12 +16,12 @@ fn usage() -> String {
 }
 
 #[test]
-fn help_prints_the_usage_to_stderr() {
+fn help_prints_the_usage_to_stdout() {
     for arg in ["-h", "-help", "--help"] {
         let output = client(&[arg]);
         assert_eq!(output.status.code(), Some(0));
-        assert!(output.stdout.is_empty());
-        assert_eq!(text(output.stderr), usage());
+        assert!(output.stderr.is_empty());
+        assert_eq!(text(output.stdout), usage());
     }
 }
 
