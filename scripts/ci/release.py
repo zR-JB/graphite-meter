@@ -155,6 +155,39 @@ def require_publishable(repository: str, release: Release) -> tuple[str, int, st
     return main, ci_run_id, str(codeql_id)
 
 
+BREAKING = "breaking change"
+
+
+def breaking_since(repository: str, sha: str) -> tuple[str, list[int]]:
+    """The latest release's version and the PRs labelled BREAKING merged after it, up to `sha`."""
+    latest = gh.str_field(gh.expect_object(gh.api(f"repos/{repository}/releases/latest"), "latest release"),
+                          "tag_name", "latest release")
+    if STABLE.fullmatch(latest.removeprefix("v")) is None or not latest.startswith("v"):
+        gh.fail(f"the latest release {latest} is not a vMAJOR.MINOR.PATCH tag")
+    pages = gh.expect_array(gh.api(gh.query(f"repos/{repository}/compare/{latest}...{sha}", per_page=100),
+                                   paginate=True), "comparison pages")
+    commits = [commit for page in pages
+               for commit in gh.expect_array(gh.expect_object(page, "comparison").get("commits"), "comparison commits")]
+    breaking = set()
+    for commit in commits:
+        commit_sha = gh.str_field(gh.expect_object(commit, "commit"), "sha", "commit")
+        for value in gh.expect_array(gh.api(f"repos/{repository}/commits/{commit_sha}/pulls"), "commit pulls"):
+            pull = gh.expect_object(value, "pull")
+            labels = gh.expect_array(pull.get("labels"), "pull labels")
+            if any(gh.str_field(gh.expect_object(label, "label"), "name", "label") == BREAKING for label in labels):
+                breaking.add(gh.int_field(pull, "number", "pull"))
+    return latest.removeprefix("v"), sorted(breaking)
+
+
+def require_breaking_bump(previous: str, version: str, breaking: list[int]) -> None:
+    """After a breaking change, a 0.x release raises the minor version and a later one the major."""
+    old, new = (tuple(int(part) for part in value.split(".")) for value in (previous, version))
+    needed = (0, old[1] + 1, 0) if old[0] == 0 else (old[0] + 1, 0, 0)
+    if breaking and new < needed:
+        changes = ", ".join(f"#{number}" for number in breaking)
+        gh.fail(f"{changes} labelled '{BREAKING}' since v{previous}; tag v{'.'.join(map(str, needed))} or later")
+
+
 def command_prepare() -> None:
     repository, owner = env("REPOSITORY"), env("REPOSITORY_OWNER")
     main = env_sha("EVENT_SHA")
@@ -177,6 +210,9 @@ def command_prepare() -> None:
         gh.fail("prereleases name the exact commit they build in sha")
     if not pr and sha and sha != main:
         gh.fail(f"a prerelease without a PR builds main, which is {main}; sha must match")
+    if release.stable:
+        previous, breaking = breaking_since(repository, main)
+        require_breaking_bump(previous, release.version, breaking)
     if release.stable and (stale := screenshots.stale(release.tag)):
         gh.fail(stale)
     if pr:
