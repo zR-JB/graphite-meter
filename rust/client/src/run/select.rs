@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_reuses_a_whole_check_with_its_key_for_30_s() {
+    fn a_run_reuses_a_whole_check_with_its_key_for_20_s() {
         let at = Instant::now();
         let client = Client::new(false, Arc::new(Pool::inline()));
         let (key, catalog) = (config("-server a -stages down").key(), Arc::new([]));
@@ -437,7 +437,7 @@ mod tests {
             servers: vec![server("a", 30, None)],
         };
         let longer = config("-server a -stages down -download-duration 1m -warmup 2s").key();
-        let reuse = Duration::from_secs(30);
+        let reuse = Duration::from_secs(20);
         assert!(prepared.reusable(&longer, at + reuse));
         assert!(!prepared.reusable(&longer, at + reuse + Duration::from_millis(1)));
         assert!(!prepared.reusable(&config("-server a -stages down,up").key(), at));
