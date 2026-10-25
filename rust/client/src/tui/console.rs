@@ -854,7 +854,7 @@ impl App {
             {
                 quiet = Line::styled("Wire ", palette.muted)
                     .and(format!("{} {}", unit.figure(wire), unit.name), palette.text);
-                let overhead = format!("  +{:.1}%", (wire / mean - 1.0) * 100.0);
+                let overhead = format!("  +{}", format::percent(wire / mean - 1.0));
                 if quiet.width() + overhead.len() <= usize::from(width) {
                     quiet = quiet.and(overhead, palette.muted);
                 }
