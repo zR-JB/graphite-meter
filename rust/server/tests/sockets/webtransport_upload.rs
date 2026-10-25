@@ -7,7 +7,7 @@ use super::{
     *,
 };
 use graphite_meter_http3::webtransport::{RecvStream, SendStream, Session};
-use graphite_meter_proto::upload::Record;
+use graphite_meter_proto::{lane::MAX_LANE_STREAMS, upload::Record};
 use graphite_meter_server::limits::CONNECTION_CREDIT;
 
 pub(super) struct Feed {
@@ -123,6 +123,33 @@ async fn client_streams_count_beside_http_and_the_feed_completes_after_finalizat
         "a lane after finalization"
     );
     assert!(open(&session).await);
+}
+
+#[tokio::test]
+async fn a_session_reads_its_lane_cap_of_streams_at_once_and_stops_the_next() {
+    let h3 = H3::start(&[]).await;
+    let control = h3.connect(transport(None)).await;
+    let id = h3.server.upload_id().await;
+    let connection = h3.connect(transport(None)).await;
+    let session = connection.session(&format!("/wt/upload?id={id}")).await;
+    let mut feed = Feed::of(&session).await;
+    assert_eq!(feed.next().await, Some(Record::Ready));
+    let mut lanes = Vec::new();
+    for _ in 0..MAX_LANE_STREAMS {
+        lanes.push(lane(&session, 1000).await);
+    }
+    let read = 1000 * MAX_LANE_STREAMS as u64;
+    until_bytes(&control, &id, read).await;
+    let mut past = lane(&session, 1000).await;
+    let stopped = async {
+        while past.write_all(&[1; 1000]).await.is_ok() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), stopped)
+        .await
+        .expect("the stream past the cap is stopped");
+    until_bytes(&control, &id, read).await;
 }
 
 #[tokio::test]

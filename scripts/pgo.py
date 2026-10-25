@@ -1,9 +1,11 @@
 """Profile-guided optimization for reviewed Rust builds: train one architecture's profile on loopback transfers.
 
     python3 -m scripts.pgo TARGET [--profile {ci,release}] [--runner COMMAND]
+    python3 -m scripts.pgo --check DIRECTORY
 
 Runs instrumented server and TUI builds for TARGET through every listener and merges the profile that reviewed builds
 of its architecture use. RUNNER runs the binaries, such as an emulator; instrumented binaries are never shipped.
+--check runs the same transfers briefly with the server and TUI built in DIRECTORY, and records nothing.
 """
 
 import argparse
@@ -54,21 +56,31 @@ def wrapped(binary: Path, runner: list[str], directory: Path) -> Path:
     return wrapper
 
 
-def transfer(client: Path, server: Server, listener: str, direction: str, *extra: str) -> None:
+def transfer(client: Path, server: Server, listener: str, direction: str, seconds: int, *extra: str) -> None:
     protocol = "http1" if listener.startswith("http1") else listener
     command = [str(client), "--report", "--insecure", "--url", server.origin("http1"), "--stages", direction,
                "--streams", "4", "--throughput-origin", server.origin(listener), "--throughput-protocol", protocol,
                "--throughput-transport", "fetch-stream", "--warmup", "500ms", f"--{direction}-duration",
-               f"{SECONDS}s", *extra]
+               f"{seconds}s", *extra]
     # Training wants the code paths, not a measurement: an emulated TUI and server can miss the client's 1.5 s upload
     # checkpoint budget on a busy builder, so a failed transfer runs again.
     for attempt in range(1, ATTEMPTS + 1):
-        run = subprocess.run(command, capture_output=True, text=True, timeout=SECONDS * 30)
+        run = subprocess.run(command, capture_output=True, text=True, timeout=seconds * 30)
         if not run.returncode and re.search(r"[↓↑] (?:Download|Upload)\s+[\d.]+ \S+/s", run.stdout):
             return
         reason = (run.stderr.strip() or run.stdout.strip() or "no output").splitlines()[-1]
         print(f"training {listener} {direction}, attempt {attempt} of {ATTEMPTS}, failed: {reason}", file=sys.stderr)
     sys.exit(f"training {listener} {direction} failed:\n{run.stdout[-2000:]}{run.stderr[-2000:]}")
+
+
+def training(server_binary: Path, client: Path, runner: list[str], seconds: int) -> None:
+    fixture = Fixture("pgo-")
+    server_binary, client = (wrapped(binary, runner, fixture.directory) for binary in (server_binary, client))
+    with fixture.server(server_binary, "train") as server:
+        for listener, direction in TRAINING:
+            transfer(client, server, listener, direction, seconds, "--skip-loaded-latency=false")
+        transfer(client, server, "http3", "download", seconds, "--skip-loaded-latency=false", "--loaded-ping",
+                 "reply-driven", "--latency-transport", "webtransport", "--latency-origin", server.origin("http3"))
 
 
 def train(target: str, profile: str, runner: list[str]) -> Path:
@@ -78,14 +90,7 @@ def train(target: str, profile: str, runner: list[str]) -> Path:
     shutil.rmtree(raw, ignore_errors=True)
     raw.mkdir(parents=True)
     binaries = instrumented(target, profile, raw)
-    fixture = Fixture("pgo-")
-    server_binary = wrapped(binaries["graphite-meter-server"], runner, fixture.directory)
-    client = wrapped(binaries["graphite-meter-client"], runner, fixture.directory)
-    with fixture.server(server_binary, "train") as server:
-        for listener, direction in TRAINING:
-            transfer(client, server, listener, direction, "--skip-loaded-latency=false")
-        transfer(client, server, "http3", "download", "--skip-loaded-latency=false", "--loaded-ping", "reply-driven",
-                 "--latency-transport", "webtransport", "--latency-origin", server.origin("http3"))
+    training(binaries["graphite-meter-server"], binaries["graphite-meter-client"], runner, SECONDS)
     recorded = sorted(raw.glob("*.profraw"))
     if not recorded:
         sys.exit("training recorded no profile")
@@ -106,10 +111,16 @@ def llvm_profdata() -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("target")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("target", nargs="?")
+    mode.add_argument("--check", type=Path, metavar="DIRECTORY", help="run the transfers with these builds instead")
     parser.add_argument("--profile", choices=PROFILES, default="release")
     parser.add_argument("--runner", default="", help="a command that runs the target's binaries")
     args = parser.parse_args()
+    if args.check is not None:
+        training(args.check / "graphite-meter-server", args.check / "graphite-meter-client", [], 1)
+        print(f"PGO training transfers ran with {args.check}")
+        return
     workspace = load(ROOT)
     shipped = sorted({*workspace.tui.values(), *workspace.server.values()})
     # The target and profile come from the workspace and this module, never from the command line itself.

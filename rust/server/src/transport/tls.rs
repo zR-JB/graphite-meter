@@ -109,6 +109,8 @@ impl Certificates {
         drop(current);
         if changed {
             log_loaded(expires, now);
+            #[cfg(unix)]
+            warn_readable(&self.files.key);
         }
         Ok(changed)
     }

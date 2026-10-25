@@ -48,6 +48,8 @@ const RECHECK: Duration = Duration::from_millis(350);
 const FRAME: Duration = Duration::from_micros(16_667);
 const SPIN: Duration = Duration::from_millis(80);
 const TOAST: Duration = Duration::from_millis(3200);
+const FIRST_REPEAT: Duration = Duration::from_secs(2);
+const NEXT_REPEAT: Duration = Duration::from_millis(200);
 const SMALLEST: (u16, u16) = (60, 16);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -117,6 +119,39 @@ pub struct Exit {
     pub report: bool,
 }
 
+/// The key that last started or stopped a test, which a terminal without release events repeats as presses.
+struct Held {
+    key: Key,
+    did: Action,
+    at: Instant,
+    repeated: bool,
+}
+
+impl Held {
+    fn repeats(&mut self, now: Instant, releases: bool) -> bool {
+        let quiet = now.saturating_duration_since(self.at);
+        let repeat = releases
+            || quiet
+                < if self.repeated {
+                    NEXT_REPEAT
+                } else {
+                    FIRST_REPEAT
+                };
+        if repeat {
+            (self.at, self.repeated) = (now, true);
+        }
+        repeat
+    }
+
+    fn released(&self, code: KeyCode) -> bool {
+        let lower = |code: KeyCode| match code {
+            KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
+            code => code,
+        };
+        matches!(self.key, Key::Code(held) if lower(held) == lower(code))
+    }
+}
+
 struct Toast {
     text: Line,
     until: Instant,
@@ -134,6 +169,8 @@ pub struct App {
     setup: Setup,
     live: run::Live,
     toast: Option<Toast>,
+    held: Option<Held>,
+    releases: bool,
     stopping: bool,
     quitting: bool,
     interrupted: bool,
@@ -172,6 +209,8 @@ impl App {
             setup: Setup::default(),
             live: run::Live::default(),
             toast: None,
+            held: None,
+            releases: false,
             stopping: false,
             quitting: false,
             interrupted: false,
@@ -287,7 +326,7 @@ impl App {
                         Line::styled("Ready  ", self.palette.ok).and(ready, self.palette.text),
                     );
                 }
-                if current && !self.running() && servers.iter().all(|server| server.path.is_err()) {
+                if current && !self.running() && self.address_failed() {
                     self.unreachable();
                 }
                 if prepared && self.remembering && self.config.url != self.kept {
@@ -303,7 +342,7 @@ impl App {
             Event::CheckFailed(_) => {
                 self.setup.chooser = false;
                 // A sign-in that lapsed leaves the address as it is; a server that could not be reached opens it.
-                if !self.running() && matches!(self.view.check, Check::Failed(_)) {
+                if !self.running() && self.address_failed() {
                     self.unreachable();
                 }
             }
@@ -358,7 +397,7 @@ impl App {
         Vec::new()
     }
 
-    /// Opens the address again after its check found no server to run with, unless something else is open.
+    /// Opens the address again when it is to blame, unless something else is open.
     fn unreachable(&mut self) {
         if matches!(self.overlay, Overlay::None) && self.config.url.is_some() {
             self.ask_for_server();
@@ -368,7 +407,11 @@ impl App {
     pub fn input(&mut self, input: Input, now: Instant) -> Vec<Effect> {
         self.now = now;
         match input {
-            Input::Key(key) if key.kind != KeyEventKind::Release => return self.key(key, now),
+            Input::Key(key) if key.kind == KeyEventKind::Release => {
+                self.releases = true;
+                self.held = self.held.take().filter(|held| !held.released(key.code));
+            }
+            Input::Key(key) => return self.key(key, now),
             Input::Paste(text) => {
                 // An address pasted over the console is the server to test.
                 if matches!(self.overlay, Overlay::None) && !self.running() {
@@ -431,8 +474,14 @@ impl App {
 
     fn click(&mut self, target: Target) -> Vec<Effect> {
         match target {
-            Target::Key if self.running() => return self.stop(),
-            Target::Key => return self.start(),
+            Target::Key if self.running() => {
+                self.held = None;
+                return self.stop();
+            }
+            Target::Key => {
+                self.held = None;
+                return self.start();
+            }
             Target::Chip(stage) => self.switch(stage),
             // A cap pressed while typing does what its key does in the editor, and any other cap leaves the editor.
             Target::Cap(Action::Apply) if self.editor().is_some() => {
@@ -493,6 +542,23 @@ impl App {
             return self.edit_key(key);
         }
         let action = keys::find(self.table(), key, |action| self.offers(action));
+        if let Some(toggle @ (Action::Start | Action::Stop)) = action {
+            let (now, releases) = (self.now, self.releases);
+            if let Some(held) = self
+                .held
+                .as_mut()
+                .filter(|held| held.key == key && held.did != toggle)
+                && held.repeats(now, releases)
+            {
+                return Vec::new();
+            }
+            self.held = Some(Held {
+                key,
+                did: toggle,
+                at: self.now,
+                repeated: false,
+            });
+        }
         action.map_or_else(Vec::new, |action| self.act(action, key))
     }
 

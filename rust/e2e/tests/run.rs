@@ -85,7 +85,7 @@ async fn relayed() -> (Server, Link) {
         .trim_start_matches("http://")
         .parse()
         .unwrap();
-    (server, Link::tcp(address, Duration::ZERO).await.unwrap())
+    (server, Link::tcp(address).await.unwrap())
 }
 
 fn results(events: &[Event]) -> Vec<&StageResult> {

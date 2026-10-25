@@ -1,6 +1,7 @@
 //! The interface without a terminal: keys, pointer, events, signals and ticks in; frames, chrome, effects and exits out.
 use crossterm::event::{
-    Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
@@ -328,6 +329,74 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
 }
 
 #[test]
+fn only_an_address_out_of_reach_opens_the_address_and_another_cause_is_said_on_the_dial() {
+    let origin = Origin::parse("https://a.example").unwrap();
+    let failed = |text: &str, reason| {
+        let mut server = prepared_server("a", &origin);
+        server.path = Err(Failure::new(reason, text));
+        Event::Prepared {
+            servers: Arc::new([server]),
+            catalog: Arc::new([]),
+        }
+    };
+    let (mut app, now) = app();
+    app.event(&Event::Checking(Kind::Check), now);
+    app.event(
+        &failed(
+            "measurement capacity reached",
+            FailureReason::ServerCapacity,
+        ),
+        now,
+    );
+    let rows = frame(&mut app, now);
+    assert!(
+        !shows(&mut app, now, "Connect to a server")
+            && shows(&mut app, now, "A: server at capacity"),
+        "{rows:#?}"
+    );
+    assert!(rows.last().unwrap().starts_with("Could not start the test"));
+    let (mut app, now) = self::app();
+    app.event(&Event::Checking(Kind::Check), now);
+    app.event(
+        &failed(
+            graphite_meter_client::net::UNREACHABLE,
+            FailureReason::PathFailed,
+        ),
+        now,
+    );
+    assert!(
+        shows(&mut app, now, "Connect to a server") && shows(&mut app, now, "Could not reach A")
+    );
+    assert!(shows(
+        &mut app,
+        now,
+        "Check the address and that the server is running"
+    ));
+    for (reason, text) in [
+        (
+            FailureReason::PathFailed,
+            "explicit origins need a single test server",
+        ),
+        (
+            FailureReason::SignInRequired,
+            "Sign-in needs TLS verification",
+        ),
+    ] {
+        let (mut app, now) = self::app();
+        app.event(&Event::Checking(Kind::Check), now);
+        app.event(&Event::CheckFailed(Failure::new(reason, text)), now);
+        let rows = frame(&mut app, now);
+        assert!(
+            !shows(&mut app, now, "Connect to a server")
+                && shows(&mut app, now, &format!("meter.example: {}", &text[..20])),
+            "{rows:#?}"
+        );
+        press(&mut app, KeyCode::Char('d'), now);
+        assert!(shows(&mut app, now, text), "Details say it whole");
+    }
+}
+
+#[test]
 fn a_canceled_or_expired_sign_in_asks_again_on_the_next_start() {
     for (end, notice) in [
         (SignInEnd::Canceled, "Sign-in canceled"),
@@ -423,6 +492,47 @@ fn quitting_during_a_run_stops_it_first_and_ends_with_the_signal_s_status() {
 }
 
 #[test]
+fn a_held_run_key_never_stops_the_test_it_started_and_a_second_tap_does() {
+    let space = KeyCode::Char(' ');
+    let started = |now| {
+        let mut app = App::new(config(), None, (Profile::Plain, Palette::new(true)), now);
+        assert_matches!(command(&press(&mut app, space, now)), Command::Run(_));
+        app
+    };
+    let now = Instant::now();
+    let after = |ms: u64| now + Duration::from_millis(ms);
+    let mut app = started(now);
+    for at in (0..30).map(|repeat| after(1500 + 33 * repeat)) {
+        assert_eq!(press(&mut app, space, at), [], "a repeat of the held key");
+    }
+    assert_eq!(
+        command(&press(&mut app, space, after(1500 + 33 * 29 + 300))),
+        &Command::Stop
+    );
+
+    let mut app = started(now);
+    assert_eq!(
+        press(&mut app, space, after(700)),
+        [],
+        "a first tap reads as a repeat"
+    );
+    assert_eq!(
+        command(&press(&mut app, space, after(1400))),
+        &Command::Stop,
+        "a second tap stops"
+    );
+
+    let mut app = started(now);
+    let release = KeyEvent::new_with_kind(space, KeyModifiers::NONE, KeyEventKind::Release);
+    app.input(Input::Key(release), after(100));
+    assert_eq!(
+        command(&press(&mut app, space, after(200))),
+        &Command::Stop,
+        "a terminal that reports the release lets the next press stop at once"
+    );
+}
+
+#[test]
 fn esc_space_and_r_stop_a_run_after_esc_closes_a_sheet_and_quitting_reports_it() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
@@ -472,7 +582,7 @@ fn esc_space_and_r_stop_a_run_after_esc_closes_a_sheet_and_quitting_reports_it()
         Command::Run(_)
     );
     assert_eq!(
-        command(&press(&mut app, KeyCode::Char(' '), now)),
+        command(&press(&mut app, KeyCode::Char(' '), now + SECOND * 2)),
         &Command::Stop,
         "space stops a test still checking its paths"
     );
