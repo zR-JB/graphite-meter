@@ -88,14 +88,16 @@ runs:
     - name: Cache Bun packages
       if: inputs.client-deps == 'true' && inputs.cache == 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with: &bun-cache
+      with:
         path: ~/.bun/install/cache
         key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock') }}
 
     - name: Restore cached Bun packages
       if: inputs.client-deps == 'true' && inputs.cache == 'true' && github.ref != 'refs/heads/main'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with: *bun-cache
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock') }}
 
     - name: Install client dependencies
       if: inputs.client-deps == 'true'
@@ -112,7 +114,7 @@ runs:
     - name: Cache Cargo downloads and builds
       if: inputs.rust == 'true' && inputs.cache == 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with: &cargo-cache
+      with:
         path: |
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
@@ -124,4 +126,11 @@ runs:
     - name: Restore cached Cargo downloads and builds
       if: inputs.rust == 'true' && inputs.cache == 'true' && github.ref != 'refs/heads/main'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with: *cargo-cache
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          rust/target
+        key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.lock') }}
+        restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-
