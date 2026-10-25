@@ -10,7 +10,7 @@ test("a JSON body is read up to its bound and refused past it, 64 KiB unless nam
   expect(await readJSON(new Response(body), body.length)).toEqual(document);
 });
 
-test("the shared preflight and probe fixtures decode", async () => {
+test("the shared preflight, probe and catalog fixtures decode", async () => {
   const golden = await json("preflight.golden.json");
   expect(preflight(golden)).toEqual(golden);
   const forward = await json("preflight.forward.golden.json");
@@ -19,6 +19,11 @@ test("the shared preflight and probe fixtures decode", async () => {
   const { throughput, latency } = preflight({ ...forward.document, capabilities }).capabilities;
   expect({ throughput, latency }).toEqual(forward.decoded);
   expect(probe(await json("probe.golden.json"))).toEqual(await json("probe.golden.json"));
+  const servers = await json("servers.golden.json");
+  expect(catalog(servers, "http://speed.example:7246")).toEqual({
+    ...servers,
+    servers: [{ ...servers.servers[0], url: "http://speed.example:7246" }, servers.servers[1]],
+  });
 });
 
 test("a document with a malformed target, capability, stage limit or text is refused whole", async () => {

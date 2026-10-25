@@ -29,11 +29,9 @@ fn main() -> ExitCode {
     let program = args.next().unwrap_or_default();
     let usage = || config::usage(&text::clean(&program.to_string_lossy(), usize::MAX));
     match config::parse(args) {
-        Ok(Parsed::Help) => eprint!("{}", usage()),
-        Ok(Parsed::Version) => {
-            return written(format!("graphite-meter-client {VERSION}\n").as_bytes());
-        }
-        Ok(Parsed::Legal) => return legal(),
+        Ok(Parsed::Help) => written(usage().as_bytes()),
+        Ok(Parsed::Version) => written(format!("graphite-meter-client {VERSION}\n").as_bytes()),
+        Ok(Parsed::Legal) => legal(),
         Ok(Parsed::Run(mut config)) => {
             let kept = config::kept_server().and_then(|path| config::recall(&path));
             if config.url.is_none() {
@@ -47,19 +45,17 @@ fn main() -> ExitCode {
                 );
                 return ExitCode::from(USAGE_ERROR);
             }
-            return run(*config, kept, interactive)
-                .unwrap_or_else(|error| fail(&error.to_string()));
+            run(*config, kept, interactive).unwrap_or_else(|error| fail(&error.to_string()))
         }
         Err(Refusal::Flag(error)) => {
             eprint!("{error}\n{}", usage());
-            return ExitCode::from(USAGE_ERROR);
+            ExitCode::from(USAGE_ERROR)
         }
         Err(Refusal::Argument(error)) => {
             eprintln!("graphite-meter-client: {error}");
-            return ExitCode::from(USAGE_ERROR);
+            ExitCode::from(USAGE_ERROR)
         }
     }
-    ExitCode::SUCCESS
 }
 
 fn fail(error: &str) -> ExitCode {

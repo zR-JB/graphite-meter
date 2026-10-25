@@ -40,21 +40,23 @@ export const NETWORK_FLEET: Server[] = [11, 12, 13, 14].map((n, i) => {
 // Below the Linux ephemeral range, so no outgoing connection takes one first; reservation files split the ports.
 const FIRST_PORT = 20_000;
 const PORTS = 12_000;
+const PORT_TRIES = 100;
 export async function freePort(): Promise<number> {
-  for (;;) {
+  for (let tries = 0; tries < PORT_TRIES; tries++) {
     const port = FIRST_PORT + Math.floor(Math.random() * PORTS);
     try {
       closeSync(openSync(join(tmpdir(), `gm-port-${port}`), "wx"));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
-      throw error;
-    }
-    try {
       Bun.listen({ hostname: host, port, socket: { data() {} } }).stop(true);
       (await Bun.udpSocket({ hostname: host, port })).close();
       return port;
-    } catch {}
+    } catch (error) {
+      const { code } = error as NodeJS.ErrnoException;
+      if (code !== "EEXIST" && code !== "EADDRINUSE") throw error;
+    }
   }
+  throw new Error(
+    `No free TCP and UDP port on ${host} in ${PORT_TRIES} tries of ${FIRST_PORT}-${FIRST_PORT + PORTS - 1}`,
+  );
 }
 
 export async function describe(id: string, name: string): Promise<Server> {
