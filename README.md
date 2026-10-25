@@ -52,8 +52,9 @@ It still runs behind nginx, Caddy or Traefik when you need one; see [reverse pro
 docker run -d --name graphite-meter --restart unless-stopped -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open `http://SERVER_IP:7246`. Over plain HTTP the test uses HTTP/1.1 and WebSocket; HTTP/2, HTTP/3 and WebTransport need TLS
-from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse proxy](docs/DEPLOYMENT.md#reverse-proxies).
+Open `http://SERVER_IP:7246`. Over plain HTTP the test uses HTTP/1.1 and WebSocket; HTTP/2 and HTTP/3 need TLS from
+the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a
+[reverse proxy](docs/DEPLOYMENT.md#reverse-proxies), and WebTransport needs the native HTTP/3 listener.
 
 ## Terminal
 
