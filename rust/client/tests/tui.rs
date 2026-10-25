@@ -186,12 +186,9 @@ fn prompt(now: Instant) -> SignInPrompt {
 /// A run of `plan` over `names`, started with enter and prepared at `now`.
 fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     let stages = plan.iter().map(|(stage, _)| *stage).collect();
-    let mut app = App::new(
-        Config { stages, ..config() },
-        None,
-        (Profile::Plain, Palette::new(true)),
-        now,
-    );
+    let settings = Config { stages, ..config() };
+    let loaded_latency = settings.loaded_latency();
+    let mut app = App::new(settings, None, (Profile::Plain, Palette::new(true)), now);
     assert_matches!(
         command(&press(&mut app, KeyCode::Enter, now)),
         Command::Run(_)
@@ -213,6 +210,7 @@ fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
             plan: plan.to_vec(),
             focus: id(names[0]),
             at: now,
+            loaded_latency,
         },
         now,
     );
@@ -1049,6 +1047,29 @@ fn the_progress_bar_counts_a_stage_that_ended_partial() {
     assert_eq!(progress(&mut app, later), Progress::Share(50));
 }
 
+#[test]
+fn a_finished_run_keeps_its_loaded_latency_lanes_whatever_the_next_run_s_settings() {
+    let now = Instant::now();
+    let plan = [(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 10)];
+    let mut app = running(&["a"], &plan, now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    app.event(&Event::StageFinished(result_of(Stage::Download)), now);
+    app.event(&ended(Outcome::Complete), now);
+    assert!(shows(&mut app, now, "Loaded down"));
+    press(&mut app, KeyCode::Char('1'), now);
+    assert!(
+        shows(&mut app, now, "Loaded down"),
+        "turning the Latency stage off, which skips loaded latency next time, leaves this run's"
+    );
+    let mut app = running(&["a"], &plan[1..], now);
+    app.event(&ended(Outcome::Complete), now);
+    press(&mut app, KeyCode::Char('1'), now);
+    assert!(
+        !shows(&mut app, now, "Loaded down"),
+        "a run that skipped loaded latency gets no lane from the next run's settings"
+    );
+}
+
 fn downloaded(now: Instant) -> App {
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     measuring(&mut app, Stage::Download, SECOND * 10, now);
@@ -1097,6 +1118,7 @@ fn results_stay_until_the_next_run_starts_and_a_start_that_ends_first_keeps_them
             plan: vec![(Stage::Upload, SECOND * 10)],
             focus: id("a"),
             at: now,
+            loaded_latency: true,
         },
         now,
     );
