@@ -105,7 +105,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   });
   // A failed server's missing facts will not arrive.
   const unreachable = computed(() => !issues().length && view()?.readiness === "failed");
-  const unknown = () => (unreachable() ? MISSING : "Pending");
+  const unknown = () => (unreachable() ? MISSING : "Known after the check");
 
   const latencyNeeded = computed(() => {
     const frozen = prepared();
@@ -159,7 +159,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       : loadSummary(facts().throughput?.probe.load),
   );
   const supports = (items: string[] | null) =>
-    items === null ? ["Checking server"] : items.length ? items : ["None advertised"];
+    items === null ? ["Waiting for the server"] : items.length ? items : ["None advertised"];
 
   const copied = signal<"" | "copied" | "failed">("");
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -279,13 +279,13 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
               </div>
             )}
           </Show>
-          {fact("Name", () => shown()?.name ?? "Checking server")}
+          {fact("Name", () => shown()?.name ?? "Waiting for the server")}
           <Show when={shown}>{(server) => fact("Address", () => server().url)}</Show>
           <Show when={() => shown()?.location}>{(where) => fact("Location", where)}</Show>
           <Show when={load}>
             {(text) => (
               <div>
-                <dt ref={term(() => TIP.serverLoad)}>Load</dt>
+                <dt ref={term(() => TIP.serverLoad)}>Server load</dt>
                 <dd>{text}</dd>
               </div>
             )}
@@ -323,7 +323,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
                   <span>
                     {() => {
                       if (!measured()) return mode() === "live" ? "Not selected" : "Not measured";
-                      return pathSummary(discovery(), role, target(role));
+                      return pathSummary(discovery(), role, target(role)) ?? unknown();
                     }}
                   </span>
                   <Show when={measured}>
@@ -347,7 +347,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
             );
           })}
           <div>
-            <dt ref={term(() => TIP.pathEvidence)}>Evidence</dt>
+            <dt ref={term(() => TIP.pathEvidence)}>HTTP version</dt>
             <dd>
               {() => {
                 const path = facts().throughput;
@@ -365,11 +365,11 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
             () => TIP.forcedStreams,
             () => streams().aside,
           )}
-          {fact("Upload feed", uploadFeed, () => TIP.uploadFeed)}
+          {fact("Upload progress", uploadFeed, () => TIP.uploadFeed)}
           <Show when={latencyNeeded}>
             {() =>
               fact(
-                "Path check round trip",
+                "Round trip when checked",
                 () => {
                   const rttMs = facts().latency?.rttMs;
                   return rttMs == null ? unknown() : fmtLatency(rttMs);

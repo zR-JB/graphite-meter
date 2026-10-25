@@ -389,16 +389,16 @@ export const TIP = {
     "HTTP/1.1 stream limit\nParallel HTTP/1.1 requests per direction\nHTTP/2 and HTTP/3 choose their own",
   datagramThroughput:
     "Datagram throughput\nAdds WebTransport datagrams as a path\nNever resent; expect lower rates than streams",
-  pathEvidence: "Evidence\nThe HTTP version each side observed",
-  uploadFeed: "Upload feed\nHow the server reports upload bytes back",
+  pathEvidence: "HTTP version\nThe HTTP version the browser and the server each saw",
+  uploadFeed: "Upload progress\nHow the server reports the upload bytes it received",
   clientAddress:
     "Your address\nAs the server saw it: proxy header or socket\nHidden until you press the eye beside it",
   serverLoad:
-    "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
+    "Server load\nTests on the server, of the most it admits, when its paths were checked\nPast half of them, they share the bandwidth",
   client: "Client\nThis page's build of the browser client",
   serverInstance: "Server\nEngine version; the instance changes on restart",
   pathCheckRoundTrip:
-    "Path check round trip\nMedian round trip of the path check\nThe shown server's sizes the warmup",
+    "Round trip when checked\nMedian round trip while its paths were checked\nThe latency server's stretches each warmup to ten round trips, up to 4 s",
 } as const;
 
 export const preflightNote = (ms: string) =>
