@@ -378,7 +378,7 @@ async fn log_verbose(app: &App) {
                 }
                 last = now;
             }
-            _ = admission.tick() => log!(Info, "admission", "{}", app.quotas().admission()),
+            _ = admission.tick() => log!(Info, "admission", "{}", app.quotas().admission(app.budget())),
         }
     }
 }
