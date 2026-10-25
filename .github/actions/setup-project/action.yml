@@ -114,3 +114,17 @@ runs:
           rust/target
         key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.lock') }}
         restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-
+
+    - id: day
+      name: Name today's advisory database cache
+      if: inputs.cargo-deny == 'true' && inputs.cache == 'true'
+      shell: bash
+      run: printf 'utc=%s\n' "$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the latest advisory database, so the checks' fetch is incremental
+      if: inputs.cargo-deny == 'true' && inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cargo/advisory-dbs
+        key: advisory-db-${{ runner.os }}-${{ steps.day.outputs.utc }}
+        restore-keys: advisory-db-${{ runner.os }}-

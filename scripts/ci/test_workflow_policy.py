@@ -115,8 +115,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RELEASE, "head_branch == 'main'\n", "head_branch != ''\n      # && github.event.workflow_run.head_branch == 'main'\n",
      "head_branch == 'main'"),
     (SETUP, "        python3 scripts/ci/toolchains.py verify-rust\n", "", "verify-rust"),
-    (W + "advisories.yml", "run: cargo deny --locked check advisories\n", "run: cargo deny --locked check bans\n",
-     "check advisories"),
+    (W + "advisories.yml", "run: cargo deny --locked --offline check advisories\n",
+     "run: cargo deny --locked --offline check bans\n", "check advisories"),
+    (W + "advisories.yml", "run: mise run rust-deny-fetch\n", "run: true\n", "rust-deny-fetch"),
     (REQUEST, PREPARE, PREPARE + "\n      - run: echo \"$RAW\"\n        env:\n"
      "          RAW: ${{ inputs.sha }}\n", "only the request validator"),
     (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),

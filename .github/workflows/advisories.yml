@@ -24,9 +24,11 @@ jobs:
       - name: Set up Rust, pinned cargo-deny and the client's dependencies
         uses: ./.github/actions/setup-project
         with: {rust: 'true', cargo-deny: 'true', bun: 'true', client-deps: 'true', cache: 'false'}
+      - name: Fetch the live advisory database and the locked crates
+        run: mise run rust-deny-fetch
       - name: Check the locked Rust dependencies against the live advisory database
         working-directory: rust
-        run: cargo deny --locked check advisories
+        run: cargo deny --locked --offline check advisories
       - name: Require a verdict on every advisory the Cargo forks inherit
         run: python3 -m scripts.legal.check_fork_advisories
       - name: Check the client's locked dependencies against the registry advisory database

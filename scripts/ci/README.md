@@ -40,9 +40,10 @@ cache. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, wit
 unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.
 `rust-check` checks the locked crates and the Cargo forks' advisory verdicts against the RustSec database it
 fetches, so a new advisory fails every pull request that runs the Rust checks; `advisories.yml` repeats both daily
-and checks the client packages against the registry's advisories. Pull requests and pushes test the browsers
-`mise.toml` pins; the daily CI run tests the latest stable Chrome for Testing and Firefox, without caches, and
-`mise run browser-bump` moves the pins to them.
+and checks the client packages against the registry's advisories. `rust-deny-fetch` retries a failed fetch twice
+and never falls back to an older copy; CI saves the database once a day and restores the newest, so the fetch is
+incremental. Pull requests and pushes test the browsers `mise.toml` pins; the daily CI run tests the latest stable
+Chrome for Testing and Firefox, without caches, and `mise run browser-bump` moves the pins to them.
 
 ## Releases
 
