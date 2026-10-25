@@ -36,7 +36,7 @@ fn main() -> ExitCode {
         },
         [only] if only == "hash-password" => hash_password().err().map(|error| ("auth", error)),
         [only] if only == "healthcheck" => healthcheck().err().map(|error| ("health", error)),
-        _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
+        _ => match load(args) {
             Ok(Loaded::Help) => None,
             Ok(Loaded::Config(config)) => {
                 if let Some(zone) = &config.log_zone {
@@ -62,6 +62,16 @@ fn main() -> ExitCode {
     };
     log::flush();
     status
+}
+
+fn load(args: Vec<std::ffi::OsString>) -> Result<Loaded, String> {
+    let mut usage = Vec::new();
+    let loaded = config::load(|name| std::env::var_os(name), args, &mut usage);
+    let _ = match loaded {
+        Ok(Loaded::Help) => io::stdout().write_all(&usage),
+        _ => io::stderr().write_all(&usage),
+    };
+    loaded
 }
 
 /// Prints the notices. The status is 141 into a closed pipe on Unix.

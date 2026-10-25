@@ -170,7 +170,10 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
         let parsed = ListenAddress::parse(address);
         let parsed =
             parsed.ok_or_else(|| format!("{}_ADDR must be :port or host:port", kind.env()))?;
-        if let Some((other, ..)) = enabled.iter().find(|(_, known, _)| *known == parsed) {
+        if let Some((other, ..)) = enabled
+            .iter()
+            .find(|(_, known, _)| *known == parsed && parsed.port != 0)
+        {
             return Err(format!(
                 "{}_ADDR and {}_ADDR must differ",
                 other.env(),

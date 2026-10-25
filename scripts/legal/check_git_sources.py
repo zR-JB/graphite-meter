@@ -25,9 +25,24 @@ SHA = re.compile(r"[0-9a-f]{40}")
 WORKSPACE_FILES = {"Cargo.toml", "Cargo.lock"}
 
 
-def git(directory: Path, *args: str) -> str:
+def git(directory: Path, *args: str, timeout: float = 600) -> str:
     return subprocess.run(["git", "-C", str(directory), *args], check=True, text=True,
-                          capture_output=True, timeout=600).stdout
+                          capture_output=True, timeout=timeout).stdout
+
+
+def fetch(directory: Path, url: str, ref: str) -> None:
+    """Commits and trees, all the checks read."""
+    for attempt in (1, 2):
+        try:
+            git(directory, "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30", "fetch", "-q",
+                "--filter=blob:none", url, f"+{ref}:{ref}", timeout=120)
+            return
+        except subprocess.TimeoutExpired as error:
+            if attempt == 2:
+                raise subprocess.CalledProcessError(1, error.cmd, stderr=f"no answer in {error.timeout:.0f} s")
+        except subprocess.CalledProcessError:
+            if attempt == 2:
+                raise
 
 
 def ancestor(directory: Path, older: str, newer: str) -> bool:
@@ -62,8 +77,8 @@ def check_fork(fork: dict, directory: Path) -> list[str]:
     branch, tag = f"refs/heads/{fork['branch']}", f"refs/tags/{fork['baseTag']}"
     git(directory.parent, "init", "-q", "--bare", str(directory))
     try:
-        git(directory, "fetch", "-q", fork["fork"], f"+{branch}:{branch}")
-        git(directory, "fetch", "-q", fork["upstream"], f"+{tag}:{tag}")
+        fetch(directory, fork["fork"], branch)
+        fetch(directory, fork["upstream"], tag)
     except subprocess.CalledProcessError as error:
         return [f"{name}: branch {fork['branch']} or upstream tag {fork['baseTag']} is unavailable: "
                 + error.stderr.strip()]

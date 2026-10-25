@@ -4,6 +4,7 @@ run-name: CI · ${{ github.event_name }} · ${{ github.ref_name }} · ${{ github
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   # Pull requests test the pinned browsers; the daily run tests the latest stable ones.
@@ -17,7 +18,7 @@ env:
   MISE_AUTO_INSTALL: '0'
 
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ci-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -30,6 +31,7 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
+      full: ${{ (github.event_name != 'pull_request' || steps.filter.outputs.code == 'true') && !github.event.pull_request.draft }}
       chrome: ${{ steps.browsers.outputs.chrome }}
       firefox: ${{ steps.browsers.outputs.firefox }}
       firefox_sha256: ${{ steps.browsers.outputs.firefox_sha256 }}
@@ -80,6 +82,9 @@ jobs:
           - name: Check the browser client
             if: needs.plan.outputs.code == 'true'
             run: mise run client-ci
+          - name: Check the client's locked dependencies against the registry advisory database
+            if: needs.plan.outputs.code == 'true'
+            run: mise run client-audit
           # A warning only: the stable release request is what refuses stale screenshots.
           - name: Note stale README screenshots
             run: python3 scripts/ci/screenshots.py warn
@@ -102,13 +107,15 @@ jobs:
         with: {rust: 'true', cargo-deny: 'true', cargo-nextest: 'true'}
       - name: Check Rust formatting, dependency policy, lints and tests
         run: mise run rust-check
+      - name: Run the release build's PGO training transfers once with the debug builds
+        run: python3 -m scripts.pgo --check rust/target/debug
 
   rust-delayed:
     name: Delayed-link download gate
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,7 +131,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     env:
       CARGO_INCREMENTAL: '0'
     steps:
@@ -169,7 +176,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     defaults:
       run: {shell: bash}
     env:
@@ -195,7 +202,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     env:
       VERSION: 0.0.0-ci
     steps:
@@ -223,7 +230,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     env:
       VERSION: 0.0.0-ci
       GM_CLIENT_REVISION: source
@@ -276,7 +283,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 40
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     # One runner per TUI platform of rust/Cargo.toml; staging refuses a missing or extra archive.
     strategy:
       matrix:
@@ -320,7 +327,7 @@ jobs:
     runs-on: windows-11-arm
     timeout-minutes: 15
     needs: [plan, tui]
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     defaults:
       run: {shell: bash}
     env:
@@ -349,7 +356,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: [plan, image, tui]
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     env:
       VERSION: 0.0.0-ci
     steps:
@@ -388,7 +395,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     needs: [plan, server]
-    if: needs.plan.outputs.code == 'true'
+    if: needs.plan.outputs.full == 'true'
     # The surface-reversal file runs its widths serially under CPU throttling, so it takes a Chrome runner of its own;
     # tests that need the DevTools Protocol run in Chrome only. The network group runs one test at a time.
     strategy:
@@ -506,6 +513,7 @@ jobs:
       - name: Require every selected job
         env:
           NEEDS: ${{ toJSON(needs) }}
+          DRAFT: ${{ github.event.pull_request.draft == true }}
         run: |
           set -eu
           {
@@ -516,3 +524,7 @@ jobs:
             echo "::error::CI Gate failed; inspect the summary table for the failing job"
             exit 1
           }
+          if [ "$DRAFT" = true ]; then
+            echo "::error::A draft runs only the quick checks; mark it ready for review for the full CI"
+            exit 1
+          fi

@@ -57,11 +57,14 @@ class ForkTests(unittest.TestCase):
         git(self.root, "clone", "-q", str(self.upstream), str(self.fork))
         git(self.fork, "checkout", "-q", "-b", "gm/v1")
         self.rev = commit(self.fork, "pkg/lib.rs", "fix pkg")
+        for repository in (self.upstream, self.fork):
+            git(repository, "config", "uploadpack.allowFilter", "true")
+        self.name = self.fork.as_uri()
         self.checks = 0
 
     def record(self) -> dict:
         changes = git(self.fork, "diff-tree", "-r", "--no-renames", "--full-index", self.base, self.rev) + "\n"
-        return {"fork": str(self.fork), "branch": "gm/v1", "rev": self.rev, "upstream": str(self.upstream),
+        return {"fork": self.name, "branch": "gm/v1", "rev": self.rev, "upstream": self.upstream.as_uri(),
                 "baseTag": "v1", "base": self.base, "diffSha256": hashlib.sha256(changes.encode()).hexdigest(),
                 "modifiedPackages": ["pkg"], "commits": [{"subject": "fix pkg"}]}
 
@@ -69,23 +72,25 @@ class ForkTests(unittest.TestCase):
         self.checks += 1
         return check_fork(record, self.root / f"check-{self.checks}")
 
-    def test_the_reviewed_record_passes(self) -> None:
+    def test_the_reviewed_record_passes_from_commits_and_trees_alone(self) -> None:
         self.assertEqual(self.check(self.record()), [])
+        objects = git(self.root / "check-1", "cat-file", "--batch-all-objects", "--batch-check=%(objecttype)")
+        self.assertNotIn("blob", objects.split())
 
     def test_an_unreviewed_change_outside_the_packages_fails(self) -> None:
         record = self.record()
         record["rev"] = commit(self.fork, "other/build.rs", "sneak")
         self.assertEqual(self.check(record), [
-            f"{self.fork}: change set differs from the reviewed diffSha256",
-            f"{self.fork}: change outside the reviewed paths: other/build.rs",
-            f"{self.fork}: commits differ from the recorded list: ['fix pkg', 'sneak']"])
+            f"{self.name}: change set differs from the reviewed diffSha256",
+            f"{self.name}: change outside the reviewed paths: other/build.rs",
+            f"{self.name}: commits differ from the recorded list: ['fix pkg', 'sneak']"])
 
     def test_only_listed_metadata_and_modified_files_extend_the_packages(self) -> None:
         self.rev = commit(self.fork, ".github/workflows/fork.yml", "test fork")
         self.rev = commit(self.fork, "src/lib.rs", "fix root package")
         record = self.record()
         record["commits"] += [{"subject": "test fork"}, {"subject": "fix root package"}]
-        outside = [f"{self.fork}: change outside the reviewed paths: {path}"
+        outside = [f"{self.name}: change outside the reviewed paths: {path}"
                    for path in (".github/workflows/fork.yml", "src/lib.rs")]
         self.assertEqual(self.check(record), outside)
         record["metadataFiles"] = [".github/workflows/fork.yml"]
@@ -96,8 +101,8 @@ class ForkTests(unittest.TestCase):
     def test_a_base_other_than_the_upstream_tag_fails(self) -> None:
         record = self.record() | {"base": "b" * 40}
         self.assertEqual(self.check(record), [
-            f"{self.fork}: upstream v1 is {self.base}, not base {'b' * 40}",
-            f"{self.fork}: base {'b' * 40} is not an ancestor of {self.rev}"])
+            f"{self.name}: upstream v1 is {self.base}, not base {'b' * 40}",
+            f"{self.name}: base {'b' * 40} is not an ancestor of {self.rev}"])
 
     def test_an_unavailable_branch_says_why(self) -> None:
         errors = self.check(self.record() | {"branch": "missing"})
@@ -108,7 +113,7 @@ class ForkTests(unittest.TestCase):
         record = self.record()
         git(self.fork, "checkout", "-q", "-b", "scratch")
         record["rev"] = commit(self.fork, "pkg/lib.rs", "unreviewed")
-        self.assertEqual(self.check(record), [f"{self.fork}: {record['rev']} is not on branch gm/v1"])
+        self.assertEqual(self.check(record), [f"{self.name}: {record['rev']} is not on branch gm/v1"])
 
 
 if __name__ == "__main__":

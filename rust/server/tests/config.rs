@@ -218,6 +218,12 @@ fn listeners_need_distinct_addresses_and_tls_files() {
         error(&with_tls(&[("GM_H3_ADDR", ":7246")]), &[]),
         "GM_H1_ADDR and GM_H3_ADDR must differ"
     );
+    let ephemeral = with_tls(&[("GM_H1_ADDR", "127.0.0.1:0"), ("GM_H2_ADDR", "127.0.0.1:0")]);
+    assert_matches!(
+        load(&ephemeral, &[]).0,
+        Ok(Loaded::Config(_)),
+        "each :0 binds its own port"
+    );
     for address in ["7246", "::1:7246", ":+80", "localhost:65536"] {
         assert_eq!(
             error(&[("GM_H1_ADDR", address)], &[]),

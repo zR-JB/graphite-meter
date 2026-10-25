@@ -200,6 +200,37 @@ async fn only_admitted_uploads_hold_receive_credit_while_they_read() {
 }
 
 #[tokio::test]
+async fn the_last_upload_returns_its_credit_though_the_budget_is_full() {
+    let h3 = H3::start(&[]).await;
+    let budget = h3.server.budget.clone();
+    let idle = settled(&budget).await;
+    let connection = h3.connect(transport(None)).await;
+    let id = h3.server.upload_id().await;
+    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
+    upload
+        .send_data(bytes::Bytes::from_static(b"funded"))
+        .await
+        .unwrap();
+    assert!(settled(&budget).await - idle >= CONNECTION_CREDIT);
+    let _download = connection.send("GET", ENDLESS, b"").await;
+    settled(&budget).await;
+    let exhausted = exhaust(&budget, 0);
+    let full = budget.usage().used;
+    upload.finish().await.unwrap();
+    assert_eq!(answer.response().await.unwrap().status(), 200);
+    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":6}"#);
+    let returned = async {
+        while budget.usage().used > full - CONNECTION_CREDIT / 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(1), returned)
+        .await
+        .expect("the credit returns");
+    drop(exhausted);
+}
+
+#[tokio::test]
 async fn a_peer_sending_on_streams_nothing_reads_holds_at_most_192_kib() {
     let h3 = H3::start(&[]).await;
     let budget = h3.server.budget.clone();

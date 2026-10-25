@@ -50,6 +50,7 @@ FILE_LIMITS = {SERVER: LAYER_LIMIT, NOTICES: LAYER_LIMIT, SOURCE: BLOB_LIMIT}
 DEVELOPMENT = "UNREVIEWED DEVELOPMENT BUILD"
 STAGE = ("container/Dockerfile", "server")
 HEALTHCHECK = ["CMD", "/graphite-meter", "healthcheck"]
+RUNTIME = {"User", "ExposedPorts", "Env", "Entrypoint", "WorkingDir", "Labels", "Healthcheck"}
 
 
 def canonical(name: str) -> bool:
@@ -262,11 +263,23 @@ def verify(version: str, revision: str, archive: Path,
                 if (config.get("os"), config.get("architecture")) != ("linux", arch):
                     fail(f"linux/{arch} image is configured for {config.get('os')}/{config.get('architecture')}")
                 runtime = object_field(config, "config", arch)
+                if extra := sorted(runtime.keys() - RUNTIME):
+                    fail(f"linux/{arch} image config sets {extra}; only {sorted(RUNTIME)} may be set")
+                carried = object_field(runtime, "Labels", arch)
                 for key, value in labels.items():
-                    if (found := object_field(runtime, "Labels", arch).get(key)) != value:
+                    if (found := carried.get(key)) != value:
                         fail(f"OCI label {key} for linux/{arch} is {found!r}; expected {value!r}")
+                if extra := sorted(carried.keys() - labels.keys()):
+                    fail(f"linux/{arch} image carries labels {extra}; only the release labels may be set")
                 if (test := object_field(runtime, "Healthcheck", arch).get("Test")) != HEALTHCHECK:
                     fail(f"linux/{arch} image health check is {test!r}; expected {HEALTHCHECK!r}")
+                for key, value in (("Entrypoint", ["/graphite-meter"]), ("User", "65532:65532"), ("WorkingDir", "/")):
+                    if (found := runtime.get(key)) != value:
+                        fail(f"linux/{arch} image {key} is {found!r}; expected {value!r}")
+                environment = runtime.get("Env")
+                if not isinstance(environment, list) or not all(
+                        isinstance(item, str) and item.startswith("PATH=") for item in environment):
+                    fail(f"linux/{arch} image environment is {environment!r}; only PATH may be set")
                 source, server = check_image_files(tar, manifest, str(image["digest"]))
                 if check_files is not None:
                     check_files(arch, source, server)
