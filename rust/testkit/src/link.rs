@@ -1,4 +1,4 @@
-//! A loopback relay that delays each direction, optionally through a bottleneck, and stalls on demand.
+//! A loopback relay that stalls on demand; over UDP it also delays each direction, optionally through a bottleneck.
 use bytes::Bytes;
 use std::{
     io,
@@ -62,7 +62,7 @@ impl Link {
         self.stalled.send_replace(true);
     }
 
-    pub async fn tcp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
+    pub async fn tcp(target: SocketAddr) -> io::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
         let (stalled, stalls) = watch::channel(false);
@@ -79,7 +79,7 @@ impl Link {
                     let _ = client.set_zero_linger();
                     continue;
                 };
-                relays.spawn(relay(client, server, one_way, stalls.clone()));
+                relays.spawn(relay(client, server, stalls.clone()));
             }
         });
         Ok(Self {
@@ -193,53 +193,32 @@ fn transient(error: &io::Error) -> bool {
     )
 }
 
-async fn relay(
-    mut client: TcpStream,
-    mut server: TcpStream,
-    delay: Duration,
-    stalls: watch::Receiver<bool>,
-) {
+async fn relay(mut client: TcpStream, mut server: TcpStream, stalls: watch::Receiver<bool>) {
     let _ = client.set_nodelay(true);
     let _ = server.set_nodelay(true);
     let (client_read, client_write) = client.split();
     let (server_read, server_write) = server.split();
     tokio::join!(
-        pipe(client_read, server_write, delay, stalls.clone()),
-        pipe(server_read, client_write, delay, stalls),
+        pipe(client_read, server_write, stalls.clone()),
+        pipe(server_read, client_write, stalls),
     );
 }
 
-/// Forwards each chunk `delay` after it was read, holding everything once stalled.
+/// Forwards what it reads, holding everything once stalled.
 async fn pipe(
     mut from: tcp::ReadHalf<'_>,
     mut to: tcp::WriteHalf<'_>,
-    delay: Duration,
-    stalls: watch::Receiver<bool>,
+    mut stalls: watch::Receiver<bool>,
 ) {
-    let (sender, mut receiver) = mpsc::channel::<(Instant, Bytes)>(256);
-    let mut open = stalls.clone();
-    let read = async move {
-        let mut buffer = vec![0; 64 * 1024];
-        while open.wait_for(|stalled| !*stalled).await.is_ok() {
-            let Ok(count @ 1..) = from.read(&mut buffer).await else {
-                return;
-            };
-            let chunk = Bytes::copy_from_slice(&buffer[..count]);
-            if sender.send((Instant::now() + delay, chunk)).await.is_err() {
-                return;
-            }
+    let mut buffer = vec![0; 64 * 1024];
+    while stalls.wait_for(|stalled| !*stalled).await.is_ok() {
+        let Ok(count @ 1..) = from.read(&mut buffer).await else {
+            let _ = to.shutdown().await;
+            return;
+        };
+        let open = stalls.wait_for(|stalled| !*stalled).await.is_ok();
+        if !open || to.write_all(&buffer[..count]).await.is_err() {
+            return;
         }
-    };
-    let mut open = stalls;
-    let write = async move {
-        while let Some((at, chunk)) = receiver.recv().await {
-            tokio::time::sleep_until(at).await;
-            let open = open.wait_for(|stalled| !*stalled).await.is_ok();
-            if !open || to.write_all(&chunk).await.is_err() {
-                return;
-            }
-        }
-        let _ = to.shutdown().await;
-    };
-    tokio::join!(read, write);
+    }
 }
