@@ -40,7 +40,6 @@ import { CHECK_FAILED } from "./checks";
 import { LeaseRefused, type Need } from "./lease";
 import {
   createConnection,
-  FRESH_MS,
   type Connection,
   type ConnectionEnv,
   type ServerView,
@@ -125,7 +124,6 @@ export interface Servers {
   recheck(
     failure: { serverId: string; scope: Role; reason: FailureReason; message: string } | null,
   ): void;
-  proved(serverId: string, roles: readonly Role[]): void;
   resume(): void;
   dispose(): void;
 }
@@ -559,9 +557,9 @@ export function createServers(env: ServersEnv): Servers {
     const chosen = chosenConnections();
     // A check at Start adopts the renewed bus too, so the run dials one connection.
     for (const connection of chosen) connection.link.bus.renew();
-    // One judgment of freshness: what the checks keep is what the run may use, however long they take.
-    const since = now() - FRESH_MS;
-    await Promise.all(chosen.map((connection) => connection.check({ since, signal })));
+    // Start proves every path the run will use, so the run takes nothing an earlier check left.
+    const since = now();
+    await Promise.all(chosen.map((connection) => connection.check({ since, start: true, signal })));
     signal.throwIfAborted();
     if (chosen.some((connection) => connections.peek().get(connection.entry.id) !== connection))
       throw new DOMException("Connection selection changed", "AbortError");
@@ -574,7 +572,9 @@ export function createServers(env: ServersEnv): Servers {
         continue;
       }
       const view = connection.view.peek();
-      const reason = view.readiness === "sign-in" ? "sign-in-required" : "path-failed";
+      const failed = [view.throughput, view.latency].find(({ state }) => state === "failed");
+      const reason =
+        view.readiness === "sign-in" ? "sign-in-required" : (failed?.reason ?? "path-failed");
       // Evidence lost while the checks ran, as to a network change, leaves no message of its own.
       dropped.push({ server: view.server, reason, message: view.message ?? CHECK_FAILED });
     }
@@ -687,7 +687,6 @@ export function createServers(env: ServersEnv): Servers {
       else if (failure.reason === "path-failed" || failure.reason === "protocol-error")
         connection?.invalidate([failure.scope], true);
     },
-    proved: (serverId, roles) => connections.peek().get(serverId)?.proved(roles),
     resume() {
       reloadFailed();
       for (const connection of connections.peek().values()) connection.resume();

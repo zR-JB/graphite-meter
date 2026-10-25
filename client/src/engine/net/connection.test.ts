@@ -326,21 +326,6 @@ test("a failed path check waits for a reason to check again, never for a timer",
   expect(connection.view.peek().readiness).toBe("verified");
 });
 
-test("a run that measured over a path without failing it proves it, as a check would", async () => {
-  net = fakeNet((url) =>
-    url.pathname === "/preflight"
-      ? { body: preflight([h(".", "http1")]) }
-      : { body: PROBE, hop: "http/1.1" },
-  );
-  const { connection } = connect(self);
-  await net.advance(130_000);
-  const since = net.now() - 120_000;
-  expect(connection.prepared(since)).toBeNull();
-  connection.proved(["throughput"]);
-  expect(connection.prepared(since)?.throughput.verifiedAt).toBe(net.now());
-  expect(net.sent("/probe")).toEqual([0]);
-});
-
 test("a path a run failed on is proved again at the next start, not at once", async () => {
   net = fakeNet((url) =>
     url.pathname === "/preflight"

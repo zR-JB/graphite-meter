@@ -109,7 +109,6 @@ export function createApp() {
     },
     fits: servers.fits,
     recheck: servers.recheck,
-    proved: servers.proved,
     finished: (finished) => (finished ? saver.offer(historyRecord(finished)) : saver.withdraw()),
     open: openStage,
     mint: mintUpload,

@@ -55,7 +55,7 @@ export const WARMUP_CEILING_MS = 4_000;
 
 /** `plan` with its configured warmup stretched to ten round trips of `rttMs` but never past 4 s. */
 export const adaptWarmup = <T extends Pick<Plan, "duration">>(plan: T, rttMs: number): T => {
-  const stretched = Math.round((rttMs > 0 ? rttMs : 0) * SLOW_START_RTTS);
+  const stretched = Math.round(Math.max(rttMs, 0) * SLOW_START_RTTS);
   const warmupMs = Math.min(WARMUP_CEILING_MS, Math.max(plan.duration.warmupMs, stretched));
   return { ...plan, duration: { ...plan.duration, warmupMs } };
 };
