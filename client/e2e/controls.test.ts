@@ -336,28 +336,33 @@ test("a docked sheet reopened while it leaves comes back from where it was", asy
   const travel = await page.evaluate(async () => {
     const key = (key: string) =>
       document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
-    const sheet = () =>
-      document.querySelector<HTMLElement>('dialog[aria-label="Details"]:not([aria-hidden])')!;
+    const frame = () => new Promise((done) => requestAnimationFrame(done));
+    const left = () =>
+      document.querySelector('dialog[aria-label="Details"]')!.getBoundingClientRect().left;
     key("d");
-    await wait(600);
+    let docked = NaN;
+    for (let n = 0, was = NaN; n < 300 && !(docked < innerWidth && docked === was); n++) {
+      await frame();
+      [was, docked] = [docked, left()];
+    }
     key("d");
-    await wait(60);
-    // Mid-way out it is still on screen: the sheet itself, or a copy where a browser cannot keep it displayed.
-    const leaving = [...document.querySelectorAll('dialog[aria-label="Details"]')].some(
-      (el) => el.checkVisibility() && el.getBoundingClientRect().left < innerWidth,
-    );
+    // Mid-way out it is still on screen.
+    let leaving = false;
+    for (let n = 0; n < 60 && !leaving; n++) {
+      await frame();
+      leaving = left() > docked && left() < innerWidth;
+    }
     key("d");
-    const lefts: number[] = [];
+    const back: number[] = [];
     const end = performance.now() + 500;
     while (performance.now() < end) {
-      await new Promise((done) => requestAnimationFrame(done));
-      lefts.push(sheet().getBoundingClientRect().left);
+      await frame();
+      back.push(left());
     }
-    return { leaving, lefts, width: innerWidth };
+    return { leaving, back, width: innerWidth };
   });
   expect(travel.leaving).toBe(true);
-  expect(Math.min(...travel.lefts)).toBeGreaterThan(travel.width / 2);
+  expect(Math.min(...travel.back)).toBeGreaterThan(travel.width / 2);
 });
 
 test("two docked sheets open and close beside the stage in every frame", async (page) => {
