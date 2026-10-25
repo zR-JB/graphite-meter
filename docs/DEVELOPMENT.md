@@ -24,8 +24,8 @@ artifacts stay local to it.
 ## Commands
 
 ```sh
-mise run check          # the developer gate; the commit hook runs the parts the staged paths touch
-mise run ci             # the gates CI runs, including the target checks and the browser suite
+mise run check          # the developer gate; the commit hook runs the checks the staged paths select
+mise run ci             # most gates CI runs, including the target checks and the browser suite
 mise run server-build   # rust/target/release/graphite-meter-server; VERSION=1.2.3 stamps a release
 mise run tui-build      # rust/target/release/graphite-meter-client
 ```
@@ -40,18 +40,22 @@ mise run tui-build      # rust/target/release/graphite-meter-client
 musl-tools and an aarch64 GNU compiler.
 
 `dev`, `tui` and `e2e-server` use the `ci` profile, which has no LTO and 16 codegen units. The build tasks use the
-release profile, which has fat LTO and one codegen unit. Local builds embed development notices, so their executables
-say `UNREVIEWED DEVELOPMENT BUILD` and are not distributable. Untagged builds identify as `GM_CLIENT_REVISION`, which
-is the short Git revision by default.
+release profile, which has fat LTO and one codegen unit. Local builds embed development notices, so their
+executables say `UNREVIEWED DEVELOPMENT BUILD` and are not distributable. `server-build` and `tui-build` stamp
+`VERSION`, else `GM_CLIENT_REVISION`, the short Git revision by default; `dev`, `tui` and `e2e-server` always report
+`development`.
 
 `mise run e2e-server` builds the server the suite runs by default, and `mise run e2e` takes another as its first
-argument. `client/scripts/e2e.ts` then starts five servers with an ephemeral certificate. They are a home server with
-a catalog, three public peers and a password-protected peer. The script drives the browser through
-`client/e2e/webview.ts`. It drives Chrome over its DevTools Protocol, or with `GM_E2E_BROWSER=firefox` it drives
-Firefox over WebDriver BiDi, where `GM_FIREFOX_PATH` names another build. Tests written `test.chrome` need the
-DevTools Protocol, so Firefox skips them. Failures keep a screenshot, console, page errors and DOM under
-`client/test-results/webview` and server logs under `client/test-results/servers`. To rerun a subset against a built
-server:
+argument and a group second: `all` (the default, network group included), `reversals` or `heavy` (halves of the
+performance tests), `rest-1` or `rest-2` (halves of the rest), or `network` and `network-1` to `network-3`. The
+network group shapes loopback in a private user and network namespace, so it needs `unshare`, `ip`, `ethtool` and
+`tc`, and `certutil` for Firefox. `client/scripts/e2e.ts` starts five servers with an ephemeral certificate. They
+are a home server with a catalog, three public peers and a password-protected peer. The script drives the browser
+through `client/e2e/webview.ts`. It drives Chrome over its DevTools Protocol, where `BUN_CHROME_PATH` names another
+build, or with `GM_E2E_BROWSER=firefox` it drives Firefox over WebDriver BiDi, where `GM_FIREFOX_PATH` names another
+build. Tests written `test.chrome` need the DevTools Protocol, so Firefox skips them. Failures keep a screenshot,
+console, page errors and DOM under `client/test-results/webview` and server logs under
+`client/test-results/servers`. To rerun a subset against a built server:
 
 ```sh
 cd client && GM_E2E_SERVER_BIN=../rust/target/ci/graphite-meter-server \
@@ -75,8 +79,9 @@ openssl x509 -in .dev-certs/localhost.pem -pubkey -noout | openssl pkey -pubin -
   | openssl dgst -sha256 -binary | openssl enc -base64
 ```
 
-`mise run codeql` repeats the CodeQL scan offline with the [bundle](https://github.com/github/codeql-action/releases)
-release in `vars.codeql`, installed at `~/.local/share/codeql-bundle` or named by `CODEQL`.
+`mise run codeql` repeats the CodeQL scan offline with the
+[bundle](https://github.com/github/codeql-action/releases) release in `vars.codeql`: the CLI `CODEQL` names, else
+`codeql` on `PATH`, else the bundle at `~/.local/share/codeql-bundle`.
 
 ## Layout
 
@@ -119,12 +124,13 @@ forks, and [`legal/rust-forks.json`](../legal/rust-forks.json) records each comm
 and QUIC crypto provider, and first-party crates forbid `unsafe`.
 
 Each TCP connection and its streams live on one pinned current-thread runtime. There is one per worker, and on Linux
-it runs five nice steps lower than the rest of the process. HTTP/3 on Linux runs one endpoint per two runtime threads
-on one port shared through `SO_REUSEPORT`. Connection IDs name their endpoint and a classic BPF program routes each
-datagram there, so a migrating client keeps its connection. A WebSocket latency bus moves after its upgrade to the
-multi-thread runtime, which runs no transfer, so probes never queue behind a transfer. An HTTP/1 or HTTP/2 socket
-yields after 256 KiB. Log lines leave through a 1024-line queue and are dropped and counted while stderr stalls. The
-client runs each lane group on one pinned runtime and its prober on another.
+it runs five nice steps lower than the rest of the process. HTTP/3 on Linux runs endpoints on half the runtime
+threads, 2 to 16 as the buffer budget below covers, else one, on one port shared through `SO_REUSEPORT`. Connection
+IDs name their endpoint and a classic BPF program routes each datagram there, so a migrating client keeps its
+connection. A WebSocket latency bus moves after its upgrade to the multi-thread runtime, which runs no transfer, so
+probes never queue behind a transfer. An HTTP/1 or HTTP/2 socket yields after 256 KiB. Log lines leave through a
+1024-line queue and are dropped and counted while stderr stalls. The client runs each lane group on one pinned
+runtime and its prober on another.
 
 One budget, `GM_MAX_BUFFER_BYTES`, covers every HTTP/2 and QUIC buffer and is charged as each buffer fills. Startup
 refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor plus the QUIC endpoint buffers and the
@@ -137,13 +143,13 @@ budget no window grows. The budget bounds buffers, not resident memory. Two seco
 returns its threads' free pages.
 
 The following choices were measured, and this list keeps them because they are easy to undo by accident. Release
-builds use fat LTO and one codegen unit. Image and client builds, except the Windows arm64 client, use a PGO profile
-per architecture trained on loopback transfers (`scripts/pgo.py`), which costs 10 to 17 % less CPU per byte on
-HTTP/3 on amd64; Linux cannot train a Windows arm64 profile. Static musl builds link mimalloc with transparent huge
-pages off, since musl's allocator ran HTTP/2 downloads at a sixth of the rate. QUIC receive windows autotune from
-768 KiB to 48 MiB per connection. Admitted HTTP/2 uploads get a 24 MiB window, which reached 903 Mbit/s against 640
-at 16 MiB on a 200 ms, 1 Gbit/s path. Upload control rides the throughput check's connection, since a fresh one
-started bidirectional uploads two round trips late.
+builds use fat LTO and one codegen unit. Release-profile container builds, except the Windows arm64 client, use a
+PGO profile per architecture trained on loopback transfers (`scripts/pgo.py`), which costs 10 to 17 % less CPU per
+byte on HTTP/3 on amd64; Linux cannot train a Windows arm64 profile. Static musl builds link mimalloc with
+transparent huge pages off, since musl's allocator ran HTTP/2 downloads at a sixth of the rate. QUIC receive windows
+autotune from 768 KiB to 48 MiB per connection. Admitted HTTP/2 uploads get a 24 MiB window, which reached
+903 Mbit/s against 640 at 16 MiB on a 200 ms, 1 Gbit/s path. Upload control rides the throughput check's connection,
+since a fresh one started bidirectional uploads two round trips late.
 
 ### Browser client
 
@@ -160,18 +166,18 @@ it. `src/app/app.ts`, mounted by `src/main.tsx`, is the one place that wires acr
 | `src/view`     | Every figure, unit, scale and word the views show.                                                                       |
 | `src/styles`   | The design tokens and base styles.                                                                                       |
 | `src/ui`       | Views: `shell`, `measure`, `settings`, `details`, `history`, `legal`, `account` and the `kit` they share.                |
-| `public`       | Fonts, the favicon and the legal notices, copied into the build as they are.                                             |
+| `public`       | Fonts, and the favicon `bun run build:auth` writes, copied into the build as they are.                                   |
 
 Saved data and links from earlier releases keep working, so these are compatibility boundaries: `localStorage`
 `graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at version 4
 with schema-6 records, the BroadcastChannel `graphite-meter-history`, and the hash routes (Details is `endpoint` in
 URLs). The page keeps the server's shell contract, which `build.ts` checks: one `</head>`, one attribute-less inline
-script and style hashed into the content security policy, the `graphite-meter-trusted-types` meta naming the
-Trusted Types policy `src/lib/trusted.ts` creates, `<div id="app">` and hashed assets under `/assets/`.
+script and style hashed into the content security policy, the `graphite-meter-trusted-types` meta naming the Trusted
+Types policy `src/lib/trusted.ts` creates, and `<div id="app">`; bundles are hashed under `/assets/`.
 
-`bun build.ts` bundles the workers, then the app with their hashed URLs, minifies the shell, copies `public` and writes
-compressed siblings. `bun check` type-checks with the TypeScript port Bun ships and formats with Biome. `bun test src`
-covers pure logic and the engine against fake clocks.
+`bun build.ts` bundles the workers, then the app with their hashed URLs, minifies the shell, copies `public` and
+writes compressed siblings. `bun check` type-checks with the TypeScript port Bun ships, and `bun run lint` checks
+formatting and lints with Biome. `bun test src` covers pure logic and the engine against fake clocks.
 
 ## Containers and releases
 
@@ -183,13 +189,13 @@ publication to the authorized commit and verify every file before publishing
 ([CI and release](../scripts/ci/README.md)). Never create or move release tags in ordinary work.
 
 Before each release, `mise run screenshots vX.Y.Z` renders the README images in `docs/assets` from the working tree,
-and the result merges like any change. The browser app runs on the E2E fleet with fakes for the network and the run's
-clock (`client/scripts/screenshots`), and the terminal client draws a simulated run
+and the result merges like any change. The browser app runs on the E2E fleet with fakes for the network and the
+run's clock (`client/scripts/screenshots`), and the terminal client draws a simulated run
 (`rust/client/examples/screenshot.rs`), so the same code in the same browser gives the same pixels.
-`docs/assets/screenshots.json` records the version and a hash of the sources that draw them, and the same stamp writes
-that version into the README captions. A stable release request refuses screenshots of another version, of changed
-sources or under captions naming another version (`python3 scripts/ci/screenshots.py check vX.Y.Z`). Before that, CI warns on
-any pull request whose UI sources changed since the images were rendered, without failing it.
+`docs/assets/screenshots.json` records the version and a hash of the sources that draw them, and the same stamp
+writes that version into the README captions. A stable release request refuses screenshots of another version, of
+changed sources or under captions naming another version (`python3 scripts/ci/screenshots.py check vX.Y.Z`). Before
+that, CI warns, without failing, while the UI sources differ from those the images were rendered from.
 
 ## Toolchain pins
 
@@ -200,7 +206,7 @@ any pull request whose UI sources changed since the images were rendered, withou
 | Rust                             | `rust/rust-toolchain.toml`, `vars.rust_manifest_sha256` | rustup, the image builder                 |
 | mise bootstrap, Buildx           | `vars.mise_version`, `vars.buildx_version`              | The SHA-pinned CI actions                 |
 | Chrome for Testing, Firefox      | `vars.browser_*`                                        | CI install and identity check             |
-| llvm-mingw                       | `vars.llvm_mingw`, `vars.llvm_mingw_sha256`             | The Windows arm64 client build            |
+| llvm-mingw                       | `vars.llvm_mingw`, `vars.llvm_mingw_sha256`             | Windows arm64 client, target checks       |
 | CodeQL bundle                    | `vars.codeql`                                           | `mise run codeql`                         |
 | Container images                 | `vars.image_*`                                          | Image build, verification and publication |
 | Rust dependencies                | `rust/Cargo.toml`, `rust/Cargo.lock`                    | Cargo, `cargo deny`                       |
