@@ -26,7 +26,6 @@ export function Stepper(props: {
   unit?: number;
   /** The value is a few digits, so the field keeps 3ch and phones offer digits. */
   count?: boolean;
-  disabled: () => boolean;
   onChange(value: number): boolean;
 }): Node {
   const unit = props.unit ?? 1;
@@ -77,7 +76,6 @@ export function Stepper(props: {
       aria-disabled={() =>
         String(direction > 0 ? props.value() >= props.max() : props.value() <= props.min)
       }
-      disabled={props.disabled}
       onpointerdown={(event) => {
         if (event.button !== 0) return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -118,7 +116,6 @@ export function Stepper(props: {
           spellcheck="false"
           inputmode={props.count ? "numeric" : undefined}
           value={text}
-          disabled={props.disabled}
           ref={(node) => {
             field = node;
           }}

@@ -27,7 +27,7 @@ const NAME = { short: "Short", medium: "Medium", long: "Long", custom: "Custom" 
 
 export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<boolean> }) {
   const { app, edits, custom } = props;
-  const config = app.preferences.config;
+  const config = app.run.upcoming;
   const mode = computed((): Preset | "custom" =>
     custom() ? "custom" : (presetOf(config().duration) ?? "custom"),
   );
@@ -68,7 +68,6 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
         format={fmtStageTime}
         parse={parseDuration}
         unit={1000}
-        disabled={app.run.preparing}
         onChange={(value) => setDuration(key, value)}
       />
     );
@@ -105,7 +104,6 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
               tip: () => presetTip(preset),
             }))}
             value={mode}
-            disabled={app.run.preparing}
             choose={choose}
           />
         </div>
@@ -168,7 +166,6 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
           label="Finish stable stages early"
           tip={() => TIP.earlyFinish}
           checked={() => config().adaptive}
-          disabled={app.run.preparing}
           onToggle={(adaptive) => edits.edit("duration", () => app.run.configure({ adaptive }))}
         />
       </div>

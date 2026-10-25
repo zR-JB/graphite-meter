@@ -53,8 +53,5 @@ test(
       await fleet.close();
     }
   },
-  {
-    timeout: 120_000,
-    failing: "until step 12: Settings locks paths and streams while a test runs",
-  },
+  { timeout: 120_000 },
 );

@@ -289,7 +289,7 @@ class Stage implements StageResources {
   /** Opens one direction's carrier and its lanes now, or none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
     if (this.#throughputEnded) return null;
-    const { server, streams, uploadLanes, gating } = this.#setup;
+    const { server, streams, uploadLanes } = this.#setup;
     const { auth } = server;
     const { target, fetch } = server.throughput;
     const count = streams[direction];
@@ -300,7 +300,7 @@ class Stage implements StageResources {
         pool: server.link.workers,
         worker: WORKERS.lane,
         lanes: count,
-        gating: direction === "down" ? Math.min(count, gating?.down ?? count) : 0,
+        gating: direction === "down" ? count : 0,
         session: false,
         open: (_, epoch) =>
           this.#signedIn((): LaneCommand => {

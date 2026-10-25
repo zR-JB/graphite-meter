@@ -18,7 +18,7 @@ export function ConnectionPicker(props: {
 }): Node {
   const { app, role, locked } = props;
   const { servers } = app;
-  const config = app.preferences.config;
+  const config = app.run.upcoming;
   const labelId = `settings-${role}-path`;
   const selected = computed(() => config().transports[TRANSPORT_KEY[role]]);
   const options = computed(() => {
@@ -49,20 +49,14 @@ export function ConnectionPicker(props: {
       }),
     );
   const row = (option: Read<Choice>) => (
-    <label
-      class={() =>
-        option().unavailable !== null || (locked() && option().value !== selected())
-          ? "unavailable"
-          : false
-      }
-    >
+    <label class={() => (option().unavailable !== null ? "unavailable" : false)}>
       <input
         class="check"
         type="radio"
         name={`${role}-target`}
         value={option.peek().value}
         checked={() => selected() === option().value}
-        disabled={() => option().unavailable !== null || locked()}
+        disabled={() => option().unavailable !== null}
         onchange={(event) => {
           if (choose(event.currentTarget.value)) return;
           for (const radio of picker.querySelectorAll<HTMLInputElement>('input[type="radio"]'))

@@ -101,7 +101,6 @@ function stage(
       up: activity.transfer.includes("up") ? 1 : 0,
     },
     uploadLanes: activity.transfer.includes("up") ? 1 : 0,
-    gating: { down: 2, up: 0 },
     cadence: "fast",
     events: new Proxy({} as StageEvents, {
       get:
@@ -129,7 +128,7 @@ const stopped = (worker: FakeWorker) => worker.commands.at(-1)?.type === "stop";
 const bytes = (lane: FakeWorker, epoch: number) =>
   lane.report({ type: "bytes", bytes: 1_000, epoch });
 
-test("readiness waits for the gating lanes; a lane's failure keeps its reason; one budget bounds a hung mint", async () => {
+test("readiness waits for every lane; a lane's failure keeps its reason; one budget bounds a hung mint", async () => {
   const ready = stage(DOWNLOAD);
   const prepared = outcome(ready.resources.prepare(new AbortController().signal));
   await elapse(150);
@@ -140,9 +139,10 @@ test("readiness waits for the gating lanes; a lane's failure keeps its reason; o
     "download",
   ]);
   bytes(first!, 0);
+  bytes(third!, 0);
   await elapse(5);
   expect(prepared.at).toBeUndefined();
-  bytes(third!, 0);
+  bytes(second!, 0);
   await elapse(5);
   expect(prepared).toEqual({ at: 155 });
   expect(second!.terminated).toBe(false);
@@ -265,6 +265,7 @@ test("a broken lane reopens after its pause while a slow sign-in check runs, whi
     await elapse(150);
     const lanes = blip.lanes();
     for (const lane of lanes) bytes(lane, 0);
+    await elapse(5);
     blip.resources.measure(performance.now());
     lanes[0]!.report({ type: "broken", detail: "TypeError: network error" });
     await elapse(300);

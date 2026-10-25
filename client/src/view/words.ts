@@ -131,6 +131,7 @@ export const STAGE_STATE = {
 
 /** A stage the next run includes but the shown run did not run, as its chip names it. */
 export const NEXT_RUN = { label: "Next test", tone: null } as const satisfies Word;
+export const NEXT_TEST = "Applies to the next test";
 
 /** States a chip's tag names in place of its time. */
 export const TAGGED: ReadonlySet<StageState> = new Set([
@@ -391,8 +392,8 @@ export const TIP = {
   loadedCadence: `Loaded probe interval\nProbes during transfers, start to start\n${SPACINGS}`,
   skipLoadedLatency: "Skip loaded latency\nWith the Latency stage off, transfers send no probes",
   forcedStreams:
-    "Streams\nParallel streams per server and direction\nAn exact count opens that many, past browser limits",
-  forcedStreamCount: `Streams per direction\nOpens exactly this many per server\nWebTransport carries at most ${SESSION_MAX_LANES} per session`,
+    "Streams\nParallel streams per server and direction\nAn exact count opens that many, within browser and server limits",
+  forcedStreamCount: `Streams per direction\nOpens this many per server where its limits allow\nWebTransport carries at most ${SESSION_MAX_LANES} per session`,
   autoStreamCount:
     "HTTP/1.1 stream limit\nParallel HTTP/1.1 requests per direction\nHTTP/2 and HTTP/3 choose their own",
   datagramThroughput:

@@ -290,6 +290,7 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
       engineVersion: document.engineVersion,
       server: document.server,
       maxStageMs: capabilities.maxStageMs,
+      maxMeasurements: document.lease.maxMeasurements,
       // Redirects are refused, so the answer came from the catalog's origin, which "." names.
       origin: entry.url,
       protocol,
