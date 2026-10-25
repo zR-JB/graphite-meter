@@ -663,7 +663,7 @@ export async function seriousViolations(page: Page, selector = "document") {
   await page.evaluate(settled);
   const context = selector === "document" ? selector : encode(selector);
   const result = await page.evaluate<{ violations: { impact: string }[] }>(
-    `axe.run(${context}, { resultTypes: ["violations"] })`,
+    `axe.run(${context}, { resultTypes: ["violations"], rules: { "target-size": { enabled: true } } })`,
   );
   return result.violations.filter(({ impact }) => ["critical", "serious"].includes(impact));
 }
