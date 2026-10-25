@@ -121,8 +121,7 @@ impl ConnectionBudget {
         lock(&self.held).credit.is_some()
     }
 
-    /// An admitted upload began or stopped reading; whether the last to stop returned the credit, the bytes it still
-    /// covers moving to the budget. Under pressure the connection keeps it.
+    /// An admitted upload began or stopped reading; whether the last to stop returned the credit, keeping what it drew.
     fn reading(&self, reading: bool) -> bool {
         let mut held = lock(&self.held);
         if reading {
@@ -130,12 +129,16 @@ impl ConnectionBudget {
             return false;
         }
         held.readers -= 1;
-        let drawn = CONNECTION_CREDIT - held.undrawn;
-        if held.readers > 0 || held.credit.is_none() || !self.shared.try_charge(drawn) {
+        if held.readers > 0 {
             return false;
         }
+        let Some((credit, _share)) = held.credit.take() else {
+            return false;
+        };
+        let drawn = CONNECTION_CREDIT - held.undrawn;
+        credit.keep(drawn);
         held.overdraft += drawn;
-        (held.undrawn, held.credit) = (0, None);
+        held.undrawn = 0;
         true
     }
 }

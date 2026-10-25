@@ -170,6 +170,14 @@ pub struct Lease {
     reserved: bool,
 }
 
+impl Lease {
+    /// Ends the lease but for `bytes`, which stay charged until their holder refunds them.
+    pub fn keep(mut self, bytes: usize) {
+        debug_assert!(!self.reserved);
+        self.bytes -= bytes;
+    }
+}
+
 impl Drop for Lease {
     fn drop(&mut self) {
         self.budget.0.give_back(self.bytes);
