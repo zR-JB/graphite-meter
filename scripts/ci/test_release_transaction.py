@@ -7,6 +7,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ from unittest.mock import patch
 from urllib.parse import unquote
 
 from assets import release_assets
-from github_api import ControlPlaneError
+from github_api import ControlPlaneError, api
 from release import command_publish
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "publish.sh"
@@ -40,9 +41,10 @@ SHIM = """docker() {
   while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done
   sh -ec "$2"
 }
-# The release list shows nothing for the first $LIST_LAG reads, as GitHub's can right after a publish.
+# The first $LIST_FAIL reads fail after one page and the first $LIST_LAG show nothing, as GitHub's can after a publish.
 gh() {
   reads=$(( $(cat "$TAGS.reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" >"$TAGS.reads"
+  [ "$reads" -le "${LIST_FAIL:-0}" ] && { echo "${RELEASES%% *}"; echo "gh: Bad Gateway (HTTP 502)" >&2; return 1; }
   [ "$reads" -gt "${LIST_LAG:-0}" ] && printf '%s\\n' $RELEASES
   return 0
 }
@@ -54,7 +56,7 @@ ASSETS = {name: name.encode() for name in (*release_assets("1.2.3"), "checksums.
 State = dict[str, Any]
 EMPTY: State = {"tags": {}, "annotated": {}, "releases": [], "race": "", "tamper": "", "writes": [],
                 "next": 100, "hidden": {}, "lag": 0, "publish_lag": 0, "refs_error": "",
-                "patch_error": ""}
+                "patch_error": "", "flaky": []}
 
 
 class Refused(Exception):
@@ -64,7 +66,7 @@ class Refused(Exception):
 def github(state: State, argv: list[str], stdin: str | None) -> object:
     """GitHub's tags, annotated tags, releases and uploads behind one `gh api` call. A write becomes readable only
     after `lag` reads of a new tag or `publish_lag` reads of a published release; a publish request can fail after
-    it `commit`s or `drop`s the change."""
+    it `commit`s or `drop`s the change; each `flaky` call fails once first."""
     flags: dict[str, str] = {}
     words = iter(argv[2:])
     for word in words:
@@ -86,6 +88,9 @@ def github(state: State, argv: list[str], stdin: str | None) -> object:
     path = path[len("repos/owner/repo/"):] if path.lower().startswith("repos/owner/repo/") else path
     if method != "GET":
         state["writes"].append(f"{method} {path}")
+    if f"{method} {path}" in state["flaky"]:
+        state["flaky"].remove(f"{method} {path}")
+        raise Refused("Bad Gateway (HTTP 502)")
     tags, parts = state["tags"], path.split("?")[0].split("/")
     if "assets?name=" in path:
         payload = pathlib.Path(flags["--input"]).read_bytes() + state["tamper"].encode()
@@ -210,9 +215,13 @@ class RegistryTests(unittest.TestCase):
                     self.assertIn(error, output)
                     self.assertEqual(tags, {})
 
-    def test_promotion_waits_for_a_release_the_list_does_not_show_yet(self) -> None:
-        status, output, tags = self.run_script("aliases", {"1.2.3": VERIFIED}, "v1.2.3", LIST_LAG="2")
-        self.assertEqual((status, tags.get("latest")), (0, VERIFIED), output)
+    def test_promotion_waits_out_a_lagging_or_failing_release_list(self) -> None:
+        for releases, fake, latest in (("v1.2.3", {"LIST_LAG": "2"}, VERIFIED),
+                                       ("v1.2.3 v1.2.4", {"LIST_FAIL": "2"}, OTHER)):
+            with self.subTest(fake=fake):
+                status, output, tags = self.run_script("aliases", {"1.2.3": VERIFIED, "1.2.4": OTHER}, releases,
+                                                       **fake)
+                self.assertEqual((status, tags.get("latest")), (0, latest), output)
 
     def test_a_moved_or_unreleased_version_stops_promotion(self) -> None:
         for registry, releases, error in (({"1.2.3": OTHER}, "v1.2.3", "not the verified"),
@@ -344,6 +353,53 @@ class ReleasePublicationTests(unittest.TestCase):
                 self.assertIn(expected, error or "")
                 self.assertEqual([item["id"] for item in after["releases"] if not item["draft"]],
                                  [item["id"] for item in before["releases"] if not item["draft"]])
+
+    def test_a_transient_failure_repeats_only_calls_that_cannot_create_twice(self) -> None:
+        upload = "POST releases/101/assets?name=checksums.txt"
+        error, output, _ = self.publish(EMPTY | {"flaky": ["GET releases?per_page=100", "PATCH releases/101"]})
+        self.assertIsNone(error, output)
+        error, _, after = self.publish(EMPTY | {"flaky": [upload]})
+        self.assertIn("(HTTP 502)", error or "")
+        self.assertEqual(after["writes"].count(upload), 1)
+
+    def test_a_status_or_dropped_connection_decides_whether_a_call_repeats(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "gh").write_text('#!/bin/sh\necho "$*" >>"$CALLS"\necho "$FAILURE" >&2\nexit 1\n')
+            (root / "gh").chmod(0o755)
+            env = {"PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "CALLS": str(root / "calls"),
+                   "GH_TOKEN": "secret-token"}
+            with (patch.dict(os.environ, env), patch("github_api.time.sleep"),
+                  contextlib.redirect_stderr(io.StringIO())):
+                for failure, method, attempts in (("gh: HTTP 502", "GET", 3),
+                                                  ("gh: Server Error (HTTP 503)", "DELETE", 3),
+                                                  ("read tcp: connection reset by peer", "PATCH", 3),
+                                                  ("gh: Server Error (HTTP 502)", "POST", 1),
+                                                  ("gh: Validation Failed: lock timeout (HTTP 422)", "GET", 1),
+                                                  ("gh: Not Found (HTTP 404)", "DELETE", 1)):
+                    (root / "calls").write_text("")
+                    with (self.subTest(failure=failure, method=method), patch.dict(os.environ, {"FAILURE": failure}),
+                          self.assertRaisesRegex(ControlPlaneError, re.escape(failure))):
+                        api("repos/owner/repo/releases/1", method=method)
+                    self.assertEqual(len((root / "calls").read_text().splitlines()), attempts)
+
+    def test_a_hung_call_is_cut_by_its_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "gh").write_text('#!/bin/sh\necho "$*" >>"$CALLS"\nexec sleep 30\n')
+            (root / "gh").chmod(0o755)
+            env = {"PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "CALLS": str(root / "calls"),
+                   "GH_TOKEN": "secret-token"}
+            with (patch.dict(os.environ, env), patch("github_api.time.sleep"),
+                  patch.multiple("github_api", TIMEOUT_SECONDS=0.05, UPLOAD_TIMEOUT_SECONDS=0.05),
+                  contextlib.redirect_stderr(io.StringIO())):
+                for call, attempts in ((lambda: api("repos/owner/repo/releases/1"), 3),
+                                       (lambda: api("upload", method="POST", upload=root / "gh"), 1)):
+                    (root / "calls").write_text("")
+                    with self.assertRaisesRegex(ControlPlaneError, "timeout after 0.05 s"):
+                        call()
+                    self.assertEqual(len((root / "calls").read_text().splitlines()), attempts)
+
 
 if __name__ == "__main__":
     unittest.main()
