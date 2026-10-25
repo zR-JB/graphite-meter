@@ -239,12 +239,13 @@ export const READINESS = {
   unchecked: { label: "Recheck needed", tone: "warn" },
   checking: { label: "Checking", tone: "neutral" },
   verified: { label: "Ready", tone: "ok" },
+  fallback: { label: "Ready on a fallback", tone: "warn" },
   "sign-in": { label: "Sign in", tone: "warn" },
   failed: { label: "Failed", tone: "err" },
   blocked: { label: PHASE.blocked, tone: "warn" },
   "in-use": { label: "In use", tone: "ok" },
   used: { label: "Used", tone: "neutral" },
-} as const satisfies Record<Readiness | "blocked" | "in-use" | "used", Word>;
+} as const satisfies Record<Readiness | "fallback" | "blocked" | "in-use" | "used", Word>;
 
 /** What each readiness means, under its word as the title line. */
 export const READINESS_TIP = {
@@ -252,7 +253,7 @@ export const READINESS_TIP = {
   checking: `${READINESS.checking.label}\nAsking each selected server which paths it offers`,
   verified:
     `${READINESS.verified.label}\nThe selected servers and paths passed their check\n` +
-    "Recent checks are reused; expired ones rerun before a test",
+    "Each test proves its paths again as it starts",
   "sign-in": `${READINESS["sign-in"].label}\nA selected server only admits signed-in clients`,
   failed: `${READINESS.failed.label}\nA selected server or path did not answer its check`,
 } satisfies Record<Readiness, string>;

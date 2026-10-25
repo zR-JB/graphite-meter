@@ -12,6 +12,20 @@
       "noq-proto",
       "noq-udp"
     ],
+    "advisoryCrates": ["noq", "noq-proto", "noq-udp", "quinn", "quinn-proto", "quinn-udp", "iroh-quinn", "iroh-quinn-proto", "iroh-quinn-udp"],
+    "advisories": {
+      "RUSTSEC-2021-0035": "Fixed in quinn 0.7 long before noq forked; the fork's history has the change.",
+      "RUSTSEC-2023-0063": "Fixed by quinn f81c2fafa, which is in the fork's history.",
+      "RUSTSEC-2024-0373": "Fixed by quinn e01609cc, which is in the fork's history.",
+      "RUSTSEC-2026-0037": "Not affected: the fork's transport parameter parser returns errors where quinn unwrapped.",
+      "RUSTSEC-2026-0185": "Not affected: reassembly backing and metadata are charged to the fork's per-connection receive budget.",
+      "RUSTSEC-2026-0338": "Not affected: the fork's ArrayRangeSet has no replace, and the server reads streams in order.",
+      "RUSTSEC-2026-0339": "Fixed by the fork commit \"fix(proto): Check limits when processing already retired CIDs (#823)\".",
+      "RUSTSEC-2026-0340": "Fixed by the fork's port of quinn #2868, and unreachable: the server leaves ack_frequency_config unset.",
+      "RUSTSEC-2026-0341": "Not affected: every reassembly fragment's allocation is charged to the fork's receive budget.",
+      "RUSTSEC-2026-0342": "Fixed by the fork commit \"Bound datagram queue storage and detach packet backing\".",
+      "RUSTSEC-2026-0343": "Not affected: the fork's datagram queue subtracts an evicted datagram once."
+    },
     "commits": [
       {"subject": "feat: reset_stream_at TransportParameter", "purpose": "Adds the reset_stream_at transport parameter and its endpoint option and 0-RTT compatibility check.", "origin": "n0-computer/noq#805 b7a4d3663e904d5d9b20fa3d2fa28295aacfb4f5"},
       {"subject": "Add the frame type itself", "purpose": "Adds the RESET_STREAM_AT frame type, codec, qlog and statistics.", "origin": "n0-computer/noq#805 a03d4ffa3f90df0825ba973f17051e0eac023707"},
@@ -160,6 +174,13 @@
       "tests/h2-tests/tests/server.rs",
       "tests/h2-tests/tests/stream_states.rs"
     ],
+    "advisoryCrates": ["h2"],
+    "advisories": {
+      "RUSTSEC-2023-0034": "Patched in h2 0.3.17, before the fork's base v0.4.20.",
+      "RUSTSEC-2024-0003": "Patched in h2 0.4.2, before the fork's base v0.4.20.",
+      "RUSTSEC-2024-0332": "Patched in h2 0.4.4, before the fork's base v0.4.20.",
+      "RUSTSEC-2026-0258": "Patched in h2 0.4.16, before the fork's base v0.4.20."
+    },
     "commits": [
       {"subject": "Bound buffered receive events and backing storage", "purpose": "Charges each buffered DATA event and copies payloads and pseudo-headers so they cannot pin read buffers.", "origin": "graphite-meter"},
       {"subject": "Bound queued send metadata and codec storage", "purpose": "Caps queued DATA frames per stream and stops the codec write buffer growing past its default capacity.", "origin": "graphite-meter"},
