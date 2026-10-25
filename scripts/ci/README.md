@@ -103,11 +103,12 @@ Dockerfile may not select a custom frontend, pins its base images by digest and 
 from one snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal to `mise.toml`'s. Verification
 requires one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose
 source is the release commit and whose Dockerfile and target are `container/Dockerfile` and `server`; each image's
-server and notices must be the reviewed build its source offer names, its server must have the SHA-256 of the
-executable in that architecture's server archive, and nothing may carry `UNREVIEWED DEVELOPMENT BUILD`. Verification
-reads the archive as data and checks every blob the index reaches against its descriptor's size and digest; Skopeo
-runs only to publish. The untrusted build writes the provenance, so it shows which source was built but
-does not authenticate it. Build arguments carry no secrets because max provenance records them.
+server and notices must be the reviewed build its source offer names, its server must have the SHA-256 of the executable
+in that architecture's server archive, its config may hold only the exposed ports, the release labels, the health check
+and running `/graphite-meter` from `/` as `65532:65532` with only `PATH` set, and nothing may carry `UNREVIEWED
+DEVELOPMENT BUILD`. Verification reads the archive as data and checks every blob the index reaches against its
+descriptor's size and digest; Skopeo runs only to publish. The untrusted build writes the provenance, so it shows which
+source was built but does not authenticate it. Build arguments carry no secrets because max provenance records them.
 
 ### Owner setup
 
