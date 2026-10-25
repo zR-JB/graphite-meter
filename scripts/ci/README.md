@@ -9,7 +9,7 @@ real commands.
 
 ```sh
 mise run workflow-check    # jactionlint, zizmor, workflow_policy.py with the tool pins
-mise run pipeline-test     # ty type check, control-plane and legal tests
+mise run pipeline-test     # ty type check, control-plane, API schema and legal tests
 ```
 
 ## CI

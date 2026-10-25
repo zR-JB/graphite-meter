@@ -2,9 +2,8 @@
 
 use super::*;
 use graphite_meter_proto::{
-    catalog::{ServerCatalog, ServerId},
+    catalog::ServerCatalog,
     discovery::{Preflight, Probe},
-    origin::{BaseUrl, Origin},
 };
 use graphite_meter_server::config::ENGINE_VERSION;
 use http::StatusCode;
@@ -64,20 +63,14 @@ async fn the_preflight_matches_the_golden_document_with_a_fixed_generation() {
 
 #[tokio::test]
 async fn servers_publishes_the_catalog_with_self_approving_its_own_targets() {
-    let app = app(&[("GM_SERVER_CATALOG", r#"["https://other.example"]"#)]);
+    let catalog = r#"{"defaultSelection": ["self", "fra"], "servers": [{"id": "fra", "url": "https://fra.example.net",
+        "name": "Frankfurt", "location": "fra", "additionalOrigins": ["https://transfer.example.net:8443"]}]}"#;
+    let app = app(&[("GM_SERVER_CATALOG", catalog)]);
     let response = send(&app, Endpoint::H1, empty(request("GET", "/servers"))).await;
     assert_eq!(header(&response, "cache-control"), Some("no-store"));
-    let catalog = ServerCatalog::decode(text(response).await.as_bytes())
-        .unwrap()
-        .catalog;
-    assert_eq!(catalog.default_selection, [ServerId::own()]);
-    assert_eq!(catalog.servers.len(), 2);
-    let own = &catalog.servers[0];
-    assert_eq!(own.url, BaseUrl::Served);
-    assert_eq!(
-        own.additional_origins,
-        [Origin::parse("http://speed.example:7246").unwrap()]
-    );
+    let document = json(response).await;
+    assert_eq!(document, golden("servers.golden.json"));
+    assert!(ServerCatalog::decode(document.to_string().as_bytes()).is_ok());
 }
 
 #[tokio::test]
