@@ -173,6 +173,15 @@ pub enum StageStatus {
 }
 
 impl StageResult {
+    /// Whether a failure of `scope` is this stage's own; loaded latency lost leaves a transfer stage whole.
+    pub fn owns(&self, scope: Scope) -> bool {
+        match scope {
+            Scope::Server => true,
+            Scope::Latency => self.stage == Stage::Latency,
+            Scope::Throughput => self.stage != Stage::Latency,
+        }
+    }
+
     pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
         let missing = |direction: &Direction| {
             self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none())
@@ -186,7 +195,9 @@ impl StageResult {
             _ if self.stopped => StageStatus::Stopped,
             _ if self.stage.directions().iter().any(missing) => StageStatus::Failed,
             _ if self.stage == Stage::Latency && median.is_none() => StageStatus::Failed,
-            _ if !self.failures.is_empty() => StageStatus::Partial,
+            _ if self.failures.iter().any(|failure| self.owns(failure.scope)) => {
+                StageStatus::Partial
+            }
             _ => StageStatus::Complete,
         }
     }
@@ -243,7 +254,11 @@ impl Outcome {
             _ if results.iter().any(|result| result.stopped) => Self::Stopped,
             _ if results.iter().all(|result| result.measured.is_zero()) => Self::Failed,
             _ if !planned || statuses.contains(&StageStatus::Failed) => Self::Incomplete,
-            _ if statuses.contains(&StageStatus::Partial) => Self::Partial,
+            _ if statuses.contains(&StageStatus::Partial)
+                || results.iter().any(|result| !result.failures.is_empty()) =>
+            {
+                Self::Partial
+            }
             _ => Self::Complete,
         }
     }

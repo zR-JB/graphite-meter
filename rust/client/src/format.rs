@@ -1,7 +1,7 @@
 //! Every figure, unit and label the report and the interface print (`api/format.testvectors.json`).
 use crate::{
     config::{Config, preset},
-    model::{Cadence, Direction, Outcome, Stage, StageStatus},
+    model::{Cadence, Direction, Outcome, Scope, Stage, StageStatus},
     net::{LatencyPath, ThroughputPath},
 };
 use graphite_meter_proto::{
@@ -168,20 +168,20 @@ pub fn label(stage: Stage) -> &'static str {
     }
 }
 
-pub fn compact_stage(stage: Stage) -> &'static str {
-    if stage == Stage::Bidirectional {
-        "Bi-dir"
-    } else {
-        label(stage)
-    }
-}
-
 pub fn population(stage: Stage) -> &'static str {
     match stage {
         Stage::Latency => "Idle",
         Stage::Download => "Loaded download",
         Stage::Upload => "Loaded upload",
         Stage::Bidirectional => "Loaded bidirectional",
+    }
+}
+
+pub fn place(stage: Stage, scope: Scope) -> &'static str {
+    match scope {
+        Scope::Server => "Start",
+        Scope::Latency if stage != Stage::Latency => population(stage),
+        _ => label(stage),
     }
 }
 

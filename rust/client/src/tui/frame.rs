@@ -2,7 +2,7 @@
 use super::{
     App, Overlay, SMALLEST, Target,
     chrome::{Chrome, Link},
-    console::icon,
+    console::{CANNOT_START, icon},
     keys::{self, Action},
     paint::Canvas,
     paths::Readiness,
@@ -230,6 +230,14 @@ impl App {
         while caps.len() > 1 && caps_width(&caps) > room {
             caps.remove(caps.len() - 2);
         }
+        if let Some(toast) = &self.toast {
+            let room = room.saturating_sub(toast.text.width() as u16 + 5);
+            if caps_width(&caps[..1]) <= room {
+                while caps_width(&caps) > room {
+                    caps.pop();
+                }
+            }
+        }
         let total: u16 = caps.iter().map(|(cap, _)| cap.width() as u16 + 2).sum();
         let mut x = area.right().saturating_sub(total + 1);
         // A notice takes the bar's middle while it lasts, the build otherwise.
@@ -310,6 +318,7 @@ impl App {
         match run.map(|run| (run.outcome, &run.stage)) {
             _ if self.view.starting && self.stopping => ("Stopping", palette.muted),
             _ if self.view.starting => ("Checking paths", palette.muted),
+            _ if self.cannot_start() => (CANNOT_START, palette.warn),
             Some((Some(outcome), _)) => (format::outcome_label(outcome), palette.outcome(outcome)),
             Some((None, _)) if self.stopping => ("Stopping", palette.muted),
             Some((None, Some(Running::Measuring { plan, .. }))) => {
@@ -523,20 +532,7 @@ impl App {
             .as_ref()
             .map(format::authority)
             .unwrap_or_default();
-        let failure = match &self.view.check {
-            Check::Failed(failure) => Some(failure.text.clone()),
-            _ if self.could_not_start() => {
-                let failure = self
-                    .view
-                    .servers
-                    .iter()
-                    .find_map(|server| server.path.as_ref().err());
-                Some(failure.map_or("No test server answered".into(), |failure| {
-                    failure.text.clone()
-                }))
-            }
-            _ => None,
-        };
+        let failure = self.start_failure();
         let warn = |text: String| Line::styled(text, palette.warn);
         let [said, next] = match (
             self.editor().and_then(|editor| editor.error.clone()),
@@ -800,7 +796,8 @@ impl App {
                     .at
                     .saturating_duration_since(run.at.unwrap_or(issue.at));
                 let name = self.name(Some(&issue.server));
-                let label = format!("{} at {}", format::label(*stage), format::duration(at));
+                let place = format::place(*stage, issue.scope);
+                let label = format!("{place} at {}", format::duration(at));
                 entries.push(item(
                     &label,
                     format!("{name}: {}", issue.failure.reason.label()),
