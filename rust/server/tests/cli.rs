@@ -253,6 +253,43 @@ fn healthcheck_fails_a_listener_that_never_answers() {
 
 #[cfg(unix)]
 #[test]
+fn a_private_key_open_beyond_group_read_is_warned_about() {
+    use graphite_meter_testkit::{Identity, Scratch};
+    use std::io::{BufRead, BufReader};
+    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
+    let cert = scratch.file("cert.pem", &identity.certificate).unwrap();
+    for (mode, warned) in [(0o600, false), (0o640, false), (0o660, true), (0o644, true)] {
+        let key = scratch
+            .file_with_mode("key.pem", &identity.key, mode)
+            .unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+            .env_clear()
+            .envs([
+                ("GM_H1_ADDR", "127.0.0.1:0"),
+                ("GM_H2_ADDR", "127.0.0.2:0"),
+                ("GM_TLS_CERT", cert.to_str().unwrap()),
+                ("GM_TLS_KEY", key.to_str().unwrap()),
+                ("TOKIO_WORKER_THREADS", "2"),
+            ])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let lines = BufReader::new(child.stderr.take().unwrap()).lines();
+        let started: Vec<_> = lines
+            .map(Result::unwrap)
+            .take_while(|line| logged(line).2 != "ready")
+            .collect();
+        let warning = format!("private key {} has permissions {mode:04o}", key.display());
+        let found = started
+            .iter()
+            .any(|line| logged(line).2.starts_with(&warning));
+        terminate(child);
+        assert_eq!(found, warned, "{mode:04o}: {started:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn a_verbose_server_logs_requests_and_throughput_and_sigterm_ends_its_running_download() {
     use std::io::Read;
     let (child, address, next) = listening(&[("GM_VERBOSE", "true")]);
