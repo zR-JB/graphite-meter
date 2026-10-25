@@ -31,7 +31,7 @@ and the daily run on main run every job:
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
 | Run client on Windows arm64 | the Windows arm64 client out of its archive, on GitHub's arm64 Windows runner |
 | Release staging | `assets.py stage`, which joins the two OCI archives into the image, and `assets.py check` on the image, the server archives and the client archives, as a release does |
-| Browser E2E | Chrome in seven jobs and Firefox in six against the E2E server: the suite in four Chrome and three Firefox shards, and the network group, which shapes the runner's loopback, in three shards each; on the Chrome heavy shard, Chromium's HTTP/3, WebTransport and session close-code check (`rust/interop/browser.py`) |
+| Browser E2E | Chrome in seven jobs and Firefox in six against the E2E server: the suite in four Chrome and three Firefox shards, and the network group, which shapes the runner's loopback, in three shards each, its files dealt longest first by `client/e2e/timings.json`; on the Chrome heavy shard, Chromium's HTTP/3, WebTransport and session close-code check (`rust/interop/browser.py`) |
 
 `mise run ci` runs CI's check, secret-scan, target, delayed-download and browser gates locally, but not the image,
 archive, Windows or release-staging jobs; the policy fails if one of its steps has no CI job. A new push to a pull
