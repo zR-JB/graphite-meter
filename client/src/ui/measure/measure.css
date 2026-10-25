@@ -1375,6 +1375,27 @@
     & .status-dot.inline {
       margin-inline-end: 0.4em;
     }
+    & table {
+      width: min(100%, 760px);
+    }
+    /* Causes are a ruled list with a dot in their tone, never tinted boxes: the cards already carry the alarm. */
+    & .causes {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--text-muted);
+      font: var(--role-caption);
+      & li {
+        display: flex;
+        align-items: baseline;
+        padding-block: var(--space-2);
+        border-top: var(--hairline) solid var(--border-subtle);
+      }
+      & strong {
+        color: var(--text);
+        font-weight: var(--w-strong);
+      }
+    }
   }
   @container results (max-width: 520px) {
     .server-grid {

@@ -559,9 +559,9 @@ test("a partial three-server result shows every server's stages and causes, and 
   expect(osloRow!.slice(0, 1)).toEqual(["Oslo Incomplete"]);
   expect(osloRow!.at(-1)).toBe("Not reached");
   expect(bergenRow!.slice(1)).toEqual(["Not reached", "Not reached", "Not reached"]);
-  await expect(grid.locator(".notice")).toHaveText([
-    "Oslo · Download Connection lost. Not reached after it: Upload.",
-    "Bergen · Start Server at capacity. Not reached after it: Latency, Download and Upload.",
+  await expect(grid.locator(".causes li")).toHaveText([
+    "Oslo · Download Connection lost. Upload was not reached.",
+    "Bergen · Start Server at capacity. Latency, Download and Upload were not reached.",
   ]);
   const lens = page.getByRole("combobox", { name: "Servers shown in this result" });
   await expect(lens.locator('option[value="bergen"]')).toHaveText("Bergen · Incomplete");

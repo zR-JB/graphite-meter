@@ -475,12 +475,12 @@ test("the server grid reads each server's value or word per planned stage, then 
     {
       tone: "warn",
       head: "Oslo · Download",
-      text: "Connection lost. Not reached after it: Upload.",
+      text: "Connection lost. Upload was not reached.",
     },
     {
       tone: "warn",
       head: "Bergen · Start",
-      text: "Server at capacity. Not reached after it: Download and Upload.",
+      text: "Server at capacity. Download and Upload were not reached.",
     },
   ]);
 

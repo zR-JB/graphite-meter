@@ -310,13 +310,22 @@ function ServerGrid(props: { view: Read<GridView> }): Node {
           </table>
         )}
       </Show>
-      {() =>
-        props.view().notes.map((note) => (
-          <p class="notice" data-tone={note.tone}>
-            <strong>{note.head}</strong> {note.text}
-          </p>
-        ))
-      }
+      <Show when={() => props.view().notes.length > 0}>
+        {() => (
+          <ul class="causes">
+            {() =>
+              props.view().notes.map((note) => (
+                <li>
+                  <span class="status-dot inline" data-tone={note.tone} />
+                  <span>
+                    <strong>{note.head}</strong> {note.text}
+                  </span>
+                </li>
+              ))
+            }
+          </ul>
+        )}
+      </Show>
     </div>
   ) as HTMLElement;
 }

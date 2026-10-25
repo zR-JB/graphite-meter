@@ -1,6 +1,6 @@
 // The instrument's own words: the dial's notes and the labels of the chips, lanes, cards, lens and toast.
 import type { ShownPhase } from "../../app/run";
-import { PHASE, READINESS_TIP, TIP } from "../../view/words";
+import { listed, PHASE, READINESS_TIP, TIP } from "../../view/words";
 
 /** What the dial's note says between measurements; the explainer, when there is one, is the hint's tip. */
 export const PHASE_HINT: Partial<
@@ -70,7 +70,9 @@ export const LENS = "Servers shown in the results";
 export const GRID = {
   label: "Each server's result by stage",
   server: "Server",
-  after: "Not reached after it:",
+  /** The stages a cause cost its server. */
+  unreached: (stages: readonly string[]) =>
+    `${listed(stages)} ${stages.length > 1 ? "were" : "was"} not reached.`,
 } as const;
 
 export const TOAST = {

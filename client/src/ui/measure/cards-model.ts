@@ -610,28 +610,29 @@ export function gridView(result: RunResult, table: Grid, units: RateUnits): Grid
       };
     }),
   }));
+  // One server's cards already say each cause of their stage; its list keeps only what no card shows.
   const notes = table.rows.flatMap(({ server, cells, causes }) =>
-    causes.map((cause): GridNote => {
-      const after = stages.filter(
-        (stage) => cells[stage].status === "unreached" && cells[stage].cause === cause,
-      );
-      const failed = stages.some(
-        (stage) => cells[stage].status === "failed" && cells[stage].cause === cause,
-      );
-      const place = causePlace(cause);
-      return {
-        tone: failed ? "err" : "warn",
-        head: several ? `${server.name} · ${place}` : place,
-        text: [
-          sentence(reasonLabel(cause.reason)),
-          after.length
-            ? sentence(`${GRID.after} ${listed(after.map((stage) => STAGE[stage].label))}`)
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" "),
-      };
-    }),
+    causes
+      .filter((cause) => several || loaded(cause))
+      .map((cause): GridNote => {
+        const after = stages.filter(
+          (stage) => cells[stage].status === "unreached" && cells[stage].cause === cause,
+        );
+        const failed = stages.some(
+          (stage) => cells[stage].status === "failed" && cells[stage].cause === cause,
+        );
+        const place = causePlace(cause);
+        return {
+          tone: failed ? "err" : "warn",
+          head: several ? `${server.name} · ${place}` : place,
+          text: [
+            sentence(reasonLabel(cause.reason)),
+            after.length ? GRID.unreached(after.map((stage) => STAGE[stage].label)) : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        };
+      }),
   );
   return {
     stages,
