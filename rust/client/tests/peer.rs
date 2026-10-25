@@ -693,3 +693,27 @@ async fn a_lease_answered_after_a_stop_is_ended() {
         "the lease answered after the stop ended with its token"
     );
 }
+
+#[tokio::test]
+async fn a_request_cut_unanswered_on_a_reused_connection_goes_again_only_when_idempotent() {
+    let (listener, served) = local().await;
+    let mut heads = peer(listener, None, |request, _| match request {
+        1 | 3 => None,
+        _ => Some(ok("{}")),
+    });
+    let (client, served) = (client(false), origin("http", served));
+    for _ in 0..2 {
+        probe(&client, Protocol::Negotiated, &served).await.unwrap();
+    }
+    let grant = LeaseRequest {
+        measurements: 1,
+        sessions: 0,
+        uploads: 0,
+    };
+    let leased = client.lease(&served, &[], grant).await;
+    assert_matches!(leased, Err(Fault::Lost));
+    let seen: Vec<_> = std::iter::from_fn(|| heads.try_recv().ok())
+        .map(|(connection, head)| format!("{connection} {}", &head[..head.find(' ').unwrap_or(0)]))
+        .collect();
+    assert_eq!(seen, ["0 GET", "0 GET", "1 GET", "1 POST"]);
+}
