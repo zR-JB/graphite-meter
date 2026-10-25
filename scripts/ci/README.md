@@ -29,7 +29,7 @@ checks job alone; every other change, every push to main and the daily run on ma
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
 | Run client on Windows arm64 | the Windows arm64 client out of its archive, on GitHub's arm64 Windows runner |
 | Release staging | `assets.py stage`, which joins the two OCI archives into the image, and `assets.py check` on the image, the server archives and the client archives, as a release does |
-| Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
+| Browser E2E | Chrome in seven shards and Firefox in six against the E2E server: `performance.test.ts` in one, with its surface reversals in another in Chrome only, the other files in two, and the network scenarios in three, dealt longest first by `client/e2e/timings.json`; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
 `mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
 toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the same toolchain; only CI

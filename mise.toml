@@ -262,12 +262,18 @@ arg "[group]" default="all" help="all; reversals or heavy: halves of performance
 '''
 run = '''
 export GM_E2E_SERVER_BIN=$(realpath "$usage_server")
-# The surface reversals run serially under CPU throttling, so performance.test.ts splits by test name; the other
-# files split into two shards of equal time by e2e/timings.json, which --update-timings refreshes.
+# The surface reversals run serially under CPU throttling, so performance.test.ts splits by test name; the rest split by
+# e2e/timings.json, the network files dealt longest first since Bun's --shard only cuts sorted files into runs.
 reversals='rapid surface reversals release resources at (1600|390)px'
 case "$usage_group" in
   all|network) set -- ;;
-  network-[123]) set -- "--shard=${usage_group#network-}/3" --timings=e2e/timings.json ;;
+  network-[123]) files=$(cd client && find e2e/network -name '*.test.ts' | LC_ALL=C sort | jq -Rnr \
+      --slurpfile timings e2e/timings.json --argjson shard "${usage_group#network-}" '
+    [inputs | {file: ., ms: ($timings[0].files[.] // 0)}] | sort_by(-.ms)
+    | reduce .[] as $f ([range(3) | {ms: 0, files: []}]; (map(.ms) | index(min)) as $i
+      | .[$i].ms += $f.ms | .[$i].files += ["./" + $f.file])
+    | .[$shard - 1].files | if length > 0 then .[] else error("an empty shard") end')
+    mapfile -t files <<<"$files"; set -- "${files[@]}" ;;
   reversals) set -- bun test ./e2e/performance.test.ts --no-orphans --timeout=60000 -t "$reversals" ;;
   heavy) set -- bun test ./e2e/performance.test.ts --no-orphans --timeout=60000 -t "^(?!$reversals)" ;;
   rest-[12]) set -- bun test ./e2e --parallel=3 --no-orphans --timeout=60000 '--path-ignore-patterns=**/performance.test.ts' \
@@ -281,7 +287,7 @@ if [[ $usage_group != network* ]]; then bun run e2e "$@"; fi
 if [[ $usage_group == all || $usage_group == network* ]]; then
   export GM_E2E_NETWORK=1
   loopback='ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off'
-  network=(bun run e2e bun test ./e2e/network --no-orphans --timeout=600000 "$@")
+  network=(bun run e2e bun test "${@:-./e2e/network}" --no-orphans --timeout=600000)
   if [[ -n ${GM_E2E_HOST_LOOPBACK:-} ]]; then
     sudo -n bash -ec "$loopback"
     "${network[@]}"
