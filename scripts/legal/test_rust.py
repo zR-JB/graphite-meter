@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -261,9 +262,13 @@ class BuildVerifyTests(Scratch):
             use = f"-Cprofile-use={profiles / 'x86_64.profdata'}"
             # Windows amd64 shares amd64's profile, Windows arm64 never takes arm64's; a development build takes none.
             self.assertIn(use, flags("x86_64-unknown-linux-musl"))
+            self.assertEqual(self.cargo_environment.get("GM_PGO_SHA256"), hashlib.sha256(b"profile").hexdigest())
             self.assertIn(use, flags("x86_64-pc-windows-gnu"))
             self.assertNotIn(use, flags("aarch64-unknown-linux-musl"))
             self.assertNotIn(use, flags(None))
+            with patch.dict(os.environ, {"GM_PGO_SHA256": "0" * 64}):
+                flags("aarch64-unknown-linux-musl")
+            self.assertNotIn("GM_PGO_SHA256", self.cargo_environment)
             self.write("pgo/aarch64.profdata", b"profile")
             self.assertFalse([flag for flag in flags("aarch64-pc-windows-gnullvm") if "profile-use" in flag])
 
@@ -293,7 +298,8 @@ class BuildVerifyTests(Scratch):
         self.write("notices/inventory.json", "{}\n")
         self.write("notices/old_third-party-source.tar.gz", "stale")
         build = Build("graphite-meter-client", "x86_64-pc-windows-gnu", "release", "1.2.3", self.out)
-        with patch("scripts.legal.rust.subprocess.run", vendor):
+        self.write("pgo/x86_64.profdata", b"profile")
+        with patch("scripts.legal.rust.subprocess.run", vendor), patch("scripts.legal.rust.PGO", self.root / "pgo"):
             source_offer(build, self.state, self.state.components)
         self.assertEqual(sorted(path.name for path in self.out.glob("*_third-party-source.tar.gz")),
                          ["graphite-meter-client_windows_amd64_third-party-source.tar.gz"])
@@ -301,7 +307,8 @@ class BuildVerifyTests(Scratch):
             self.assertEqual(sorted(archive.getnames()), [
                 f"graphite-meter_1.2.3_third-party-source/{name}" for name in (
                 "builds/graphite-meter-client_windows_amd64/LEGAL.txt",
-                "builds/graphite-meter-client_windows_amd64/inventory.json", "legal/rust-forks.json",
+                "builds/graphite-meter-client_windows_amd64/inventory.json",
+                "builds/graphite-meter-client_windows_amd64/pgo.profdata", "legal/rust-forks.json",
                 "third_party/cargo/dependency-1.0.0/lib.rs")])
         self.assertEqual((self.out / "SOURCE.txt").read_text().splitlines(), [
             "Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v1.2.3", "Matching release: v1.2.3",
