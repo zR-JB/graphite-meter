@@ -28,7 +28,7 @@ the setting.
 | `GM_H1_TLS_ADDR`                        | `--h1-tls-addr`                        | empty            | HTTPS HTTP/1.1 address; empty disables.                                                |
 | `GM_H2_ADDR`                            | `--h2-addr`                            | empty            | HTTP/2 TLS address; empty disables.                                                    |
 | `GM_H3_ADDR`                            | `--h3-addr`                            | empty            | HTTP/3 UDP and bootstrap TCP address; empty disables.                                  |
-| `GM_TLS_CERT` / `GM_TLS_KEY`            | `--tls-cert` / `--tls-key`             | empty            | PEM paths; required when any TLS listener is enabled. The certificate must be current and name the host of every HTTPS public origin. |
+| `GM_TLS_CERT` / `GM_TLS_KEY`            | `--tls-cert` / `--tls-key`             | empty            | PEM paths; required when any TLS listener is enabled. The certificate must be current and name the host of each TLS listener's `GM_H*_PUBLIC_ORIGIN` that is set. |
 | `GM_H1_PUBLIC_ORIGIN`                   | `--h1-public-origin`                   | empty            | Public `http://` origin of the clear listener.                                         |
 | `GM_H1_TLS_PUBLIC_ORIGIN`               | `--h1-tls-public-origin`               | empty            | Public `https://` origin of the HTTPS HTTP/1.1 listener.                               |
 | `GM_H2_PUBLIC_ORIGIN`                   | `--h2-public-origin`                   | empty            | Public `https://` origin of the HTTP/2 listener.                                       |
@@ -40,11 +40,11 @@ the setting.
 | `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters.            |
 | `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Location label, with the same limits.                                                  |
 | `GM_RESULT_HISTORY_DEFAULT`             | `--result-history-default`             | `false`          | Default for saving completed browser results on the device.                            |
-| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log throughput every second, admission counters every 30 s and sign-in debug lines.    |
+| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log every request with the address it arrived from, each QUIC connection's start and end, throughput every second, admission counters every 30 s and sign-in debug lines. |
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Measurements running at once: downloads, uploads, latency connections and WebTransport sessions. |
-| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Measurements per client identity, its leases' included; the most one lease holds.      |
+| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Measurements per client identity, including those its [leases](../api/discovery.md#the-lease) reserve; one lease reserves at most this many. |
 | `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`             | WebTransport sessions, which also count as measurements.                               |
-| `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity; the most one lease holds.                   |
+| `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity; one lease reserves at most this many.       |
 | `GM_MAX_BUFFER_BYTES`                   | `--max-buffer-bytes`                   | `8589934592`     | Bytes of HTTP/2 and QUIC connection buffers ([resources](#resources)).                 |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client; a trusted proxy counts only toward `GM_MAX_CONNECTIONS`. |
@@ -55,7 +55,7 @@ the setting.
 | `GM_AUTH_MODE`                          | `--auth-mode`                          | `off`            | `off`, `password`, `oidc` or `hybrid`.                                                 |
 | `GM_AUTH_PUBLIC_URL`                    | `--auth-public-url`                    | empty            | Canonical HTTPS UI origin, no path or `:443`.                                          |
 | `GM_AUTH_PASSWORD_HASH`                 | _env only_                             | empty            | Inline Argon2id PHC hash; prefer the file.                                             |
-| `GM_AUTH_PASSWORD_HASH_FILE`            | `--auth-password-hash-file`            | empty            | File with one Argon2id PHC hash.                                                       |
+| `GM_AUTH_PASSWORD_HASH_FILE`            | `--auth-password-hash-file`            | empty            | File with one Argon2id PHC hash in the form `hash-password` prints.                    |
 | `GM_AUTH_OIDC_ISSUER`                   | `--auth-oidc-issuer`                   | empty            | HTTPS issuer URL.                                                                      |
 | `GM_AUTH_OIDC_CLIENT_ID`                | `--auth-oidc-client-id`                | empty            | Confidential client ID.                                                                |
 | `GM_AUTH_OIDC_CLIENT_SECRET`            | _env only_                             | empty            | Inline client secret; prefer the file.                                                 |
@@ -76,6 +76,9 @@ the setting.
   operation lifetime. Set them to cut transfers sooner, and clients reconnect across each cut. Something must carry
   throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or `GM_PUBLIC_THROUGHPUT_ORIGINS`, or
   startup fails with "configuration advertises no throughput endpoint".
+- Any other `GM_AUTH_*` setting needs `GM_AUTH_MODE` on, a password hash or an OIDC issuer, client or group setting
+  needs a mode that uses it, and each secret takes its inline or its file form, not both. A password hash must be
+  Argon2id `v=19` with `m=19456,t=2,p=1`, a 16-byte salt and a 32-byte output, as `hash-password` prints it.
 - A native listener is advertised on the host the client asked for, at the listener's own port. Set its
   `GM_H*_PUBLIC_ORIGIN` when clients reach it on another host or port, such as a remapped container port. HTTP/3
   uses that port for both TCP and UDP, so a remap must publish both protocols on it.
@@ -88,9 +91,9 @@ the setting.
 - Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at
   a trusted proxy or firewall.
 - `GM_TRUSTED_PROXIES` rejects the default routes `0.0.0.0/0` and `::/0`. A trusted peer names its client with
-  exactly one `X-Real-IP`, and any `X-Forwarded-For` must end in that address. Measurement admission refuses any
-  other request from the peer with HTTP 400, the sign-in page says the proxy names no client, and the server logs
-  the fault under `proxy` at most once a minute.
+  exactly one `X-Real-IP`, and any `X-Forwarded-For` must end in that address. Measurement admission refuses with
+  HTTP 400 any other request from the peer unless it carries a sign-in, the sign-in page says the proxy names no
+  client, and the server logs the fault under `proxy` at most once a minute.
 - The browser keeps History in its own IndexedDB, and its own choice overrides `GM_RESULT_HISTORY_DEFAULT`. Stopped
   and Failed runs are not saved.
 
@@ -121,15 +124,17 @@ the bounds all clients share, so others' attempts cannot lock a known operator o
 | `defaultSelection`  | Names one to four existing IDs; omitted means `self`, and empty is invalid.             |
 
 The raw configuration is limited to 64 KiB. The normalized catalog adds this server's own entry and is limited to
-48 KiB. IDs derive from the canonical origin, so reordering keeps them and changing the origin creates a new one.
+48 KiB. Unknown fields are refused. In the list form, IDs derive from the canonical origin, so reordering keeps them
+and changing an origin creates a new one.
 
 ## Resources
 
-`GM_MAX_BUFFER_BYTES` defaults to 8 GiB and bounds the connection buffers the HTTP/2 and HTTP/3 listeners share.
-It must cover every allowed connection's floor. That floor is 1.5 MiB with the HTTP/2 listener on, about 0.5 MiB
-with HTTP/3 alone and none for HTTP/1.1. The default `GM_MAX_CONNECTIONS` of 4096 therefore needs up to 6 GiB. A
-small host lowers both, for example to `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget
-that falls short stops the server at start with the values that fit.
+`GM_MAX_BUFFER_BYTES` defaults to 8 GiB and bounds the connection buffers the HTTP/2 and HTTP/3 listeners share. It
+must cover every allowed connection's floor, which is 1.5 MiB with the HTTP/2 listener on, about 0.5 MiB with HTTP/3
+alone and none for HTTP/1.1, plus a 256 KiB download block and, with HTTP/3, the QUIC endpoints' buffers. The
+default `GM_MAX_CONNECTIONS` of 4096 therefore needs a little over 6 GiB. A small host lowers both, for example to
+`GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the server at start
+with the values that fit.
 
 Connections run on one thread per runtime worker, and by default there is one worker per CPU. Tokio's own
 `TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run five nice
@@ -141,14 +146,15 @@ The server logs to stderr and writes one line per event in UTC, or in the zone `
 
 ```text
 2026-10-06T14:31:02Z INFO  server:    ready
-2026-10-06T14:31:09Z WARN  tls:       certificate expires in 72 h; renew it (transport::tls)
+2026-10-06T14:31:09Z WARN  tls:       certificate expires in 3 days; renew it (transport::tls)
 ```
 
 Each line has a level of `DEBUG`, `INFO`, `WARN` or `ERROR`, then a topic and the message. Warnings and errors end
 with the module that wrote them. Lines a peer can repeat, such as failed handshakes, appear at most once a minute
 with a count of those held back. Connections refused at a client's limit are logged once a minute per client, so an
-address many users share shows up by name. On a terminal the lines are colored unless `NO_COLOR` is set or
-`TERM=dumb`, and `FORCE_COLOR` colors them anywhere.
+address many users share shows up by name. On a terminal with `TERM` set and not `dumb` the lines are colored, and a
+warning's or error's advice after its `; ` moves to a `help:` line below it. A `NO_COLOR` other than empty or `0`
+turns color off, and otherwise such a `FORCE_COLOR` turns it on anywhere.
 
 `TZ` takes an IANA zone name such as `Europe/Berlin`, and each line then carries the offset in effect at that time,
 such as `2026-10-06T16:31:02+02:00`. The zone data is built into the server, so it needs no mounts and is as
