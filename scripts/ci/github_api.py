@@ -31,7 +31,8 @@ JSON_DEPTH = 64
 TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS = 60, 600
 RETRY_SECONDS = (2, 10)
 REPEATABLE = ("GET", "PATCH", "DELETE")
-TRANSIENT = re.compile(r"\(HTTP (?:429|5\d\d)\)|connection reset|timeout|\bEOF\b", re.IGNORECASE)
+STATUS = re.compile(r"\bHTTP (\d{3})\b")
+DROPPED = re.compile(r"connection reset|timeout|\bEOF\b", re.IGNORECASE)
 
 
 class ControlPlaneError(RuntimeError):
@@ -67,7 +68,9 @@ def api(path: str, *, paginate: bool = False, method: str = "GET", body: JsonVal
                 text = result.stdout.strip()
                 return decode_json(text, f"gh api {path}") if text else None
             detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        if not TRANSIENT.search(detail) or (delay := next(delays, None)) is None:
+        status = STATUS.search(detail)
+        transient = status[1] == "429" or status[1][0] == "5" if status else DROPPED.search(detail)
+        if not transient or (delay := next(delays, None)) is None:
             fail(f"gh api {path}: {detail}")
         print(f"::warning::gh api {path}: {detail}; retrying in {delay} s", file=sys.stderr)
         time.sleep(delay)

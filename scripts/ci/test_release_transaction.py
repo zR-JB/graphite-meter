@@ -7,6 +7,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -360,6 +361,27 @@ class ReleasePublicationTests(unittest.TestCase):
         error, _, after = self.publish(EMPTY | {"flaky": [upload]})
         self.assertIn("(HTTP 502)", error or "")
         self.assertEqual(after["writes"].count(upload), 1)
+
+    def test_a_status_or_dropped_connection_decides_whether_a_call_repeats(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "gh").write_text('#!/bin/sh\necho "$*" >>"$CALLS"\necho "$FAILURE" >&2\nexit 1\n')
+            (root / "gh").chmod(0o755)
+            env = {"PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "CALLS": str(root / "calls"),
+                   "GH_TOKEN": "secret-token"}
+            with (patch.dict(os.environ, env), patch("github_api.time.sleep"),
+                  contextlib.redirect_stderr(io.StringIO())):
+                for failure, method, attempts in (("gh: HTTP 502", "GET", 3),
+                                                  ("gh: Server Error (HTTP 503)", "DELETE", 3),
+                                                  ("read tcp: connection reset by peer", "PATCH", 3),
+                                                  ("gh: Server Error (HTTP 502)", "POST", 1),
+                                                  ("gh: Validation Failed: lock timeout (HTTP 422)", "GET", 1),
+                                                  ("gh: Not Found (HTTP 404)", "DELETE", 1)):
+                    (root / "calls").write_text("")
+                    with (self.subTest(failure=failure, method=method), patch.dict(os.environ, {"FAILURE": failure}),
+                          self.assertRaisesRegex(ControlPlaneError, re.escape(failure))):
+                        api("repos/owner/repo/releases/1", method=method)
+                    self.assertEqual(len((root / "calls").read_text().splitlines()), attempts)
 
     def test_a_hung_call_is_cut_by_its_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
