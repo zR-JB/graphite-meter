@@ -34,7 +34,7 @@ import {
 import type { FailureReason, OpenStage, PreparedServer, Stall, TestConfig } from "../engine/types";
 import { batch, computed, effect, signal, untrack, type Read, type Signal } from "../lib/signal";
 import type { PreferenceStore } from "./preferences";
-import { appendThroughput, upsertLatency, type ThroughputSample } from "./series";
+import { BucketSeries, ThroughputSeries, type ThroughputSample } from "./series";
 
 /** Coverage assumes the longest warmup, since the RTT that adapts it is known only after the checks. */
 const SESSION_MARGIN_MS = 60_000;
@@ -99,7 +99,8 @@ export type ShownPhase = "idle" | Phase | "complete" | "aborted";
 type Step = "preparing" | "running" | "finalizing";
 
 interface ServerSeries {
-  buckets: LatencyBucket[];
+  series: BucketSeries;
+  buckets: readonly LatencyBucket[];
   version: Signal<number>;
   summaries: Signal<Partial<Record<Stage, LatencySummary | null>>>;
 }
@@ -129,7 +130,7 @@ export function createRun(env: RunEnvironment) {
   /** Each server's latest latency-warmup median. */
   const warmupRtt = signal<Readonly<Record<string, number>>>({});
   const stageBytes = signal(0);
-  const throughput: ThroughputSample[] = [];
+  const throughput = new ThroughputSeries();
   const throughputVersion = signal(0);
   const serverSeries = new Map<string, ServerSeries>();
   /** Bumped when the series of a run that went are let go. */
@@ -158,8 +159,6 @@ export function createRun(env: RunEnvironment) {
   let refusedOutright = false;
   /** The cumulative bytes the shown stage started from, and the latest reading. */
   let stageBase = { stage: "", bytes: 0, last: 0 };
-  /** The planned length of the current run, which the throughput series is compacted against. */
-  let spanMs = 0;
 
   const running = computed(() => !["idle", "complete", "aborted"].includes(phase()));
   const queued = computed(() => preparation() === "waiting");
@@ -191,14 +190,17 @@ export function createRun(env: RunEnvironment) {
 
   const series = (id: string): ServerSeries => {
     let entry = serverSeries.get(id);
-    if (!entry)
-      serverSeries.set(id, (entry = { buckets: [], version: signal(0), summaries: signal({}) }));
+    if (!entry) {
+      const own = new BucketSeries();
+      entry = { series: own, buckets: own.buckets, version: signal(0), summaries: signal({}) };
+      serverSeries.set(id, entry);
+    }
     return entry;
   };
 
   function reset(): void {
     batch(() => {
-      throughput.length = 0;
+      throughput.clear();
       throughputVersion.set(throughputVersion.peek() + 1);
       serverSeries.clear();
       seriesReset.set(seriesReset.peek() + 1);
@@ -265,18 +267,17 @@ export function createRun(env: RunEnvironment) {
           for (const dir of ["down", "up"] as const) {
             const bytesPerSec = sample[dir];
             if (bytesPerSec !== null)
-              appendThroughput(
-                throughput,
-                {
-                  t: sample.t,
-                  bytesPerSec,
-                  bytesCumulative: sample.bytes,
-                  dir,
-                  stage: sample.stage,
-                  continuityId: sample.continuityId,
-                },
-                spanMs,
-              );
+              throughput.append({
+                t: sample.t,
+                bytesPerSec,
+                bytesCumulative: sample.bytes,
+                dir,
+                stage: sample.stage,
+                continuityId: sample.continuityId,
+                ticks: 1,
+                t0: sample.t,
+                t1: sample.t,
+              });
           }
           return batch(() => {
             live.set(sample);
@@ -288,7 +289,7 @@ export function createRun(env: RunEnvironment) {
           return warmupRtt.set({ ...warmupRtt.peek(), [event.serverId]: event.rttMs });
         case "latency": {
           const entry = series(event.serverId);
-          upsertLatency(entry.buckets, event.bucket);
+          entry.series.upsert(event.bucket);
           return entry.version.set(entry.version.peek() + 1);
         }
         case "summary": {
@@ -413,7 +414,6 @@ export function createRun(env: RunEnvironment) {
     });
     run = next;
     rttMs = focus.latency?.rttMs ?? 0;
-    spanMs = totalMs(runPlan);
     follow(next);
     const unfollow = release;
     release = () => {
@@ -544,7 +544,6 @@ export function createRun(env: RunEnvironment) {
         );
       }
       plan.set(current.plan);
-      spanMs = totalMs(current.plan);
     }
     // A change to what Start would run lapses a refused or failed start; the gauge alone leaves it be.
     if (keys.some((key) => key !== "visualization") && !queued.peek()) cancel();
@@ -594,7 +593,8 @@ export function createRun(env: RunEnvironment) {
     live: live as Read<LiveSample | null>,
     warmupRtt: warmupRtt as Read<Readonly<Record<string, number>>>,
     stageBytes: stageBytes as Read<number>,
-    throughput: throughput as readonly ThroughputSample[],
+    throughput: throughput.samples as readonly ThroughputSample[],
+    traces: throughput.traces as Readonly<ThroughputSeries["traces"]>,
     throughputVersion: throughputVersion as Read<number>,
     /** One server's latency buckets and summaries; read `version` to follow the buckets. */
     latency: (id: string): LatencySeries => {

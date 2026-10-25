@@ -5,8 +5,8 @@ const BUCKET_MS = 250;
 export const SCORE_WINDOW_MS = 4_000;
 export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 
-/** Keeps running statistics of 250 ms rates one rate at a time (Welford), exact for any spread at any level. */
-interface Moments {
+/** Keeps running statistics one value at a time (Welford), exact for any spread at any level. */
+export interface Moments {
   count: number;
   mean: number;
   squares: number;
@@ -75,7 +75,7 @@ export class RateSeries {
   }
 }
 
-function add(m: Moments, rate: number): void {
+export function add(m: Moments, rate: number): void {
   m.count++;
   const delta = rate - m.mean;
   m.mean += delta / m.count;

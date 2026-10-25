@@ -1,7 +1,12 @@
-// A run's chart series, bounded by time-bin compaction that never hides a peak, a dip or a line's ends.
+// A run's chart series in a fixed budget: the newest stretch as measured, older stretches folded into nested slots.
 import type { Direction } from "../engine/types";
-import { REVISION_MS, SERIES_LIMIT, type LatencyBucket } from "../engine/measure/buckets";
+import { REVISION_MS, type LatencyBucket } from "../engine/measure/buckets";
+import { add, type Moments } from "../engine/measure/stability";
 import type { TransferStage } from "../engine/run/schedule";
+
+export const SERIES_LIMIT = 1_200;
+/** Between runs the idle monitor adds one bucket per probe. It keeps this many. */
+export const IDLE_LIMIT = 60;
 
 export interface ThroughputSample {
   t: number;
@@ -11,16 +16,146 @@ export interface ThroughputSample {
   dir: Direction;
   stage: TransferStage;
   continuityId: number;
+  /** The live ticks a sample stands for, from `t0` to `t1`; a folded one holds their mean time and rate. */
+  ticks: number;
+  t0: number;
+  t1: number;
 }
 
-/** Between runs the idle monitor adds one bucket per probe. It keeps this many. */
-export const IDLE_LIMIT = 60;
+interface Kind<T> {
+  group(item: T): string;
+  lane(item: T): string;
+  joins(last: T, next: T): boolean;
+  at(item: T): number;
+  start(item: T): number;
+  end(item: T): number;
+  merge(bin: T[], slot: { start: number; end: number }): T;
+}
 
-const bucketLine = (bucket: LatencyBucket) => `${bucket.phase}:${bucket.continuityId}`;
-const bucketTime = (bucket: LatencyBucket) => (bucket.startT + bucket.endT) / 2;
-const sampleLine = (sample: ThroughputSample) =>
-  `${sample.stage}:${sample.dir}:${sample.continuityId}`;
-const sampleTime = (sample: ThroughputSample) => sample.t;
+/** Items in time order within `limit`: the newest stretch whole, older items merged into nested slots of a fixed grid. */
+class Folded<T> {
+  readonly items: T[] = [];
+  #grids = new Map<string, { origin: number; width: number }>();
+
+  constructor(
+    readonly kind: Kind<T>,
+    readonly limit: number,
+  ) {}
+
+  clear(): void {
+    this.items.length = 0;
+    this.#grids.clear();
+  }
+
+  fit(): void {
+    const { items, kind } = this;
+    const done = new Set<string>();
+    while (items.length > this.limit) {
+      let newest = Number.NEGATIVE_INFINITY;
+      for (const item of items) newest = Math.max(newest, kind.end(item));
+      const horizon = newest - REVISION_MS;
+      const settled = new Map<string, number>();
+      for (const item of items)
+        if (kind.end(item) < horizon && !done.has(kind.group(item)))
+          settled.set(kind.group(item), (settled.get(kind.group(item)) ?? 0) + 1);
+      let group: string | null = null;
+      for (const [name, count] of settled)
+        if (count > 1 && (group === null || count > settled.get(group)!)) group = name;
+      if (group === null) return;
+      let grid = this.#grids.get(group);
+      if (!grid) {
+        let width = 1;
+        for (const item of items)
+          if (kind.group(item) === group)
+            width = Math.max(width, kind.end(item) - kind.start(item));
+        const first = items.find((item) => kind.group(item) === group)!;
+        this.#grids.set(group, (grid = { origin: kind.start(first), width }));
+      }
+      const before = items.length;
+      if (this.#fold(group, grid, horizon, true) < before) continue;
+      if (grid.width <= horizon - grid.origin) grid.width *= 2;
+      else if (this.#fold(group, grid, horizon, false) === before) done.add(group);
+    }
+  }
+
+  #fold(
+    group: string,
+    { origin, width }: { origin: number; width: number },
+    horizon: number,
+    strict: boolean,
+  ): number {
+    const { items, kind } = this;
+    const open = new Map<string, { index: number; slot: number; bin: T[] }>();
+    const close = ({ index, slot, bin }: { index: number; slot: number; bin: T[] }) => {
+      const start = origin + slot * width;
+      if (bin.length > 1) items[index] = kind.merge(bin, { start, end: start + width });
+    };
+    let write = 0;
+    for (const item of items) {
+      if (kind.group(item) === group && kind.end(item) < horizon) {
+        const slot = Math.floor((kind.at(item) - origin) / width);
+        const lane = kind.lane(item);
+        const entry = open.get(lane);
+        if (entry?.slot === slot && (!strict || kind.joins(entry.bin.at(-1)!, item))) {
+          entry.bin.push(item);
+          continue;
+        }
+        if (entry) close(entry);
+        open.set(lane, { index: write, slot, bin: [item] });
+      }
+      items[write++] = item;
+    }
+    for (const entry of open.values()) close(entry);
+    items.length = write;
+    return write;
+  }
+}
+
+const latencyKind: Kind<LatencyBucket> = {
+  group: (bucket) => bucket.phase,
+  lane: () => "",
+  // A reconnect's line break stays while its buckets are whole; folded history joins across it.
+  joins: () => true,
+  at: (bucket) => bucket.startT,
+  start: (bucket) => bucket.startT,
+  end: (bucket) => bucket.endT,
+  merge: (bin, slot) => ({
+    ...mergeLatency(bin),
+    startT: Math.max(bin[0]!.startT, slot.start),
+    endT: Math.min(bin.at(-1)!.endT, slot.end),
+    continuityId: bin.at(-1)!.continuityId,
+  }),
+};
+
+export class BucketSeries {
+  readonly #folded: Folded<LatencyBucket>;
+
+  constructor(limit = SERIES_LIMIT) {
+    this.#folded = new Folded(latencyKind, limit);
+  }
+
+  get buckets(): readonly LatencyBucket[] {
+    return this.#folded.items;
+  }
+
+  clear(): void {
+    this.#folded.clear();
+  }
+
+  /** Inserts a bucket in start order, or replaces its earlier version on the same line. */
+  upsert(bucket: LatencyBucket): void {
+    const history = this.#folded.items;
+    const same = (other: LatencyBucket) =>
+      other.phase === bucket.phase && other.continuityId === bucket.continuityId;
+    let at = history.length;
+    while (at > 0 && history[at - 1]!.startT > bucket.startT) at--;
+    let i = at - 1;
+    while (i >= 0 && history[i]!.startT === bucket.startT && !same(history[i]!)) i--;
+    if (i >= 0 && history[i]!.startT === bucket.startT) history[i] = bucket;
+    else history.splice(at, 0, bucket);
+    this.#folded.fit();
+  }
+}
 
 export function idleBucket(t: number, rttMs: number, timedOut: boolean): LatencyBucket {
   const rtt = timedOut ? null : Math.max(0, rttMs);
@@ -38,74 +173,6 @@ export function idleBucket(t: number, rttMs: number, timedOut: boolean): Latency
   };
 }
 
-/** Inserts a bucket in start order, or replaces its earlier version on the same line. */
-export function upsertLatency(
-  history: LatencyBucket[],
-  bucket: LatencyBucket,
-  limit = SERIES_LIMIT,
-): void {
-  const line = bucketLine(bucket);
-  let at = history.length;
-  while (at > 0 && history[at - 1]!.startT > bucket.startT) at--;
-  let same = at - 1;
-  while (
-    same >= 0 &&
-    history[same]!.startT === bucket.startT &&
-    bucketLine(history[same]!) !== line
-  )
-    same--;
-  if (same >= 0 && history[same]!.startT === bucket.startT) history[same] = bucket;
-  else history.splice(at, 0, bucket);
-  if (history.length <= limit) return;
-  // Buckets a late outcome may still revise stay whole, so a revision replaces its bucket instead of merging.
-  const horizon = Math.max(...history.map((each) => each.endT)) - REVISION_MS;
-  const open = history.filter((each) => each.endT >= horizon);
-  const whole = open.length < limit ? open : [];
-  const settled = whole.length ? history.filter((each) => each.endT < horizon) : history;
-  const reduced = compact(settled, limit - whole.length, bucketLine, bucketTime, (bin) => [
-    mergeLatency(bin),
-  ]);
-  history.splice(0, history.length, ...[...reduced, ...whole].sort((a, b) => a.startT - b.startT));
-}
-
-/** Appends a sample, replacing one of the same line at the same time. `spanMs` is the run's planned length. */
-export function appendThroughput(
-  history: ThroughputSample[],
-  sample: ThroughputSample,
-  spanMs: number,
-): void {
-  upsertSample(history, sample);
-  if (history.length > SERIES_LIMIT) compactThroughput(history, spanMs);
-}
-
-/** Keeps each line's first, last and per-bin extremes. */
-function compactThroughput(history: ThroughputSample[], spanMs: number): void {
-  const unique: ThroughputSample[] = [];
-  for (const sample of history) upsertSample(unique, sample);
-  history.splice(
-    0,
-    history.length,
-    ...compact(unique, SERIES_LIMIT, sampleLine, sampleTime, extremes, spanMs, 4),
-  );
-}
-
-/** Only the equal-time tail can hold the same line's sample. */
-function upsertSample(history: ThroughputSample[], sample: ThroughputSample): void {
-  const line = sampleLine(sample);
-  for (let i = history.length - 1; i >= 0 && history[i]!.t === sample.t; i--)
-    if (sampleLine(history[i]!) === line) {
-      history[i] = sample;
-      return;
-    }
-  history.push(sample);
-}
-
-function extremes(bin: ThroughputSample[]): ThroughputSample[] {
-  const low = bin.reduce((a, b) => (b.bytesPerSec < a.bytesPerSec ? b : a));
-  const high = bin.reduce((a, b) => (b.bytesPerSec > a.bytesPerSec ? b : a));
-  return [...new Set([bin[0]!, low, high, bin.at(-1)!])];
-}
-
 /** A merged bucket keeps the success-weighted median and the worst tail. */
 function mergeLatency(bin: LatencyBucket[]): LatencyBucket {
   const replies = bin
@@ -113,14 +180,18 @@ function mergeLatency(bin: LatencyBucket[]): LatencyBucket {
     .sort((a, b) => a.medianRttMs! - b.medianRttMs!);
   const successes = replies.reduce((sum, b) => sum + b.pingCount - b.timeoutCount, 0);
   let seen = 0;
-  const middle = replies.find((b) => (seen += b.pingCount - b.timeoutCount) >= successes / 2);
+  const at = replies.findIndex((b) => (seen += b.pingCount - b.timeoutCount) >= successes / 2);
+  // An even split takes the midpoint, so folds nested in folds drift neither way.
+  const upper = seen === successes / 2 ? replies[at + 1] : undefined;
+  const median =
+    at < 0 ? null : (replies[at]!.medianRttMs! + (upper ?? replies[at]!).medianRttMs!) / 2;
   const known = (values: (number | null)[]) => values.filter((value) => value !== null);
   const extreme = (pick: (...values: number[]) => number, values: (number | null)[]) =>
     known(values).length ? pick(...known(values)) : null;
   return {
     ...bin[0]!,
     endT: bin.at(-1)!.endT,
-    medianRttMs: middle?.medianRttMs ?? null,
+    medianRttMs: median,
     minRttMs: extreme(
       Math.min,
       bin.map((b) => b.minRttMs),
@@ -138,33 +209,124 @@ function mergeLatency(bin: LatencyBucket[]): LatencyBucket {
   };
 }
 
-/** Doubles the bin width per line until the reduction fits, then samples evenly as a last resort. */
-function compact<T>(
-  history: readonly T[],
-  limit: number,
-  line: (value: T) => string,
-  time: (value: T) => number,
-  merge: (bin: T[]) => T[],
-  spanMs = 0,
-  pointsPerBin = 1,
-): T[] {
-  if (history.length <= 1 || limit <= 0) return history.length > limit ? [] : [...history];
-  const lines = new Set(history.map(line)).size;
-  const span = Math.max(1, spanMs, time(history.at(-1)!) - time(history[0]!));
-  let width = Math.max(1, span / Math.max(1, Math.floor(limit / (lines * pointsPerBin))));
-  let reduced: T[];
-  do {
-    const bins = Map.groupBy(
-      history,
-      (value) => `${line(value)}:${Math.floor(time(value) / width)}`,
-    );
-    reduced = [...bins.values()].flatMap(merge).sort((a, b) => time(a) - time(b));
-    width *= 2;
-  } while (reduced.length > limit && width / 2 < span);
-  if (reduced.length <= limit) return reduced;
-  if (limit === 1) return [reduced.at(-1)!];
-  return Array.from(
-    { length: limit },
-    (_, i) => reduced[Math.round((i * (reduced.length - 1)) / (limit - 1))]!,
-  );
+const throughputKind: Kind<ThroughputSample> = {
+  group: (sample) => sample.stage,
+  lane: (sample) => sample.dir,
+  joins: (last, next) => last.continuityId === next.continuityId,
+  at: (sample) => sample.t,
+  start: (sample) => sample.t0,
+  end: (sample) => sample.t1,
+  merge: (bin) => {
+    let ticks = 0;
+    let t = 0;
+    let rate = 0;
+    for (const sample of bin) {
+      ticks += sample.ticks;
+      t += sample.t * sample.ticks;
+      rate += sample.bytesPerSec * sample.ticks;
+    }
+    return {
+      ...bin.at(-1)!,
+      t: t / ticks,
+      t0: bin[0]!.t0,
+      bytesPerSec: rate / ticks,
+      ticks,
+    };
+  },
+};
+
+/** A transfer stage's samples in constant size: its times, newest rates, and Peak and Stability over its whole seconds. */
+export class StageTrace {
+  readonly first: number;
+  last: number;
+  count = 0;
+  readonly latest: Record<Direction, number> = { down: 0, up: 0 };
+  #second = 0;
+  #lanes: Record<Direction, { sum: number; n: number }> = {
+    down: { sum: 0, n: 0 },
+    up: { sum: 0, n: 0 },
+  };
+  #seconds: Moments = { count: 0, mean: 0, squares: 0 };
+  #peak = 0;
+
+  constructor(t: number) {
+    this.first = this.last = t;
+  }
+
+  add(sample: ThroughputSample, replaced: ThroughputSample | null): void {
+    const second = Math.floor((sample.t - this.first) / 1000);
+    if (second > this.#second) {
+      const rate = this.#current();
+      if (rate !== null) {
+        add(this.#seconds, rate);
+        this.#peak = Math.max(this.#peak, rate);
+      }
+      for (const lane of Object.values(this.#lanes)) lane.sum = lane.n = 0;
+      this.#second = second;
+    }
+    const lane = this.#lanes[sample.dir];
+    if (replaced) {
+      lane.sum -= replaced.bytesPerSec;
+      lane.n--;
+    } else this.count++;
+    lane.sum += sample.bytesPerSec;
+    lane.n++;
+    this.last = sample.t;
+    this.latest[sample.dir] = sample.bytesPerSec;
+  }
+
+  shape(): { peak: number; stability: number | null } | null {
+    const rate = this.#current();
+    const seconds = { ...this.#seconds };
+    if (rate !== null) add(seconds, rate);
+    if (!seconds.count) return null;
+    const variation =
+      seconds.mean > 0 ? Math.sqrt(seconds.squares / seconds.count) / seconds.mean : 1;
+    return {
+      peak: Math.max(this.#peak, rate ?? 0),
+      stability: seconds.count >= 2 ? Math.max(0, 1 - variation) * 100 : null,
+    };
+  }
+
+  #current(): number | null {
+    const { down, up } = this.#lanes;
+    if (!down.n && !up.n) return null;
+    return (down.n ? down.sum / down.n : 0) + (up.n ? up.sum / up.n : 0);
+  }
+}
+
+export class ThroughputSeries {
+  readonly #folded = new Folded(throughputKind, SERIES_LIMIT);
+  readonly traces: Partial<Record<TransferStage, StageTrace>> = {};
+
+  get samples(): readonly ThroughputSample[] {
+    return this.#folded.items;
+  }
+
+  clear(): void {
+    this.#folded.clear();
+    for (const stage of Object.keys(this.traces) as TransferStage[]) delete this.traces[stage];
+  }
+
+  /** Appends a sample, replacing one of the same line at the same time. */
+  append(sample: ThroughputSample): void {
+    const history = this.#folded.items;
+    let replaced: ThroughputSample | null = null;
+    // Only the equal-time tail can hold the same line's sample.
+    for (let i = history.length - 1; i >= 0 && history[i]!.t === sample.t; i--) {
+      const other = history[i]!;
+      if (
+        other.stage === sample.stage &&
+        other.dir === sample.dir &&
+        other.continuityId === sample.continuityId
+      ) {
+        replaced = other;
+        history[i] = sample;
+        break;
+      }
+    }
+    if (!replaced) history.push(sample);
+    (this.traces[sample.stage] ??= new StageTrace(sample.t)).add(sample, replaced);
+    this.#folded.fit();
+  }
 }

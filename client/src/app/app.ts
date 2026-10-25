@@ -14,7 +14,7 @@ import { HistoryRepository } from "./history/repository";
 import { createHistorySaving } from "./history/saving";
 import { createPreferences, savingResults } from "./preferences";
 import { createRun } from "./run";
-import { IDLE_LIMIT, idleBucket, upsertLatency } from "./series";
+import { BucketSeries, IDLE_LIMIT, idleBucket } from "./series";
 import { stageLimitError } from "../view/words";
 
 /** Leaving waits at most this long for the result to reach History. */
@@ -68,13 +68,14 @@ export function createApp() {
   const visible = signal(document.visibilityState === "visible");
   const online = signal(navigator.onLine);
   const latencyPin = signal<string | null>(null);
+  const idleSeries = new BucketSeries(IDLE_LIMIT);
   const idle = {
     server: null as string | null,
-    buckets: [] as LatencyBucket[],
+    buckets: idleSeries.buckets,
     version: signal(0),
   };
   const clearIdle = () => {
-    idle.buckets.length = 0;
+    idleSeries.clear();
     idle.version.set(idle.version.peek() + 1);
   };
   /** Whether a test runs or starts, bound once the run exists: the servers it needs are made first. */
@@ -95,10 +96,10 @@ export function createApp() {
     idleLatency(id, outcomes) {
       if (id !== idle.server) {
         idle.server = id;
-        idle.buckets.length = 0;
+        idleSeries.clear();
       }
       for (const { observedAt, rttMs, timedOut } of outcomes)
-        upsertLatency(idle.buckets, idleBucket(observedAt, rttMs, timedOut), IDLE_LIMIT);
+        idleSeries.upsert(idleBucket(observedAt, rttMs, timedOut));
       idle.version.set(idle.version.peek() + 1);
     },
     now: pageMs,

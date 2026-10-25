@@ -4,7 +4,7 @@ import { bucketWidth, LatencyBuckets, type LatencyBucket } from "./buckets";
 function buckets(phase: LatencyBucket["phase"] & string = "latency", start = 0, continuity = 0) {
   const emitted: LatencyBucket[] = [];
   const presented = new LatencyBuckets((bucket) => emitted.push(bucket));
-  if (phase !== "idle") presented.reset(start, phase, continuity, 0, null);
+  if (phase !== "idle") presented.reset(start, phase, continuity, null);
   return { presented, emitted };
 }
 
@@ -50,21 +50,14 @@ test("a bucket closes at its end without a later probe, and late outcomes revise
   expect(emitted[1]).toMatchObject({ startT: 0, pingCount: 3, maxRttMs: 40 });
 });
 
-test("widths fit the series and align to a fixed probe spacing", () => {
-  expect(bucketWidth(0, 150)).toBe(300);
-  expect(bucketWidth(600_000, null)).toBe(600);
-  expect(bucketWidth(86_400_000, 250)).toBe(72_000);
-});
-
 test("a long page suspension skips empty time without inventing outcomes and keeps recent revisions", () => {
   const day = 24 * 60 * 60 * 1000;
-  // The loop tries narrow buckets and buckets wider than the ten-second revision horizon (a day-long stage).
-  for (const spanMs of [0, 86_400_000])
+  for (const intervalMs of [null, 600])
     for (const back of [day + 73, day + 12]) {
       const emitted: LatencyBucket[] = [];
       const presented = new LatencyBuckets((bucket) => emitted.push(bucket));
-      presented.reset(13, "download", 7, spanMs, null);
-      const width = bucketWidth(spanMs, null);
+      presented.reset(13, "download", 7, intervalMs);
+      const width = bucketWidth(intervalMs);
       presented.observe(50, 11, false);
       presented.closeThrough(back);
       expect(emitted).toHaveLength(1);
