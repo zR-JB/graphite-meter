@@ -110,10 +110,10 @@ test("losing every server ends Incomplete without an Aborted flash", async (page
       timeout: 20_000,
     });
     expect(await page.evaluate(() => (window as any).phases)).not.toContain("aborted");
-    // Too little evidence for a result: Download failed, and Upload, which nobody was left for, was not reached.
+    // Download keeps what it measured before both left, enough for a part or too little; Upload had nobody left.
     await expect(page.getByRole("switch", { name: /^Download stage/ })).toHaveAttribute(
       "class",
-      /\bchip--failed\b/,
+      /\bchip--(failed|partial)\b/,
     );
     await expect(page.getByRole("switch", { name: /^Upload stage/ })).toContainText("Not reached");
   } finally {
