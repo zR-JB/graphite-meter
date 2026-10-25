@@ -10,15 +10,16 @@ use std::{
 
 /// Opens the report of an unreviewed development build, whose executable also carries it in plain text.
 const DEVELOPMENT: &str = "UNREVIEWED DEVELOPMENT BUILD";
-/// Precedes the SHA-256 of a reviewed build's report in its executable, where release verification reads it.
+/// Precede the SHA-256s of a reviewed build's report and PGO profile in its executable, for release verification.
 const REVIEWED: &str = "graphite-meter reviewed notices sha256:";
+const PROFILED: &str = "graphite-meter pgo profile sha256:";
 const MAX_REPORT_BYTES: usize = 16 << 20;
 /// A reviewed legal directory's notices cover the browser build in this subdirectory.
 const BROWSER_ASSETS: &str = "browser-assets";
 
 /// Checks `GM_ENGINE_VERSION` and any reviewed notices in `GM_LEGAL_DIR`, then writes `legal.rs`; `browser` returns the covered browser build.
 pub fn embed(browser: bool) -> Result<Option<PathBuf>, String> {
-    for name in ["GM_ENGINE_VERSION", "GM_LEGAL_DIR"] {
+    for name in ["GM_ENGINE_VERSION", "GM_LEGAL_DIR", "GM_PGO_SHA256"] {
         println!("cargo:rerun-if-env-changed={name}");
     }
     embed_with(
@@ -99,10 +100,19 @@ fn embed_with(
         }
         false => None,
     };
-    let marker = match report.starts_with(DEVELOPMENT.as_bytes()) {
+    let mut marker = match report.starts_with(DEVELOPMENT.as_bytes()) {
         true => DEVELOPMENT.to_owned(),
-        false => format!("{REVIEWED}{}", digest(&directory)?),
+        false => format!(
+            "{REVIEWED}{}",
+            hex(read(&directory.join("LEGAL.sha256"))?, "LEGAL.sha256")?
+        ),
     };
+    if let Some(profile) = var("GM_PGO_SHA256") {
+        marker = format!(
+            "{marker} {PROFILED}{}",
+            hex(profile.into_encoded_bytes(), "GM_PGO_SHA256")?
+        );
+    }
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&report, 9);
     write(&output.join("legal.zlib"), &compressed)?;
     let payload = format!(
@@ -131,16 +141,16 @@ fn check_inputs(checkout: &Path, directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Reads a reviewed `LEGAL.txt`'s SHA-256, which the collector writes to `LEGAL.sha256` and checks the executable for.
-fn digest(directory: &Path) -> Result<String, String> {
-    let digest = String::from_utf8(read(&directory.join("LEGAL.sha256"))?).unwrap_or_default();
+/// A SHA-256 the collector wrote for the executable to carry: `LEGAL.sha256` or `GM_PGO_SHA256`.
+fn hex(digest: Vec<u8>, name: &str) -> Result<String, String> {
+    let digest = String::from_utf8(digest).unwrap_or_default();
     match digest.len() == 64
         && digest
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     {
         true => Ok(digest),
-        false => Err("LEGAL.sha256 must hold 64 lowercase hexadecimal digits".into()),
+        false => Err(format!("{name} must hold 64 lowercase hexadecimal digits")),
     }
 }
 
@@ -282,6 +292,22 @@ mod tests {
             scratch.file("legal/LEGAL.sha256", digest).unwrap();
             assert_eq!(run(&root, &[], false), Err(refusal.into()));
         }
+    }
+
+    #[test]
+    fn a_profiled_build_s_marker_carries_its_profile_s_digest() {
+        let (scratch, root) = checkout();
+        scratch.file("legal/LEGAL.txt", "project\n").unwrap();
+        let profile = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+        assert_eq!(run(&root, &[("GM_PGO_SHA256", profile)], false), Ok(None));
+        let marker = format!(
+            ", None, \"graphite-meter reviewed notices sha256:{DIGEST} graphite-meter pgo profile sha256:{profile}\");\n"
+        );
+        assert!(generated(&root).ends_with(&marker), "{}", generated(&root));
+        assert_eq!(
+            run(&root, &[("GM_PGO_SHA256", &profile[1..])], false),
+            Err("GM_PGO_SHA256 must hold 64 lowercase hexadecimal digits".into())
+        );
     }
 
     #[test]

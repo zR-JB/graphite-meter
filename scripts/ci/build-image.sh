@@ -16,15 +16,22 @@ build() {
 mkdir -p "$OUT_DIR"
 for platform in $SERVER_PLATFORMS; do
   name=${platform//\//_}
+  supplied=()
+  # A stable release builds from the profile it exports, as a rebuild does (legal/README.md).
+  if [[ "$SOURCE_OFFERS" == true && "$PROFILE" == release ]]; then
+    build --target "pgo-${platform#*/}-trained" --platform "$platform" --provenance false \
+      --output "type=local,dest=$CONTEXT/pgo"
+    supplied=(--build-arg PGO=supplied)
+  fi
   if [[ "$PROFILE" == ci ]]; then
     # Docker's image store cannot load the attestation manifests.
     build --target server --platform "$platform" --provenance false --load --tag "graphite-meter:${platform#*/}"
   fi
-  build --target server --platform "$platform" --provenance mode=max \
+  build --target server --platform "$platform" "${supplied[@]}" --provenance mode=max \
     --output "type=oci,dest=$OUT_DIR/graphite-meter_$name.oci.tar"
   # A local export writes the build's file tree as it is, so only a stable release's own source exports one.
   if [[ "$SOURCE_OFFERS" == true ]]; then
-    build --target server-artifacts --platform "$platform" --provenance false \
+    build --target server-artifacts --platform "$platform" "${supplied[@]}" --provenance false \
       --output "type=local,dest=$OUT_DIR/server-export/$name"
   fi
 done

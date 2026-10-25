@@ -14,6 +14,7 @@ executable (legal/README.md).
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import subprocess
@@ -26,7 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from ..ci.github_api import ControlPlaneError, local_path
-from ..ci.workspace import ROOT, VERSION, build_name, build_offer, load, offer_name, source_txt, source_url
+from ..ci.workspace import (ROOT, VERSION, build_name, build_offer, build_profile, load, offer_name, pgo_architecture,
+                            source_txt, source_url)
 from ..ci.toolchains import rust_channel
 from . import rust_platform as platform
 from .artifacts import about, add_bytes, add_tree, legal_header, notices
@@ -221,14 +223,21 @@ def remap_flags() -> list[str]:
 
 
 def pgo_profile(target: str) -> Path | None:
-    """The trained profile of `target`'s architecture, which a build of any of its targets but Windows arm64 may use."""
-    return None if target.endswith("-gnullvm") else PGO / f"{target.split('-')[0]}.profdata"
+    """The trained profile a build of `target` may use: its architecture's."""
+    architecture = pgo_architecture(target)
+    return None if architecture is None else PGO / f"{architecture}.profdata"
+
+
+def used_profile(build: Build) -> Path | None:
+    profile = pgo_profile(build.target) if build.target is not None else None
+    return profile if profile is not None and profile.is_file() else None
 
 
 def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     """Build the binary once with the prepared notices and check what it compiled, linked and embedded."""
     rust = ROOT / "rust"
-    environment = {key: value for key, value in os.environ.items() if key not in ("GM_LEGAL_DIR", "GM_ASSET_DIR")}
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("GM_LEGAL_DIR", "GM_ASSET_DIR", "GM_PGO_SHA256")}
     environment |= {"CARGO_TARGET_DIR": str(build.target_dir or rust / "target"), "GM_LEGAL_DIR": str(build.out),
                     "GM_ENGINE_VERSION": build.version}
     if build.browser is not None:
@@ -238,8 +247,9 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     link_map = None
     if build.target is not None:
         flags = remap_flags()
-        if (profile := pgo_profile(build.target)) and profile.is_file():
+        if profile := used_profile(build):
             flags.append(f"-Cprofile-use={profile}")
+            environment["GM_PGO_SHA256"] = hashlib.sha256(profile.read_bytes()).hexdigest()
         environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
         link_map = platform.link_map(build.out, build.target, build.profile)
         command += ["--target", build.target, "--", f"-Clink-arg=-Wl,-Map={link_map}"]
@@ -292,7 +302,7 @@ def browser_packages(state: Prepared) -> list[Component]:
 
 def source_offer(build: Build, state: Prepared, actual: list[Component]) -> None:
     """This build's part of the source offer, laid out as the merged offer: the compiled crates' and browser
-    packages' sources, the build's inventory and notices under builds/, and the manual material; and its SOURCE.txt."""
+    packages' sources, the build's inventory, notices and profile under builds/, the manual material; and SOURCE.txt."""
     assert build.target is not None
     shipped = load().server if build.package == "graphite-meter-server" else load().tui
     platform_name = next(name for name, target in shipped.items() if target == build.target)
@@ -318,6 +328,8 @@ def source_offer(build: Build, state: Prepared, actual: list[Component]) -> None
                          component.source_path)
             for file in ("inventory.json", "LEGAL.txt"):
                 add_bytes(archive, f"{root}/builds/{name}/{file}", (build.out / file).read_bytes())
+            if profile := used_profile(build):
+                add_bytes(archive, f"{root}/{build_profile(name)}", profile.read_bytes())
             add_bytes(archive, f"{root}/legal/rust-forks.json", (ROOT / "legal/rust-forks.json").read_bytes())
             # Entries can share a file, such as one license for two fonts; the archive holds it once.
             for path in dict.fromkeys(path for entry in state.provenance for path in manual_files(entry)):
@@ -399,8 +411,7 @@ def main() -> None:
         return
     executable = collect(build)
     kind = "development" if build.development else "reviewed"
-    profile = pgo_profile(build.target) if build.target is not None else None
-    pgo = ", PGO" if profile and profile.is_file() else ""
+    pgo = ", PGO" if used_profile(build) else ""
     print(f"Rust {build.package} [{build.profile} profile{pgo}, {kind} notices]: {executable}")
 
 

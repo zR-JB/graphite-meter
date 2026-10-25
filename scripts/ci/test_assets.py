@@ -1,4 +1,5 @@
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -14,8 +15,8 @@ from assets import (
     verify_archive, verify_offer,
 )
 from fixtures import (
-    REPOSITORY_URL, executable, notices, outcome, reviewed, server_binary, write_client, write_exports, write_oci,
-    write_staged, write_tar,
+    REPOSITORY_URL, executable, notices, outcome, profile_data, reviewed, server_binary, trained, write_client,
+    write_exports, write_oci, write_staged, write_tar,
 )
 from github_api import ControlPlaneError, file_sha256
 from verify_oci import INDEX_TYPE, blob, image_index
@@ -25,6 +26,7 @@ REPO, SHA = "zR-JB/graphite-meter", "f" * 40
 TOP = "graphite-meter_1.2.3_third-party-source"
 AMD64, WINDOWS = "x86_64-unknown-linux-musl", "x86_64-pc-windows-gnu"
 SERVER_AMD64, CLIENT_LINUX = build_name(SERVER, "linux/amd64"), build_name(CLIENT, "linux/amd64")
+CLIENT_WINDOWS_ARM64 = build_name(CLIENT, "windows/arm64")
 
 
 def members(path: Path) -> dict[str, bytes]:
@@ -233,8 +235,10 @@ class OfferTests(Scratch):
             ({f"{TOP}/legal/manual/key.pem": b"x"}, "certificate or key"),
             ({f"{TOP}/builds/{CLIENT_LINUX}/extra.txt": b"x"}, "neither dependency"),
             ({f"{TOP}/builds/other/LEGAL.txt": b"x"}, r"builds: missing=\[\] unexpected=\['other'\]"),
-            ({f"{TOP}/builds/{SERVER_AMD64}/{name}": None for name in ("LEGAL.txt", "inventory.json")},
+            ({f"{TOP}/builds/{SERVER_AMD64}/{name}": None for name in ("LEGAL.txt", "inventory.json", "pgo.profdata")},
              rf"builds: missing=\['{SERVER_AMD64}'\]"),
+            ({f"{TOP}/builds/{SERVER_AMD64}/pgo.profdata": None}, "lacks the PGO profile of a release build"),
+            ({f"{TOP}/builds/{CLIENT_WINDOWS_ARM64}/pgo.profdata": b"x"}, "holds the PGO profile of a release build"),
             ({f"{TOP}/builds/{CLIENT_LINUX}/LEGAL.txt": b"UNREVIEWED DEVELOPMENT BUILD\n"}, "reviewed notices"),
             ({f"{TOP}/builds/{CLIENT_LINUX}/inventory.json": b"{}"}, "schemaVersion"),
             ({f"{TOP}/builds/{SERVER_AMD64}/inventory.json": inventory(SERVER_AMD64, profile="ci")},
@@ -255,8 +259,11 @@ class OfferTests(Scratch):
                 rewrite(path, changes)
                 found = outcome(self, error, lambda: verify_offer(path, "1.2.3", "release"))
                 if found is not None:
-                    self.assertEqual(found, {build: notices(build).decode() for build in found})
-                    self.assertEqual(len(found), len(load().server) + len(load().tui))
+                    found_notices, profiles = found
+                    self.assertEqual(found_notices, {build: notices(build).decode() for build in found_notices})
+                    self.assertEqual(len(found_notices), len(load().server) + len(load().tui))
+                    self.assertEqual(profiles, {build: hashlib.sha256(profile_data(build)).hexdigest()
+                                                if build != CLIENT_WINDOWS_ARM64 else None for build in profiles})
 
 
 class ClientTests(Scratch):
@@ -283,6 +290,9 @@ class ClientTests(Scratch):
             ({"graphite-meter-client.exe": executable(WINDOWS)}, "does not hold the reviewed build of its notices"),
             ({"graphite-meter-client.exe": executable(WINDOWS, reviewed(b"other\n"))},
              "does not hold the reviewed build of its notices"),
+            ({"graphite-meter-client.exe": executable(WINDOWS, reviewed(notices(build)))}, "PGO profile"),
+            ({"graphite-meter-client.exe": executable(WINDOWS, reviewed(notices(build)) + trained(CLIENT_LINUX, AMD64))},
+             "PGO profile"),
             ({"LICENSE": b"other"}, "LICENSE differs"),
             ({"THIRD_PARTY_NOTICES.txt": b"other\n"}, "notices differ"),
             ({"SOURCE.txt": source_txt(REPOSITORY_URL, "1.2.4", build, WINDOWS).encode()}, "SOURCE.txt does not name"),
@@ -297,7 +307,8 @@ class ClientTests(Scratch):
             write_client(directory, "1.2.3", "windows/amd64", changes)
             with self.subTest(changes=sorted(changes)):
                 outcome(self, error, lambda: verify_archive(directory, CLIENT, "1.2.3", "windows/amd64", WINDOWS,
-                                                            notices(build).decode()))
+                                                            notices(build).decode(),
+                                                            hashlib.sha256(profile_data(build)).hexdigest()))
         self.assertEqual(source.decode().splitlines(), [
             "Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v1.2.3", "Matching release: v1.2.3",
             "Dependency source archive: graphite-meter_1.2.3_third-party-source.tar.gz",

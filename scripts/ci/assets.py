@@ -31,7 +31,8 @@ from github_api import (
     expect_object, fail, file_sha256, int_field, object_field, runner_path, str_field, table,
 )
 from trust import env, env_sha, exact_files
-from workspace import PRERELEASE, ROOT, VERSION, build_name, build_offer, load, offer_name, release_archive, source_txt
+from workspace import (PRERELEASE, ROOT, VERSION, build_name, build_offer, build_profile, load, offer_name,
+                       pgo_architecture, release_archive, source_txt)
 
 # The source offer's members are written as the collector writes its parts.
 sys.path.append(str(ROOT))
@@ -51,6 +52,7 @@ PROFILES = ("ci", "release")
 ARCHIVE_FILES = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
 # A reviewed build's executable carries its notices' SHA-256 after this (rust/legal/src/build.rs).
 REVIEWED = "graphite-meter reviewed notices sha256:"
+PROFILED = "graphite-meter pgo profile sha256:"
 # ELF e_machine and PE machine of each target's architecture.
 MACHINES = {"x86_64": (62, 0x8664), "aarch64": (183, 0xAA64)}
 
@@ -304,8 +306,9 @@ def offer_files(path: Path, top: str) -> tuple[list[str], dict[str, bytes]]:
     return files, kept
 
 
-def verify_offer(path: Path, version: str, profile: str, root: Path = ROOT) -> dict[str, str]:
-    """Check the source offer covers exactly the release's builds and return each build's notices."""
+def verify_offer(path: Path, version: str, profile: str,
+                 root: Path = ROOT) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Check the source offer covers exactly the release's builds; return each build's notices and profile SHA-256."""
     top = path.name.removesuffix(".tar.gz")
     names = archive_names(path)
     if outside := sorted(name for name in names if name != top and not name.startswith(top + "/")):
@@ -331,6 +334,7 @@ def verify_offer(path: Path, version: str, profile: str, root: Path = ROOT) -> d
     lock = file_sha256(root / "rust/Cargo.lock")
     trees: set[str] = set()
     notices: dict[str, str] = {}
+    profiles: dict[str, str | None] = {}
     for build, (package, _, target) in expected.items():
         where = f"{path.name} builds/{build}"
         inventory = expect_object(decode_json(kept_text(f"{top}/builds/{build}/inventory.json"), where), where)
@@ -348,7 +352,12 @@ def verify_offer(path: Path, version: str, profile: str, root: Path = ROOT) -> d
         notices[build] = kept_text(f"{top}/builds/{build}/LEGAL.txt")
         if not notices[build].strip() or verify_oci.DEVELOPMENT in notices[build]:
             fail(f"{where} lacks reviewed notices")
+        trained = kept.get(f"{top}/{build_profile(build)}")
+        if (trained is not None) != (profile == "release" and pgo_architecture(target) is not None):
+            fail(f"{where} {'holds' if trained is not None else 'lacks'} the PGO profile of a {profile} build")
+        profiles[build] = None if trained is None else hashlib.sha256(trained).hexdigest()
     own = {f"{top}/builds/{build}/{name}" for build in expected for name in ("inventory.json", "LEGAL.txt")}
+    own |= {f"{top}/{build_profile(build)}" for build, digest in profiles.items() if digest is not None}
     for name in files:
         if name.startswith(tuple(trees)) or name in own:
             continue
@@ -360,12 +369,12 @@ def verify_offer(path: Path, version: str, profile: str, root: Path = ROOT) -> d
             fail(f"{path.name} holds {relative}, which is neither dependency source nor this checkout's file")
     if missing := sorted(tree for tree in trees if not any(name.startswith(tree) for name in files)):
         fail(f"{path.name} lacks the source of {missing[:5]}")
-    return notices
+    return notices, profiles
 
 
-def reviewed_digests(executable: bytes) -> set[str]:
-    """The notices' SHA-256 digests that `executable` names as a reviewed build's."""
-    return {digest.decode() for digest in re.findall(re.escape(REVIEWED.encode()) + rb"([0-9a-f]{64})", executable)}
+def marked(executable: bytes, marker: str) -> set[str]:
+    """The SHA-256 digests that `executable` names after `marker`."""
+    return {digest.decode() for digest in re.findall(re.escape(marker.encode()) + rb"([0-9a-f]{64})", executable)}
 
 
 def native_executable(data: bytes, target: str) -> bool:
@@ -382,7 +391,7 @@ def native_executable(data: bytes, target: str) -> bool:
 
 
 def verify_archive(directory: Path, package: str, version: str, platform: str, target: str, notices: str,
-                   root: Path = ROOT) -> str:
+                   profile: str | None, root: Path = ROOT) -> str:
     """A release archive holds a reviewed executable for `target` of its build's `notices`, this checkout's license
     files, those notices and the SOURCE.txt that names the offer and the build; return the executable's SHA-256."""
     archive, base, binary = release_archive(package, version, platform)
@@ -398,8 +407,10 @@ def verify_archive(directory: Path, package: str, version: str, platform: str, t
             fail(f"{archive}: {name} differs from this checkout's")
     if text(path, f"{base}/THIRD_PARTY_NOTICES.txt") != notices:
         fail(f"{archive}'s notices differ from its build's in the source offer")
-    if reviewed_digests(executable) != {hashlib.sha256(notices.encode()).hexdigest()}:
+    if marked(executable, REVIEWED) != {hashlib.sha256(notices.encode()).hexdigest()}:
         fail(f"{archive} does not hold the reviewed build of its notices")
+    if marked(executable, PROFILED) != ({profile} if profile else set()):
+        fail(f"{archive} was not optimized with the PGO profile its build's part of the source offer holds")
     check_source_txt(text(path, f"{base}/SOURCE.txt"), archive, version, build_name(package, platform), target, root)
     return hashlib.sha256(executable).hexdigest()
 
@@ -422,7 +433,7 @@ def verify_image(directory: Path, version: str, revision: str, notices: dict[str
             fail(f"the image ships {platform}, which the workspace does not")
         build = build_name(SERVER, platform)
         check_source_txt(content, f"the image's {platform}", version, build, server[platform], root)
-        digests = reviewed_digests(binary)
+        digests = marked(binary, REVIEWED)
         if prerelease(version) and len(digests) != 1:
             fail(f"the image's {platform} server is not a reviewed build")
         if not prerelease(version) and digests != {hashlib.sha256(notices[build].encode()).hexdigest()}:
@@ -441,8 +452,9 @@ def verify(version: str, revision: str, staged: Path, profile: str = "release",
     notices: dict[str, str] = {}
     executables: dict[str, str] = {}
     if not prerelease(version):
-        notices = verify_offer(staged / offer_name(version), version, profile, root)
-        executables = {build: verify_archive(staged, package, version, platform, target, notices[build], root)
+        notices, profiles = verify_offer(staged / offer_name(version), version, profile, root)
+        executables = {build: verify_archive(staged, package, version, platform, target, notices[build],
+                                             profiles[build], root)
                        for build, (package, platform, target) in builds(version).items()}
     return verify_image(staged, version, revision, notices, executables, root)
 
