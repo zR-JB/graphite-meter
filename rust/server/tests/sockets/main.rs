@@ -71,19 +71,8 @@ struct Running {
     task: JoinHandle<Result<(), String>>,
 }
 
-/// Binds a server. An HTTP/3 port that another test took between its TCP and UDP binds is tried again.
-async fn bind(env: &[(&str, &str)]) -> Server {
-    for _ in 0..8 {
-        match Server::bind(config(env), pool()).await {
-            Err(error) if error.ends_with("/udp (GM_H3_ADDR): address already in use") => continue,
-            bound => return bound.unwrap(),
-        }
-    }
-    panic!("no free HTTP/3 port pair")
-}
-
 async fn start(env: &[(&str, &str)]) -> Running {
-    let server = bind(env).await;
+    let server = Server::bind(config(env), pool()).await.unwrap();
     let (address, tls) = (
         server.local_addr(Endpoint::H1).unwrap(),
         server.local_addr(Endpoint::H1Tls),
