@@ -139,7 +139,7 @@ jobs:
         # A stalled cache download falls back to the mirror in a minute instead of ten.
         env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
         with:
-          path: ${{ runner.temp }}/apt-cross
+          path: ${{ runner.temp }}/apt-cross/*.deb
           key: apt-cross-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
       # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers, which install while
       # Rust sets up. A stalled mirror fails the step in minutes instead of holding the job to its limit.
@@ -463,7 +463,7 @@ jobs:
         # A stalled cache download falls back to the mirror in a minute instead of ten.
         env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
         with:
-          path: ${{ runner.temp }}/apt-certutil
+          path: ${{ runner.temp }}/apt-certutil/*.deb
           key: apt-certutil-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
       # The network group's Firefox trusts the run's CA through certutil.
       - name: Install certutil
