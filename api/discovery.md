@@ -16,16 +16,35 @@ and timeouts bound how long the read may take.
 | Server name, location, engine version, generation | ≤ 256 UTF-8 bytes; generation nonempty. |
 | Probe evidence | Published IP-version, source and negotiated-protocol values; IP text 1 to 64 bytes; optional `load` with integers `active` ≥ 0 and `max` ≥ 1. |
 | Token and upload ID | Nonempty strings ≤ 8192 bytes. |
-| Lease limits | `lease.maxMeasurements` ≥ 1 and `lease.maxSessions` ≥ 0, both required: a preflight without `lease` is an older server's, which clients refuse with "<server> runs an older Graphite Meter; update it". |
+| Lease limits | `lease.maxMeasurements` ≥ 1 and `lease.maxSessions` ≥ 0, both required. |
 | Lease answer | `token`, the `measurements` and `sessions` it holds, and at most 4 `uploads`, each an upload ID. |
 
-Engine version is metadata, not a compatibility test; unknown additive fields are ignored. Invalid discovery fails
-before its targets are published and invalid probe evidence before it reaches the caller, so a rejected body never
-turns into a successful probe.
+Beyond the [envelope](#the-envelope), the engine version is metadata, not a compatibility test; unknown additive fields
+are ignored. Invalid discovery fails before its targets are published and invalid probe evidence before it reaches the
+caller, so a rejected body never turns into a successful probe.
 
 Duplicate object member names are ambiguous: the terminal client rejects them at any depth,
 including inside unknown fields, in these responses and in [upload progress records](upload.md#progress-records). The
 browser client's `JSON.parse` keeps the last duplicate.
+
+## The envelope
+
+Every preflight and probe carries an envelope that no API version changes: `engineVersion`, the server's release,
+and `apiVersion`, an integer the server raises with each change older clients cannot read.
+[apiversions.txt](apiversions.txt) pins each API version's first release. A client reads the envelope first, whatever
+the rest of the document holds, and validates the rest only for an API version it speaks.
+
+- A preflight without `apiVersion` is a server's from before the envelope: without `lease` it is API version 1
+  (0.13.4 and earlier), with `lease` API version 2 (0.13.5). A probe without `apiVersion` is read as before.
+- A server of an API version the client does not speak fails its check with words that say which side to update. The
+  browser shows them in the server's row and on the dial, and reads that server again only on Retry or a reload; the
+  terminal client reports them.
+  - Older: "S2 runs Graphite Meter 0.13.4 (API version 1); this page needs API version 2, from 0.13.5. Update S2."
+  - Newer: "S2 runs Graphite Meter 0.15.0, newer than this page (0.13.6); reload the page or update the server this
+    page comes from." The terminal client says "this client" and "update this client".
+  - A probe names its origin in place of the server, so a transfer port that another release serves is named too.
+- Where `engineVersion` is missing, empty or unsafe, the words say "an unknown Graphite Meter release". A document of
+  an API version the client speaks still needs a valid one.
 
 ## Refusals
 

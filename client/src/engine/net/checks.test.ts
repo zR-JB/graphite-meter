@@ -219,3 +219,25 @@ test("a start proves a WebTransport path by its HTTP view alone, unless a fetch 
   );
   expect(elsewhere).toMatchObject({ value: { target: { transport: "webtransport" } } });
 });
+
+test("a transfer port whose probe names another API version is named and waits for the user", async () => {
+  const other = "https://meter.example:8443";
+  // Whichever candidate another release serves, the other's passing trouble does not hide it.
+  for (const newer of [entry.url, other]) {
+    const outcome = await check(
+      checkThroughput,
+      "auto",
+      { throughput: [h(".", "http1"), h(other, "http1")] },
+      (url) =>
+        url.origin === newer
+          ? { body: { ...PROBE, engineVersion: "0.15.0", apiVersion: 3 }, hop: "http/1.1" }
+          : { status: 503 },
+    );
+    expect(outcome, newer).toMatchObject({
+      failure: {
+        message: `${newer} runs Graphite Meter 0.15.0, newer than this page (9.9.9); reload the page or update the server this page comes from.`,
+        retry: "needs-user",
+      },
+    });
+  }
+});

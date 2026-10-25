@@ -389,3 +389,30 @@ test("transfer workers no run took between two timed discovery reads end at the 
     globalThis.Worker = Real;
   }
 });
+
+test("a server of another API version is named either way, waits for the user, and is read again only on Retry", async () => {
+  // A 0.13.4 server's preflight: no protocol and no lease.
+  const older = { ...preflight([h(".", "http1")]), engineVersion: "0.13.4", lease: undefined };
+  let body: object = older;
+  net = fakeNet((url) =>
+    url.pathname === "/preflight" ? { body } : { body: PROBE, hop: "http/1.1" },
+  );
+  const { connection } = connect(self);
+  await net.advance(0);
+  expect(connection.view.peek().message).toBe(
+    "Meter runs Graphite Meter 0.13.4 (API version 1); this page needs API version 2, from 0.13.5. Update Meter.",
+  );
+  connection.resume();
+  await net.advance(300_000);
+  await connection.check({ since: net.now() });
+  expect(net.sent("/preflight")).toEqual([0]);
+  body = { ...preflight([h(".", "http1")]), engineVersion: "0.15.0", apiVersion: 3 };
+  await connection.check({ force: true });
+  expect(connection.view.peek().message).toBe(
+    "Meter runs Graphite Meter 0.15.0, newer than this page (9.9.9); reload the page or update the server this page comes from.",
+  );
+  body = { ...preflight([h(".", "http1")]), apiVersion: 2 };
+  await connection.check({ force: true });
+  await net.advance(0);
+  expect(connection.view.peek().readiness).toBe("verified");
+});
