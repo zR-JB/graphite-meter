@@ -32,9 +32,12 @@ runs the checks job alone; every other change, every push to main and the daily 
 | Browser E2E | Chrome in seven jobs and Firefox in six against the E2E server: the suite in four Chrome and three Firefox shards, and the network group, which shapes the runner's loopback, in three shards each; on the Chrome heavy shard, Chromium's HTTP/3, WebTransport and session close-code check (`rust/interop/browser.py`) |
 
 `mise run ci` runs CI's check, secret-scan, target, delayed-download and browser gates locally, but not the image,
-archive, Windows or release-staging jobs; the policy fails if one of its steps has no CI job. Cargo caches are keyed
-by job, toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the same toolchain;
-only CI writes caches. The target checks' Ubuntu cross compilers and the Firefox network jobs' `certutil` install
+archive, Windows or release-staging jobs; the policy fails if one of its steps has no CI job. A new push to a pull
+request cancels its run in progress; a push to main lets it finish and replaces only an older pending one, so main runs
+at most two at a time; re-run only main's head, since a re-run older run takes the newest one's pending place. Cargo
+caches are keyed by job, toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the
+same toolchain; only CI writes caches.
+The target checks' Ubuntu cross compilers and the Firefox network jobs' `certutil` install
 from `.deb`s cached per runner image (`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold
 cache. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
 unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.
