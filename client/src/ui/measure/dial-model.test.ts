@@ -306,6 +306,19 @@ test("a run short of complete names what it lacks first, then the first cause in
       "Upload: too little measured time",
     ],
     [
+      "one server lost twice, said once",
+      judged("incomplete", {
+        Home: {
+          cells: { latency: "failed", download: "failed" },
+          causes: [
+            { stage: "latency", reason: "connection-lost", scope: "latency" },
+            { stage: "download", reason: "connection-lost" },
+          ],
+        },
+      }),
+      "Latency and Download: connection lost",
+    ],
+    [
       "a stage without a result",
       judged("incomplete", {
         Home: {
@@ -329,7 +342,7 @@ test("a run short of complete names what it lacks first, then the first cause in
         Frankfurt: { cells: { download: "failed", upload: "unreached" }, causes: [lost] },
         Oslo: { cells: { download: "failed", upload: "unreached" }, causes: [lost] },
       }),
-      "Frankfurt: connection lost in Download and 1 more",
+      "Frankfurt and Oslo: connection lost in Download",
     ],
   ];
   for (const [name, table, hint] of cases) expect(endingHint(table), name).toBe(hint);

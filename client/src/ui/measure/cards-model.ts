@@ -496,9 +496,20 @@ export const causePlace = (cause: Cause) =>
       ? POPULATION[cause.stage]
       : STAGE[cause.stage].label;
 
-/** A cause mid-sentence: "connection lost in Download", "server at capacity at Start". */
-export const causeAt = (cause: Cause) =>
-  `${lower(reasonLabel(cause.reason))} ${cause.stage === "start" ? "at" : "in"} ${loaded(cause) ? lower(causePlace(cause)) : causePlace(cause)}`;
+/** Causes of one reason mid-sentence: "connection lost in Latency and Download", "server at capacity at Start". */
+export function causeAt(...causes: Cause[]): string {
+  const places = [
+    ...new Set(
+      causes.map((cause) => (loaded(cause) ? lower(causePlace(cause)) : causePlace(cause))),
+    ),
+  ];
+  const stages = places.filter((place) => place !== "Start");
+  const where = [
+    ...(places.includes("Start") ? ["at Start"] : []),
+    ...(stages.length ? [`in ${listed(stages)}`] : []),
+  ];
+  return `${lower(reasonLabel(causes[0]!.reason))} ${where.join(" and ")}`;
+}
 
 /** Where a server left the run, and why: "Left in Download: connection lost". */
 export const leftLine = (cause: Cause) =>

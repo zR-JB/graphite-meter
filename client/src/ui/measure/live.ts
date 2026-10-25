@@ -93,7 +93,9 @@ function createLive(app: App) {
   effect(() => {
     const sample = run.live();
     untrack(() => {
-      if (sample?.stage !== rateStage.peek()) {
+      // A stopped run keeps the rate it last showed.
+      const held = !sample && run.phase.peek() === "aborted";
+      if (!held && sample?.stage !== rateStage.peek()) {
         rateStage.set(null);
         stalled = false;
       }

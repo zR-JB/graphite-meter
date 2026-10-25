@@ -200,8 +200,12 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
   await ready(page);
   await runButton(page, "Start test").click();
   await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
   await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
+  // The dial keeps the rate the download reached, under Stopped.
+  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
+  await expect(page.locator(".gauge-status")).toHaveText("Stopped");
   const elapsed = page.locator(".elapsed");
   const frozen = await elapsed.textContent();
   // A running clock would redraw its 0.1 s readout within eight frames.

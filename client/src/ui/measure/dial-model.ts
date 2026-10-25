@@ -1,7 +1,7 @@
 // The dial's pure rules: the ring's geometry, the rate curve, the result arcs, the needle's course and how a run ended.
 import type { Grid } from "../../engine/run/result";
 import { STAGES, type TransferStage } from "../../engine/run/schedule";
-import { reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
+import { listed, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
 import { causeAt, causePlace, lower } from "./cards-model";
 import { DIAL } from "./copy";
 
@@ -330,7 +330,6 @@ export function endingHint(table: Grid): string {
   const { rows, columns, causes } = table;
   const first = causes[0];
   if (!first) return "";
-  const more = causes.length > 1 ? ` and ${causes.length - 1} more` : "";
   if (table.outcome === "incomplete" && table.measured) {
     const stage =
       STAGES.find((each) => columns[each] === "failed") ??
@@ -339,9 +338,15 @@ export function endingHint(table: Grid): string {
     const word = STAGE_STATE[columns[stage] === "failed" ? "failed" : "unreached"].label;
     return `${STAGE[stage].label} ${lower(word)}: ${cause.stage === stage ? lower(reasonLabel(cause.reason)) : causeAt(cause)}`;
   }
-  if (rows.length === 1) return `${causePlace(first)}: ${lower(reasonLabel(first.reason))}${more}`;
   const troubled = rows.filter((row) => row.causes.length);
-  // A run that measured nothing names its first cause, as no card holds a result to mark.
   if (troubled.length > 1 && table.measured) return DIAL.troubled(troubled.length);
-  return `${troubled[0]!.server.name}: ${causeAt(first)}${more}`;
+  // Every cause once, one reason at a time: "Latency and Download: connection lost".
+  const reasons = Map.groupBy(causes, (cause) => reasonLabel(cause.reason));
+  return [...reasons.values()]
+    .map((group) =>
+      rows.length === 1
+        ? `${listed([...new Set(group.map(causePlace))])}: ${lower(reasonLabel(group[0]!.reason))}`
+        : `${listed([...new Set(group.map(({ serverId }) => rows.find((row) => row.server.id === serverId)!.server.name))])}: ${causeAt(...group)}`,
+    )
+    .join("; ");
 }

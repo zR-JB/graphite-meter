@@ -1279,6 +1279,12 @@
     border-radius: var(--r-well);
     background: color-mix(in oklab, var(--tone) 7%, var(--surface-1));
   }
+  /* Nothing to plot: a baseline, not a tinted block that reads as loading. */
+  .card:is(.pending, .not-run, .failed) .strip {
+    border-bottom: var(--hairline) solid var(--border);
+    border-radius: 0;
+    background: none;
+  }
   .card .facts {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

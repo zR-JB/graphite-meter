@@ -88,7 +88,10 @@ export function Dial(props: {
   });
   // A stage's warmup already reads its stage, muted: the checked round trip, or the rate nothing counts yet.
   const warming = computed(() => phase() === "warmup" && run.running());
-  const reads = computed<string>(() => (warming() ? (run.stage() ?? phase()) : phase()));
+  // A stopped transfer stage keeps the rate it reached, muted, with Stopped under it.
+  const stopped = computed(() => phase() === "aborted" && live.rateStage() !== null);
+  const muted = computed(() => warming() || stopped());
+  const reads = computed<string>(() => (muted() ? (run.stage() ?? phase()) : phase()));
   // What the needle points at: the round trip on the millisecond scale, the stage's own rate, or nothing.
   const pointing = computed<"rate" | "ms" | null>(() => {
     const now = reads();
@@ -111,7 +114,7 @@ export function Dial(props: {
   // Labels change in place with the scale or the unit; only a switch between rate and time ticks hands off.
   const ticks = handoff(
     () => {
-      if (unusable() || !LABELED.includes(phase())) return [] as string[];
+      if (unusable() || !LABELED.includes(reads())) return [] as string[];
       if (live.msScale()) return DIAL_LABELS.map((f) => fmtTick(scaleMs() * f));
       return DIAL_LABELS.map((f) =>
         fmtTick(toRateUnit(gaugeValue(f, gaugeScale()), units(), units().tier ?? 0)),
@@ -136,7 +139,8 @@ export function Dial(props: {
   );
   // The stage's name and figure hand off apart: the name once per stage, the figure on its first value, so a lasting dash never blinks.
   const stageName = handoff<Stage | null>(
-    () => (run.running() ? run.stage() : live.completedRtt() !== null ? "latency" : null),
+    () =>
+      run.running() || stopped() ? run.stage() : live.completedRtt() !== null ? "latency" : null,
     (stage) => stage,
     (leaving) => (leaving === null ? 0 : HANDOFF_OUT_MS),
   );
@@ -153,7 +157,7 @@ export function Dial(props: {
       return {
         reading: shown,
         unit: shown === "ms" ? "ms" : shown === "rate" ? unit() : "",
-        stage: run.running() ? run.stage() : null,
+        stage: run.running() || stopped() ? run.stage() : null,
       };
     },
     (view) => (view.reading === null ? MISSING : view.stage),
@@ -302,10 +306,11 @@ export function Dial(props: {
   ) as HTMLElement;
   const headArt = head.querySelector("svg")!;
   cap.style.visibility = "hidden";
-  effect(() => needleLayer.classList.toggle("warming", warming()));
+  effect(() => needleLayer.classList.toggle("warming", muted()));
   // Between runs the needle keeps the hue it last showed; a finished run's latency takes its own.
   effect(() => {
-    const stage = run.running() ? run.stage() : live.completedRtt() !== null ? "latency" : null;
+    const stage =
+      run.running() || stopped() ? run.stage() : live.completedRtt() !== null ? "latency" : null;
     if (stage) needleLayer.style.setProperty("--accent", `var(--phase-${stage})`);
   });
 
@@ -314,7 +319,7 @@ export function Dial(props: {
   const value = (
     <span
       class={() =>
-        `gauge-value handoff${figure.out() ? " handoff-out" : ""}${figure.shown().reading && !warming() ? "" : " quiet"}`
+        `gauge-value handoff${figure.out() ? " handoff-out" : ""}${figure.shown().reading && !muted() ? "" : " quiet"}`
       }
     >
       {number.box}
