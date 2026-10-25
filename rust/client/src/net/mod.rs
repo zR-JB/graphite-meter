@@ -410,6 +410,7 @@ struct Slot {
     idle: Mutex<Vec<Conn>>,
     /// A negotiated dial found HTTP/1.1, so each request without an idle connection dials its own.
     exclusive: AtomicBool,
+    replacing: AtomicBool,
 }
 
 /// A connection taken for one request: the shared one's serial, and whether an earlier request used it.
@@ -487,7 +488,20 @@ impl Connections {
             true => Payload::empty(),
             false => Payload::once(request.body.clone()),
         };
-        match timeout_at(deadline, conn.send(head, payload)).await {
+        let control = serial.filter(|_| via != Protocol::Http3);
+        let mut unanswered = control.map(|serial| Unanswered {
+            client: client.clone(),
+            slot: slot.clone(),
+            via,
+            origin: request.origin.clone(),
+            serial,
+            answered: false,
+        });
+        let sent = timeout_at(deadline, conn.send(head, payload)).await;
+        if let (Some(unanswered), Ok(_)) = (&mut unanswered, &sent) {
+            unanswered.answered = true;
+        }
+        match sent {
             Ok(Ok(answer)) => Ok(slot.keep(conn, answer)),
             Ok(Err(Failed {
                 fault,
@@ -500,10 +514,7 @@ impl Connections {
                 let again = broken && reused && (unsent || request.method.is_idempotent());
                 Err((fault, again))
             }
-            Err(_) => {
-                slot.retire(serial);
-                Err((Fault::TimedOut("response headers"), false))
-            }
+            Err(_) => Err((Fault::TimedOut("response headers"), false)),
         }
     }
 
@@ -550,6 +561,55 @@ impl Connections {
             serial: Some(serial),
             reused: false,
         })
+    }
+}
+
+struct Unanswered {
+    client: Client,
+    slot: Arc<Slot>,
+    via: Protocol,
+    origin: Origin,
+    serial: u64,
+    answered: bool,
+}
+
+impl Drop for Unanswered {
+    fn drop(&mut self) {
+        let runtime = Handle::try_current().ok().filter(|_| !self.answered);
+        let Some(runtime) = runtime else { return };
+        if self.slot.replacing.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let (client, slot, origin) = (self.client.clone(), self.slot.clone(), self.origin.clone());
+        let (via, serial) = (self.via, self.serial);
+        let current = move |slot: &Slot| {
+            lock(&slot.shared).as_ref().map(|(current, _)| *current) == Some(serial)
+        };
+        runtime.spawn(async move {
+            let proven = async {
+                let mut conn =
+                    Conn::dial(&client, &origin, via, ReadBuffer::Adaptive, None).await?;
+                let head = client.head(&Request::new(Method::GET, &origin, Route::Probe))?;
+                conn.send(head, Payload::empty())
+                    .await
+                    .map_err(|failed| failed.fault)?;
+                Ok::<_, Fault>(conn)
+            };
+            let proven = match current(&slot) {
+                true => timeout(CONTROL_TIMEOUT, proven).await.ok(),
+                false => None,
+            };
+            if let Some(Ok(conn)) = proven
+                && let Some(shared) = conn.share()
+            {
+                let _dialing = slot.dialing.lock().await;
+                if current(&slot) {
+                    let replacement = client.connections.serial.fetch_add(1, Ordering::Relaxed);
+                    *lock(&slot.shared) = Some((replacement, shared));
+                }
+            }
+            slot.replacing.store(false, Ordering::Relaxed);
+        });
     }
 }
 

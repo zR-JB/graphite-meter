@@ -717,3 +717,76 @@ async fn a_request_cut_unanswered_on_a_reused_connection_goes_again_only_when_id
         .collect();
     assert_eq!(seen, ["0 GET", "0 GET", "1 GET", "1 POST"]);
 }
+
+async fn h2_peer(slow: bool) -> (Origin, Arc<AtomicUsize>) {
+    let (listener, address) = local().await;
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let count = accepted.clone();
+    tokio::spawn(async move {
+        while let Ok((tcp, _)) = listener.accept().await {
+            let number = count.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                if slow && number > 0 {
+                    tokio::time::sleep(Duration::from_millis(700)).await;
+                }
+                let mut conn = h2::server::handshake(tcp).await.unwrap();
+                let (mut requests, mut held) = (0, Vec::new());
+                while let Some(Ok((_, mut respond))) = conn.accept().await {
+                    requests += 1;
+                    if !slow && number == 0 && requests > 1 {
+                        held.push(respond);
+                        continue;
+                    }
+                    let late = number == 0 && requests == 2;
+                    tokio::spawn(async move {
+                        if late {
+                            tokio::time::sleep(Duration::from_millis(400)).await;
+                        }
+                        let answer = http::Response::builder().status(200).body(()).unwrap();
+                        if let Ok(mut body) = respond.send_response(answer, false) {
+                            let _ = body.send_data(bytes::Bytes::from_static(b"{}"), true);
+                        }
+                    });
+                }
+            });
+        }
+    });
+    (origin("http", address), accepted)
+}
+
+#[tokio::test]
+async fn a_shared_connection_left_unanswered_is_replaced_and_a_slow_one_serves_until_then() {
+    for slow in [false, true] {
+        let (served, accepted) = h2_peer(slow).await;
+        let client = client(false);
+        let asked = |budget: Duration| {
+            let request = Request::new(Method::GET, &served, Route::Probe);
+            tokio::time::timeout(
+                budget,
+                client.json(Protocol::Http2, request, json::decode::<Value>),
+            )
+        };
+        asked(Duration::from_secs(1)).await.unwrap().unwrap();
+        assert!(asked(Duration::from_millis(200)).await.is_err(), "missed");
+        if slow {
+            for _ in 0..4 {
+                let answered = asked(Duration::from_millis(500)).await;
+                assert!(
+                    matches!(answered, Ok(Ok(_))),
+                    "the slow connection serves on: {answered:?}"
+                );
+            }
+        }
+        let answered =
+            async { while !matches!(asked(Duration::from_millis(300)).await, Ok(Ok(_))) {} };
+        let answered = tokio::time::timeout(Duration::from_secs(3), answered).await;
+        assert!(answered.is_ok(), "slow {slow}: a connection answers again");
+        let replaced = async {
+            while accepted.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        let replaced = tokio::time::timeout(Duration::from_secs(3), replaced).await;
+        assert!(replaced.is_ok(), "slow {slow}: a replacement is dialed");
+    }
+}
