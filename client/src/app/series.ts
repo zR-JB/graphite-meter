@@ -23,6 +23,7 @@ export interface ThroughputSample {
 }
 
 interface Kind<T> {
+  revisableMs: number;
   group(item: T): string;
   lane(item: T): string;
   joins(last: T, next: T): boolean;
@@ -53,7 +54,7 @@ class Folded<T> {
     while (items.length > this.limit) {
       let newest = Number.NEGATIVE_INFINITY;
       for (const item of items) newest = Math.max(newest, kind.end(item));
-      const horizon = newest - REVISION_MS;
+      const horizon = newest - kind.revisableMs;
       const settled = new Map<string, number>();
       for (const item of items)
         if (kind.end(item) < horizon && !done.has(kind.group(item)))
@@ -112,6 +113,7 @@ class Folded<T> {
 }
 
 const latencyKind: Kind<LatencyBucket> = {
+  revisableMs: REVISION_MS,
   group: (bucket) => bucket.phase,
   lane: () => "",
   // A reconnect's line break stays while its buckets are whole; folded history joins across it.
@@ -210,6 +212,7 @@ function mergeLatency(bin: LatencyBucket[]): LatencyBucket {
 }
 
 const throughputKind: Kind<ThroughputSample> = {
+  revisableMs: 0,
   group: (sample) => sample.stage,
   lane: (sample) => sample.dir,
   joins: (last, next) => last.continuityId === next.continuityId,
