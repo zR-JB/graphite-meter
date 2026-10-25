@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.4.0",
-    "rev": "9f34ccb15349d635adea84df9ddc532c3760aff0",
+    "rev": "b868d09b61b261b6fb932351bb42dadb220b7984",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.4.0",
     "base": "34f75c49f93de5e2ff943483cabc5b6d0c5df918",
-    "diffSha256": "2b84dbe75a038640e05c0b621f2a5da90b8476b37b6a95f5f5872fb1b5f752c7",
+    "diffSha256": "28fb15c84b49817caa5b1a2724d279675b3cf3150af8a1346ab229f2b55c098e",
     "modifiedPackages": [
       "noq",
       "noq-proto",
@@ -117,7 +117,8 @@
       {"subject": "Take a budget's charge lock only when the charge must move", "purpose": "Checks a budget's charge before taking its lock, and restores a trimmed charge when an acquire raced past the trim, so uncontended acquires and releases stay lock-free.", "origin": "graphite-meter"},
       {"subject": "Charge a floorless budget's shared bytes in small steps", "purpose": "Charges a floorless budget's shared bytes in 4 KiB steps, so a held datagram does not hold a 64 KiB step of the shared budget.", "origin": "graphite-meter"},
       {"subject": "Drop data buffered past a reliable reset's size", "purpose": "Drops data buffered past the reliable size when a RESET_STREAM_AT arrives or lowers it.", "origin": "graphite-meter"},
-      {"subject": "Drop a lowered reliable size's tail only once it halves", "purpose": "Drops a lowered reliable size's buffered tail only once the undelivered span has halved since the last drop, so byte-by-byte reductions cannot cost quadratic time.", "origin": "graphite-meter"}
+      {"subject": "Drop a lowered reliable size's tail only once it halves", "purpose": "Drops a lowered reliable size's buffered tail only once the undelivered span has halved since the last drop, so byte-by-byte reductions cannot cost quadratic time.", "origin": "graphite-meter"},
+      {"subject": "Release a reassembly heap that a reset emptied", "purpose": "Releases the reassembly heap's charged capacity once dropping a reset's tail empties it.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
