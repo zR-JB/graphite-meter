@@ -1,12 +1,16 @@
 import hashlib
+import http.server
 import json
 import pathlib
 import re
 import shutil
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 
-from toolchains import ROOT, check, check_rust_manifest, latest_browsers, literal_updates, load_pins, write_browsers
+from toolchains import (ROOT, check, check_rust_manifest, download, latest_browsers, literal_updates, load_pins,
+                        write_browsers)
 
 
 class ToolchainBoundaryTests(unittest.TestCase):
@@ -182,6 +186,35 @@ class ToolchainBoundaryTests(unittest.TestCase):
         ):
             with self.subTest(body=body), self.assertRaisesRegex(ValueError, error):
                 latest_browsers((released | {url: body}).__getitem__)
+
+    def test_a_download_cut_short_is_retried_and_one_too_large_refused(self) -> None:
+        bodies = [b"cut", b"whole body", b"cut", b"cut", b"cut"]
+
+        class Server(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                body = bodies.pop(0)
+                self.send_response(200)
+                self.send_header("Content-Length", "10")
+                self.end_headers()
+                self.wfile.write(body)
+                self.close_connection = True
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Server)
+        threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_port}/"
+        with patch("toolchains.time.sleep"):
+            self.assertEqual(download(url), b"whole body")
+            with self.assertRaisesRegex(ConnectionError, "IncompleteRead"):
+                download(url)
+        self.assertEqual(bodies, [])
+        bodies.append(b"whole body")
+        with self.assertRaisesRegex(ValueError, "larger than 9 bytes"):
+            download(url, limit=9)
 
 
 if __name__ == "__main__":

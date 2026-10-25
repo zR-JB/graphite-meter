@@ -436,13 +436,13 @@ class PlatformTests(Scratch):
             with self.subTest(changed=changed), self.assertRaisesRegex(LegalError, message):
                 platform.fetch_notices(self.root, entry)
         self.write("legal/rust-notice-sources.json", json.dumps(sources))
-        with patch("urllib.request.urlopen", return_value=io.BytesIO(b"changed")), \
+        with patch("scripts.legal.rust_platform.download", return_value=b"changed"), \
                 self.assertRaisesRegex(LegalError, "bytes differ"):
             platform.fetch_notices(self.root, entry)
         self.assertFalse((self.root / relative).exists())
-        with patch("urllib.request.urlopen", return_value=io.BytesIO(b"reviewed")):
+        with patch("scripts.legal.rust_platform.download", return_value=b"reviewed"):
             platform.fetch_notices(self.root, entry)
-        with patch("urllib.request.urlopen", side_effect=AssertionError("the cache works offline")):
+        with patch("scripts.legal.rust_platform.download", side_effect=AssertionError("the cache works offline")):
             platform.fetch_notices(self.root, entry)
         self.write(relative, "tampered")
         with self.assertRaisesRegex(LegalError, "bytes differ"):
