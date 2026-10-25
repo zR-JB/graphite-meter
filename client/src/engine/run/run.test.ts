@@ -268,6 +268,38 @@ test("a warmup moves the live rate, which no result counts, and the window opens
   near(result.download?.reportedBytesPerSec, 1_000);
 });
 
+test("a drop the live rate confirms stays on its server's result, timed in the window, and leaves the headline alone", async () => {
+  // 3 bytes per ms for the window's first 3 s, then 1.
+  const h = setup(
+    [
+      {
+        id: "self",
+        rate: 1,
+        measure: (events) => {
+          let ms = 0;
+          const stop = clock.every(20, () => {
+            events.download(40);
+            if ((ms += 20) >= 3_000) stop();
+          });
+        },
+      },
+    ],
+    { download: true },
+    { warmupMs: 1_000, downloadMs: 6_000 },
+  );
+  h.start();
+  const result = await h.result();
+  const [change, ...more] = result.multiServer.servers[0]!.download!.changes!;
+  expect(more).toEqual([]);
+  // From the window's start, the live rate reads the drop once its fast window falls a quarter below.
+  expect(change!.atMs).toBeGreaterThan(3_000);
+  expect(change!.atMs).toBeLessThan(3_750);
+  near(change!.fromBytesPerSec, 3_000);
+  near(change!.toBytesPerSec, 1_000);
+  near(result.download?.reportedBytesPerSec, 2_000);
+  expect(result.download).not.toHaveProperty("changes");
+});
+
 test("one server runs every stage in order on one set of resources per stage", async () => {
   const h = setup(
     [{ id: "self", rate: 2, measure: probe(10, 4) }],

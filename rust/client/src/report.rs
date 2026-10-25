@@ -9,7 +9,7 @@ use crate::{
     model::{Direction, Outcome, ServerFailure, Stage, StageResult, StageStatus, Throughput},
     net::approval::EXPIRED,
     style::Palette,
-    text::{Line, Style, wrap},
+    text::{self, Line, Style, wrap},
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::time::Duration;
@@ -154,7 +154,9 @@ impl Report<'_> {
                             },
                         ),
                     )) => {
-                        let facts = throughput_facts(throughput, result.measured, direction);
+                        let mut facts = throughput_facts(throughput, result.measured, direction);
+                        let changes = self.run.changes(stage, direction);
+                        facts.extend(changes.map(|change| text::lowered(&change)));
                         (Line::styled(format::rate(rate.mean), hue.bold()), facts)
                     }
                     Some((_, Some(_))) => (Line::styled(MISSING, palette.muted), Vec::new()),

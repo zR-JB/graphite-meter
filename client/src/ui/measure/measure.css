@@ -1241,7 +1241,7 @@
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
     white-space: nowrap;
-    & :is(.reason, .wire) {
+    & :is(.reason, .change, .wire) {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;

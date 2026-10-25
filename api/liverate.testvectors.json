@@ -1,5 +1,5 @@
 {
-  "comment": "RateEstimator (client/src/engine/measure/live.ts): each step observes [bytes, ms] and then presents [presented bytes/s, whether a new regime was confirmed]. Generated from the TypeScript; the terminal client must match within 1e-9.",
+  "comment": "RateEstimator (client/src/engine/measure/live.ts): each step observes [bytes, ms] and then presents [presented bytes/s, false, or the regime it confirmed as [ms of evidence since the live rate first read it, the bytes/s it read before]]. Generated from the TypeScript; the terminal client must match within 1e-9.",
   "cases": [
     {"name": "the first delivery anchors and nothing shows before 500 ms of evidence", "steps": [
       [0, 60, 0, false],
@@ -202,7 +202,7 @@
       [40000, 100, 902636.9168356998, false],
       [40000, 100, 892323.0309072782, false],
       [40000, 100, 882352.9411764706, false],
-      [40000, 100, 400000, true],
+      [40000, 100, 400000, [800, 1000000]],
       [40000, 100, 400000, false],
       [40000, 100, 400000, false],
       [40000, 100, 400000, false],
@@ -290,7 +290,7 @@
       [100000, 100, 439955.60488346283, false],
       [100000, 100, 452287.5816993464, false],
       [100000, 100, 464171.1229946524, false],
-      [100000, 100, 1000000, true],
+      [100000, 100, 1000000, [500, 400000]],
       [100000, 100, 1000000, false],
       [100000, 100, 1000000, false],
       [100000, 100, 1000000, false],

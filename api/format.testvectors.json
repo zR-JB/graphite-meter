@@ -69,6 +69,11 @@
     {"ms": 5400000, "out": "1 h 30 min"},
     {"ms": 7200000, "out": "2 h"}
   ],
+  "change": [
+    {"atMs": 130000, "fromBytesPerSec": 112500000, "toBytesPerSec": 62500000, "out": "Dropped from 900.0 to 500.0 Mbit/s at 2 min 10 s"},
+    {"atMs": 2250, "fromBytesPerSec": 6250000, "toBytesPerSec": 162500000, "out": "Rose from 0.05 to 1.30 Gbit/s at 2.3 s"},
+    {"atMs": 500, "fromBytesPerSec": 12500000, "toBytesPerSec": 11250000, "out": "Dropped from 100.0 to 90.00 Mbit/s at 0.5 s"}
+  ],
   "progress": [
     {"elapsedMs": 1900, "totalMs": 4000, "out": "1.9 / 4 s"},
     {"elapsedMs": 1000, "totalMs": 2500, "out": "1.0 / 2.5 s"},

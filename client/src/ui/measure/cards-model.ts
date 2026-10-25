@@ -13,6 +13,7 @@ import {
 import { STAGES, type Stage } from "../../engine/run/schedule";
 import {
   fmtBytes,
+  speedChange,
   fmtCount,
   fmtDuration,
   fmtLatencyRange,
@@ -505,6 +506,36 @@ export function cardLine(table: Grid, stage: Stage, lens = ""): string {
   for (const [reason, names] of short) lines.push(`${listed(names)}: ${lower(reason)}`);
   if (without.length) lines.push(`${lines.length ? "without" : "Without"} ${listed(without)}`);
   return lines.join("; ");
+}
+
+/** A card's speed changes, each server's as its live rate confirmed them; several servers are named, and the
+ *  bidirectional stage names each lane. */
+export function changeLine(
+  details: MultiServerResult | null,
+  stage: Stage,
+  lens: string,
+  units: RateUnits,
+): string {
+  if (stage === "latency" || !details) return "";
+  const named = !lens && details.servers.length > 1;
+  const lines = details.servers.flatMap(({ server, ...own }) => {
+    if (lens && server.id !== lens) return [];
+    const lanes =
+      stage === "bidirectional"
+        ? ([
+            ["download", own.bidirectional?.down],
+            ["upload", own.bidirectional?.up],
+          ] as const)
+        : ([[stage, own[stage]]] as const);
+    return lanes.flatMap(([lane, result]) =>
+      (result?.changes ?? []).map((change) => {
+        const text = speedChange(change, units);
+        const said = stage === "bidirectional" ? `${STAGE[lane].label} ${lower(text)}` : text;
+        return named ? `${server.name}: ${lower(said)}` : said;
+      }),
+    );
+  });
+  return lines.map((line, index) => (index && !named ? lower(line) : line)).join("; ");
 }
 
 /** Speaks a completed run once in card order, with each headline, its status if not complete and latency's jitter. */

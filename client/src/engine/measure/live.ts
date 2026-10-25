@@ -24,6 +24,12 @@ const windowMs = (regimeAgeMs: number) => {
   return Math.min(age, Math.max(MIN_WINDOW_MS, age * 0.85));
 };
 
+/** A confirmed regime change: how much evidence ago the live rate first read it, and the rate it read before. */
+export interface Shift {
+  sinceMs: number;
+  fromBytesPerSec: number;
+}
+
 /** Grows an average and restarts it on a confirmed 25% drop or 20% rise; the first delivery, a drained buffer, only anchors it. */
 export class RateEstimator {
   /** Holds the bytes per second to show, 0 until there is evidence. */
@@ -35,14 +41,14 @@ export class RateEstimator {
   #evidence = 0;
   #regimeStart = 0;
   #fast = 0;
-  #candidate: { up: boolean; start: number; reference: number } | null = null;
+  #candidate: { up: boolean; start: number; reference: number; before: number } | null = null;
 
-  /** Adds `bytes` over `durationMs` and returns true when this confirmed a new regime. */
-  observe(bytes: number, durationMs: number): boolean {
-    if (!(durationMs > 0) || !Number.isFinite(durationMs)) return false;
+  /** Adds `bytes` over `durationMs` and returns the new regime this confirmed, if any. */
+  observe(bytes: number, durationMs: number): Shift | null {
+    if (!(durationMs > 0) || !Number.isFinite(durationMs)) return null;
     if (!this.#anchored) {
       this.#anchored = bytes > 0;
-      return false;
+      return null;
     }
     const start = this.#evidence;
     this.#evidence += durationMs;
@@ -50,8 +56,8 @@ export class RateEstimator {
     this.#bytes += bytes;
     this.#spans.push({ start, end: this.#evidence, bytes, total: this.#bytes });
     this.#recalculate();
-    const changed = this.#regime(start);
-    if (changed) this.#recalculate();
+    const shift = this.#regime(start);
+    if (shift) this.#recalculate();
     const keep = Math.min(
       this.#evidence - windowMs(this.#evidence - this.#regimeStart),
       Math.max(this.#regimeStart, this.#evidence - FAST_WINDOW_MS),
@@ -64,7 +70,7 @@ export class RateEstimator {
       this.#head = 0;
     }
     if (this.#spans.length - this.#head > MAX_SPANS) this.#coarsen();
-    return changed;
+    return shift;
   }
 
   /** Merges older spans in pairs, all but the fast window and a pending regime change, so memory stays bounded. */
@@ -107,30 +113,49 @@ export class RateEstimator {
     return ((this.#bytes - first.total + partial) * 1000) / ms;
   }
 
-  #regime(start: number): boolean {
+  #regime(start: number): Shift | null {
     const candidate = this.#candidate;
     if (!candidate) {
-      if (this.#evidence - this.#regimeStart < REGIME_READY_MS || this.presented <= 0) return false;
+      if (this.#evidence - this.#regimeStart < REGIME_READY_MS || this.presented <= 0) return null;
       const ratio = this.#fast / this.presented;
-      if (ratio < 0.75 || ratio > 1.2)
-        this.#candidate = { up: ratio > 1.2, start, reference: this.presented };
-      return false;
+      if (!(ratio < 0.75 || ratio > 1.2)) return null;
+      // What the window read before the fast window that holds the change.
+      const window = windowMs(this.#evidence - this.#regimeStart);
+      const before =
+        (this.presented * window - this.#fast * FAST_WINDOW_MS) / (window - FAST_WINDOW_MS);
+      this.#candidate = { up: ratio > 1.2, start, reference: this.presented, before };
+      return null;
     }
     const ratio = candidate.reference > 0 ? this.#fast / candidate.reference : 1;
     if (candidate.up ? ratio < 1.1 : ratio > 0.85) {
       this.#candidate = null;
-      return false;
+      return null;
     }
     if (
       this.#evidence - candidate.start <
       (candidate.up ? UPSHIFT_CONFIRM_MS : DOWNSHIFT_CONFIRM_MS)
     )
-      return false;
+      return null;
     this.#regimeStart = candidate.start;
     this.#candidate = null;
-    return true;
+    return { sinceMs: this.#evidence - candidate.start, fromBytesPerSec: candidate.before };
   }
 }
+
+/** A speed change the live rate confirmed: when it first read it, the rate it read before, and the one it confirmed. */
+export interface SpeedChange {
+  atMs: number;
+  fromBytesPerSec: number;
+  toBytesPerSec: number;
+}
+
+/** A shift the estimator confirmed by `now`, timed back from `now` by its evidence. */
+const changeOf = (shift: Shift | null, rate: RateEstimator, now: number): SpeedChange | null =>
+  shift && {
+    atMs: now - shift.sinceMs,
+    fromBytesPerSec: shift.fromBytesPerSec,
+    toBytesPerSec: rate.presented,
+  };
 
 const HINT_MAX_AGE_MS = 250;
 const LANE_MAX_AGE_MS = 750;
@@ -175,25 +200,32 @@ export class LiveRates {
     this.#servers.delete(id);
   }
 
-  download(id: string, cumulative: number, now: number): void {
+  /** Returns the speed change this confirmed, if any; every change is timed in page ms. */
+  download(id: string, cumulative: number, now: number): SpeedChange | null {
     const server = this.#servers.get(id);
-    if (!server) return;
-    server.down.observe(Math.max(0, cumulative - server.downBytes), now - server.downAt);
+    if (!server) return null;
+    const shift = server.down.observe(
+      Math.max(0, cumulative - server.downBytes),
+      now - server.downAt,
+    );
     server.downBytes = cumulative;
     server.downAt = now;
+    return changeOf(shift, server.down, now);
   }
 
-  receiver(id: string, frame: Checkpoint, now: number): void {
+  receiver(id: string, frame: Checkpoint, now: number): SpeedChange | null {
     const server = this.#servers.get(id);
-    if (!server) return;
+    if (!server) return null;
     const last = server.frame;
     server.frame = frame;
     if (!last || last.id !== frame.id || frame.nanos <= last.nanos || frame.bytes < last.bytes)
-      return;
-    server.up.observe(frame.bytes - last.bytes, (frame.nanos - last.nanos) / 1e6);
-    if (frame.bytes === last.bytes) return;
-    if (server.arrivals.push(now) > 5) server.arrivals.shift();
-    server.hints.clear();
+      return null;
+    const shift = server.up.observe(frame.bytes - last.bytes, (frame.nanos - last.nanos) / 1e6);
+    if (frame.bytes > last.bytes) {
+      if (server.arrivals.push(now) > 5) server.arrivals.shift();
+      server.hints.clear();
+    }
+    return changeOf(shift, server.up, now);
   }
 
   hint(id: string, lane: number, bytes: number, elapsedMs: number, now: number): void {

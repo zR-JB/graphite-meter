@@ -9,6 +9,7 @@ import {
   type ThroughputResult,
 } from "../measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../measure/latency";
+import type { SpeedChange } from "../measure/live";
 import type { WireModel } from "../measure/overhead";
 import { minCoverage } from "../measure/stability";
 import type { Direction, HttpProtocol, Role, ServerIdentity } from "../types";
@@ -44,6 +45,9 @@ export interface StageResults {
   } | null;
 }
 
+/** A server's own throughput, with the speed changes its live rate confirmed in the measured window, timed from it. */
+export type ServerThroughput = Omit<ThroughputResult, "quietMs"> & { changes?: SpeedChange[] };
+
 /** A server's share of the run; its throughput results come from its own full windows. */
 export interface ServerMeasurementSummary {
   server: ServerIdentity;
@@ -59,12 +63,12 @@ export interface ServerMeasurementSummary {
   latency: LatencyResult | null;
   latencyByStage: Record<Stage, LatencySummary | null>;
   addedLatency: AddedLatency | null;
-  download: Omit<ThroughputResult, "quietMs"> | null;
-  upload: Omit<ThroughputResult, "quietMs"> | null;
+  download: ServerThroughput | null;
+  upload: ServerThroughput | null;
   /** Null unless the run entered the bidirectional stage. */
   bidirectional: {
-    down: Omit<ThroughputResult, "quietMs"> | null;
-    up: Omit<ThroughputResult, "quietMs"> | null;
+    down: ServerThroughput | null;
+    up: ServerThroughput | null;
   } | null;
   /** Unique measured bytes over every stage. */
   totalBytes: { down: number; up: number };

@@ -1,9 +1,15 @@
 //! What operations tell viewers as it happens, and the view report and interface reduce it to; sending never waits.
 use crate::{
     controller::Kind,
-    measure::{latency::Summary, live::LiveRate},
+    format,
+    measure::{
+        aggregate::MAX_INTERVALS,
+        latency::Summary,
+        live::{LiveRate, Shift},
+    },
     model::{Dir, Direction, Failure, Outcome, ServerFailure, Stage, StageResult, focus},
     run::{engine::StagePlan, prepare::ServerPath},
+    text,
 };
 use graphite_meter_proto::catalog::{ServerEntry, ServerId};
 use std::{
@@ -218,6 +224,15 @@ impl Running {
     }
 }
 
+/// A speed change the live rate confirmed in a stage's window: when it first read it, the rate it read before, and the one
+/// it confirmed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Change {
+    pub at: Duration,
+    pub from: f64,
+    pub to: f64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Run {
     pub plan: Vec<(Stage, Duration)>,
@@ -239,6 +254,8 @@ pub struct Run {
     pub results: Vec<StageResult>,
     /// Every failure with its stage, a finished stage's as its result records them.
     pub issues: Vec<(Stage, ServerFailure)>,
+    /// The latest speed changes of each stage and direction, in order.
+    pub changes: Vec<(Stage, Direction, Change)>,
     pub outcome: Option<Outcome>,
     pub error: Option<Failure>,
     pub elapsed: Duration,
@@ -351,7 +368,9 @@ impl Run {
                         continue;
                     };
                     let bytes = rate * ms / 1e3;
-                    self.live[direction].observe(bytes, ms);
+                    if let Some(shift) = self.live[direction].observe(bytes, ms) {
+                        self.changed(stage, direction, *at, shift);
+                    }
                     self.moved += bytes;
                     if let Some(presented) = self.live[direction].presented() {
                         self.throughput[direction].push(offset + *at, Some(presented));
@@ -421,6 +440,62 @@ impl Run {
         for (_, series) in &mut self.rtt {
             series.push(offset, None);
         }
+    }
+
+    /// The speed changes `direction` confirmed in `stage`, as a result says them.
+    pub fn changes(&self, stage: Stage, direction: Direction) -> impl Iterator<Item = String> + '_ {
+        let own = self.changes.iter();
+        own.filter(move |(own, dir, _)| (*own, *dir) == (stage, direction))
+            .map(|(.., change)| format::change(change.from, change.to, change.at))
+    }
+
+    /// A stage's speed changes on one line: each lane named in the bidirectional stage.
+    pub fn change_line(&self, stage: Stage) -> Option<String> {
+        let said = stage.directions().iter().flat_map(|&direction| {
+            self.changes(stage, direction).map(move |text| match stage {
+                Stage::Bidirectional => {
+                    let lane =
+                        [Stage::Download, Stage::Upload][usize::from(direction == Direction::Up)];
+                    format!("{} {}", format::label(lane), text::lowered(&text))
+                }
+                _ => text,
+            })
+        });
+        let lines: Vec<_> = said
+            .enumerate()
+            .map(|(index, line)| {
+                if index > 0 {
+                    text::lowered(&line)
+                } else {
+                    line
+                }
+            })
+            .collect();
+        (!lines.is_empty()).then(|| lines.join("; "))
+    }
+
+    /// Keeps a confirmed change, `at` into the window.
+    fn changed(&mut self, stage: Stage, direction: Direction, at: Duration, shift: Shift) {
+        let same = |entry: &(Stage, Direction, Change)| (entry.0, entry.1) == (stage, direction);
+        let kept = self.changes.iter().filter(|entry| same(entry)).count();
+        if let Some(oldest) = self
+            .changes
+            .iter()
+            .position(same)
+            .filter(|_| kept >= MAX_INTERVALS)
+        {
+            self.changes.remove(oldest);
+        }
+        let since = Duration::from_secs_f64(shift.since_ms / 1e3);
+        self.changes.push((
+            stage,
+            direction,
+            Change {
+                at: at.saturating_sub(since),
+                from: shift.from,
+                to: self.live[direction].presented().unwrap_or(shift.from),
+            },
+        ));
     }
 
     fn window(&self) -> Option<(Stage, Duration)> {

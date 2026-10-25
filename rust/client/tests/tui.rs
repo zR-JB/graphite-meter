@@ -14,14 +14,14 @@ use graphite_meter_client::{
     },
     model::{Dir, Failure, Outcome, Scope, ServerFailure, Stage, StageResult, Throughput},
     net::{ThroughputPath, approval::Unapproved},
-    report::report,
+    report::{WIDTH, report},
     run::{
         engine::StagePlan,
         prepare::{Paths, ServerPath},
     },
     status,
     style::Palette,
-    text::Profile,
+    text::{self, Line, Profile},
     tui::{App, Effect, chrome::Progress},
 };
 use graphite_meter_proto::{
@@ -936,6 +936,41 @@ fn the_console_follows_a_download_and_takes_presses() {
     let moved = pointer(MouseEventKind::Moved, find(&mut app, now, "Start test"));
     app.input(moved, now);
     assert!(app.hovered().is_some(), "the key lights under the pointer");
+}
+
+#[test]
+fn a_confirmed_drop_reads_on_the_card_and_in_the_report_with_its_time_and_both_rates() {
+    let now = Instant::now();
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    for tick in 1..=100 {
+        let at = Duration::from_millis(100 * tick);
+        let rate = if at <= SECOND * 4 { 12.5e6 } else { 6.25e6 };
+        let rates = Dir {
+            down: Some(rate),
+            up: None,
+        };
+        app.event(&Event::Sample { at, rates }, now + at);
+    }
+    let later = now + SECOND * 11;
+    app.event(&Event::StageFinished(result_of(Stage::Download)), later);
+    app.event(&ended(Outcome::Complete), later);
+    // The live rate first reads the drop as its fast window falls a quarter below, 400 ms in.
+    let said = "Dropped from 100.0 to 50.00 Mbit/s at 4.4 s";
+    assert!(
+        shows(&mut app, later, said),
+        "{:#?}",
+        frame(&mut app, later)
+    );
+    let exit = app.exit();
+    let lines = report(&exit.view, WIDTH, &exit.palette);
+    let printed: Vec<_> = lines.iter().map(Line::text).collect();
+    assert!(
+        printed
+            .iter()
+            .any(|line| line.contains(&text::lowered(said))),
+        "{printed:#?}"
+    );
 }
 
 fn result_of(stage: Stage) -> StageResult {

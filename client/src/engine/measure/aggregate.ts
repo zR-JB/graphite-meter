@@ -12,8 +12,8 @@ import {
 /** Evidence must span this long on the client clock and on every receiver clock. */
 export const MIN_EVIDENCE_MS = 800;
 export const PEAK_WINDOW_MS = 500;
-/** Recent intervals a result keeps; older ones only count. */
-const INTERVAL_LIMIT = 128;
+/** Recent intervals a result keeps, older ones only counting, and its latest speed changes per server and direction. */
+export const INTERVAL_LIMIT = 128;
 const COMBINED = "";
 
 /** One instant across the participants: download counters and the latest receiver checkpoints. */
