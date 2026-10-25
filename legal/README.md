@@ -44,8 +44,8 @@ review records of the crates that fail.
 on every server platform listed in `[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each build the
 check lists the compiled crates with `cargo tree` over normal and build edges, checks each against its approved review
 and refuses reviews of no compiled crate, and every shipped target needs an approved platform record. The static
-x86_64 Linux server and client compile at most 143 and 150 crates. That ceiling is a dependency policy rather than a
-license requirement.
+x86_64 Linux server and client compile at most 121 and 146 crates, exactly what they compile today, so a pull request
+that adds a crate raises the ceiling on purpose. That ceiling is a dependency policy rather than a license requirement.
 
 ## Updating pinned forks
 
