@@ -149,18 +149,22 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
 });
 
-test("Escape closes the docked panel holding focus and never stops a running test", async (page) => {
+test("Escape closes the docked panel holding focus, and stops a running test once none is open", async (page) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
   });
   await ready(page);
+  const hint = page.locator(".command-hints .stop-hint");
+  await expect(hint).toHaveAttribute("aria-hidden", "true");
   await runButton(page, "Start test").click();
   // Escape cancels a start still proving its paths, so the panels open once the run is under way.
   await expect(phase(page, "idle")).toHaveCount(0);
+  await expect(hint).toHaveAttribute("aria-hidden", /^$/);
   const settings = await openSettings(page);
   const details = page.locator('dialog[aria-label="Details"]');
   await page.getByRole("button", { name: "Details", exact: true }).click();
+  await expect(hint).toHaveAttribute("aria-hidden", "true");
   const closed = (panel: typeof settings) =>
     expect.poll(() => panel.all((els: HTMLElement[]) => els.every((el) => el.inert))).toBe(true);
   await settings
@@ -173,10 +177,13 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await page.press("Escape");
   await page.press("Escape");
   await closed(details);
-  await page.press("Escape");
   await expect(runButton(page, "Stop test")).toBeVisible();
-  await runButton(page, "Stop test").click();
+  // With no panel and no tip left, Escape stops the test, as its hint says.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(hint).toHaveAttribute("aria-hidden", /^$/);
+  await page.press("Escape");
   await expect(phase(page, "aborted")).toHaveCount(1);
+  await expect(hint).toHaveAttribute("aria-hidden", "true");
 });
 
 test("a docked panel's edge steps 16 px from the keyboard, within its limits", async (page) => {

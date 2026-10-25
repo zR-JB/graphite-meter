@@ -338,6 +338,8 @@ export function createShell(app: App, layout: Layout) {
         return closeHistory();
       case "cancel-start":
         return app.run.cancel();
+      case "stop":
+        return app.run.toggle();
       case "run":
         return toggleRun();
       case "toggle":
@@ -374,6 +376,7 @@ export function createShell(app: App, layout: Layout) {
       focused: holding(target),
       flyout: flyout.peek(),
       pending: app.run.preparing.peek(),
+      running: app.run.running.peek(),
     });
     if (!order) return;
     event.preventDefault();

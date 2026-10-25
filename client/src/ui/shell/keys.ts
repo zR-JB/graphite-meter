@@ -16,6 +16,7 @@ export interface KeyFacts {
   focused: Panel | null;
   flyout: boolean;
   pending: boolean;
+  running: boolean;
 }
 
 export type Command =
@@ -23,6 +24,7 @@ export type Command =
   | { kind: "close-detail" }
   | { kind: "close-history" }
   | { kind: "cancel-start" }
+  | { kind: "stop" }
   | { kind: "run" }
   | { kind: "toggle"; panel: Panel }
   | { kind: "history" }
@@ -77,8 +79,10 @@ export const BINDINGS = {
 
 /** Space runs the test where no focused control takes it. R does wherever text entry does not. */
 export const RUN_CAP = "Space";
+/** Escape stops a running test once nothing above the measurement is left to close. */
+export const STOP_CAP = "Esc";
 
-/** Decides what a key press does, or null when the page leaves it alone. Escape never stops a running test. */
+/** Decides what a key press does, or null when the page leaves it alone. */
 export function command(facts: KeyFacts): Command | null {
   if (facts.key === "Escape") return dismiss(facts);
   if (facts.editable || !facts.shortcuts) return null;
@@ -99,5 +103,6 @@ function dismiss(facts: KeyFacts): Command | null {
     return facts.detail ? { kind: "close-detail" } : { kind: "close-history" };
   if (facts.workspace !== "measurement") return null;
   if (last) return { kind: "close", panel: last };
-  return facts.pending ? { kind: "cancel-start" } : null;
+  if (facts.pending) return { kind: "cancel-start" };
+  return facts.running && facts.shortcuts ? { kind: "stop" } : null;
 }

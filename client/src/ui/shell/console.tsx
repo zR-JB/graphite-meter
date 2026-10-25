@@ -11,7 +11,7 @@ import { LegalDialog } from "../legal/legal";
 import { Announcements } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import type { Shell } from "./api";
-import { BINDINGS, RUN_CAP } from "./keys";
+import { BINDINGS, RUN_CAP, STOP_CAP } from "./keys";
 import { land } from "./land";
 import { createLayout } from "./layout";
 import type { Panel } from "./navigation";
@@ -184,6 +184,17 @@ function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: ()
 function ShortcutHints(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const current = props.shell.runWord;
+  // Escape stops a run only with nothing open above the measurement; its cell stays laid out, so the strip never moves.
+  const stops = computed(() => {
+    const route = props.shell.route();
+    return (
+      app.run.running() &&
+      route.kind === "app" &&
+      route.workspace.kind === "measurement" &&
+      !route.panels.length &&
+      !route.legal
+    );
+  });
   return (
     <Show when={app.preferences.keyShortcuts}>
       {() => (
@@ -208,6 +219,10 @@ function ShortcutHints(props: { app: App; shell: Shell }): Node {
                 )}
               </Show>
             ))}
+          <span class="stop-hint" aria-hidden={() => (stops() ? undefined : "true")}>
+            <kbd>{STOP_CAP}</kbd>
+            {RUN_ACTION.stop}
+          </span>
         </div>
       )}
     </Show>

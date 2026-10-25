@@ -13,9 +13,10 @@ const idle: KeyFacts = {
   focused: null,
   flyout: false,
   pending: false,
+  running: false,
 };
 
-test("Escape closes the topmost surface it reaches and never stops a run", () => {
+test("Escape closes the topmost surface it reaches, and stops a run only when none is left", () => {
   for (const [facts, expected] of [
     [
       { panels: ["settings", "details"], focused: "settings" },
@@ -48,6 +49,14 @@ test("Escape closes the topmost surface it reaches and never stops a run", () =>
       { shortcuts: false, panels: ["details"] },
       { kind: "close", panel: "details" },
     ],
+    [{ running: true }, { kind: "stop" }],
+    [
+      { panels: ["settings"], running: true },
+      { kind: "close", panel: "settings" },
+    ],
+    [{ running: true, editable: true }, null],
+    [{ running: true, shortcuts: false }, null],
+    [{ workspace: "history", running: true }, { kind: "close-history" }],
     [{}, null],
   ] as const)
     expect(command({ ...idle, ...facts })).toEqual(expected);
