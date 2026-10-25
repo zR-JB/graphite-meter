@@ -23,7 +23,7 @@ NAMING = ("scripts/legal/rust.py", "scripts/ci/workflow_policy.py")
 
 TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
-    "ci.yml": {"pull_request", "push", "schedule"},
+    "ci.yml": {"merge_group", "pull_request", "push", "schedule"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
 }
