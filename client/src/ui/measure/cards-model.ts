@@ -151,15 +151,9 @@ const LOOK: Record<StageState, CardStatus> = {
 };
 const QUIET = new Set<CardStatus>(["pending", "not-run"]);
 
-/** A card's state: a stage running its warmup is Running, one a stopped run never reached is Skipped. */
-function wordOf(state: StageState): Word | null {
-  if (state === "upcoming" || state === "complete") return null;
-  return state === "warmup"
-    ? STAGE_STATE.running
-    : state === "unreached"
-      ? STAGE_STATE.skipped
-      : STAGE_STATE[state];
-}
+/** A card names its state in the words chips and History use; an upcoming or complete stage needs none. */
+const wordOf = (state: StageState): Word | null =>
+  state === "upcoming" || state === "complete" ? null : STAGE_STATE[state];
 
 const TRANSFER_FACTS: readonly FactKey[] = ["peak", "stability", "transferred"];
 const FACTS: Record<Stage, readonly FactKey[]> = {

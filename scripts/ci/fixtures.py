@@ -126,7 +126,11 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
     images = {arch: add_json({
         "schemaVersion": 2, "mediaType": MANIFEST_TYPE,
         "config": add_json({"architecture": arch, "os": "linux", "config": {
-            "Labels": labels | dict((arch_labels or {}).get(arch, {}))}}, CONFIG_TYPE),
+            "Labels": labels | dict((arch_labels or {}).get(arch, {})),
+            "Healthcheck": {"Test": ["CMD", "/graphite-meter", "healthcheck"]},
+            "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+            "Entrypoint": ["/graphite-meter"], "User": "65532:65532", "WorkingDir": "/",
+            "ExposedPorts": {"7246/tcp": {}}}}, CONFIG_TYPE),
         "layers": [layer({**files, **(arch_files or {}).get(arch, {})}),
                    *([layer(extra_layer, directories=False)] if extra_layer else [])],
     }, MANIFEST_TYPE, platform={"architecture": arch, "os": "linux"}) for arch in arches}

@@ -126,7 +126,7 @@ pub const START: Binding = Binding::new(
     "enter",
     "start test",
 );
-pub const STOP: Binding = Binding::new(&[ESC], Action::Stop, "esc", "stop test");
+pub const STOP: Binding = Binding::new(&[ESC, SPACE, char('r')], Action::Stop, "esc", "stop test");
 pub const SETTINGS: Binding = Binding::new(&[char('s')], Action::Settings, "s", "settings");
 pub const DETAILS: Binding = Binding::new(&[char('d')], Action::Details, "d", "details");
 pub const HELP: Binding = Binding::new(&[char('?')], Action::Help, "?", "keys");
@@ -194,7 +194,8 @@ pub const CONSOLE: &[Binding] = &[
 ];
 #[rustfmt::skip]
 pub const SETTINGS_SHEET: &[Binding] = &[
-    MOVE, ADJUST, TOGGLE, OPEN, START.on(&[char('r')], "r"), CLOSE, CLOSE.on(&[char('s')], "s").hidden(), HELP, QUIT,
+    MOVE, ADJUST, TOGGLE, OPEN, START.on(&[char('r')], "r"), STOP.on(&[char('r')], "r").hidden(), CLOSE,
+    CLOSE.on(&[char('s')], "s").hidden(), HELP, QUIT,
     ABORT.hidden(),
 ];
 #[rustfmt::skip]

@@ -22,6 +22,8 @@ Volume=./letsencrypt:/etc/letsencrypt:ro,z
 UserNS=keep-id:uid=65532,gid=65532
 ReadOnly=true
 DropCapability=ALL
+HealthCmd=["/graphite-meter","healthcheck"]
+HealthInterval=30s
 NoNewPrivileges=true
 
 [Service]

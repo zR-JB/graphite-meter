@@ -324,7 +324,7 @@ impl App {
         })
     }
 
-    /// The progress bar is busy while preparing, then the planned stage time done. An incomplete stage adds nothing.
+    /// The progress bar is busy while preparing, then the share of planned stage time done, an ended stage's in full.
     pub(super) fn progress(&self) -> Progress {
         if self.view.starting {
             return Progress::Busy;
@@ -334,7 +334,7 @@ impl App {
             return Progress::None;
         };
         let done = |&(stage, duration): &(Stage, Duration)| match self.stage_state(stage) {
-            State::Ended(StageStatus::Complete) => duration,
+            State::Ended(_) => duration,
             State::Measuring => self.elapsed().min(duration),
             _ => Duration::ZERO,
         };

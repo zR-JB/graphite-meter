@@ -1,9 +1,10 @@
-/* The About & legal dialog: a sheet-built modal of the project's facts and the third-party components by ecosystem. */
+/* The About & legal dialog, its height fixed so arriving notices never move it: the project's facts and components. */
 @layer components {
   dialog.legal-dialog {
     --dialog-width: 880px;
     --dialog-height: min(86svh, 760px);
     --panel-pad: var(--space-5);
+    height: var(--dialog-height);
   }
   .legal-body {
     display: grid;

@@ -995,7 +995,7 @@ impl App {
             }
             return;
         }
-        let loaded = self.config.loaded_latency && rtt.is_some() && field.height >= 5;
+        let loaded = self.config.loaded_latency() && rtt.is_some() && field.height >= 5;
         let rates = Rect::new(
             field.x,
             field.y,
@@ -1209,7 +1209,7 @@ impl App {
 
     /// A lane for idle latency and, with loaded latency on, each transfer stage, in plan order.
     pub(super) fn lanes(&self) -> Vec<Lane> {
-        let loaded = |stage: Stage| stage == Stage::Latency || self.config.loaded_latency;
+        let loaded = |stage: Stage| stage == Stage::Latency || self.config.loaded_latency();
         let plan = self.plan();
         let lanes = plan
             .iter()

@@ -180,3 +180,15 @@ test("a refusal speaks only for the change that caused it", async () => {
   expect(h.run.configure({ adaptive: true })).toBe(true);
   expect(h.run.refusal()).toBe("");
 });
+
+test("the first stage's switch locks once its warmup begins, as a later stage's does", async () => {
+  const h = setup(
+    only({ latency: true, download: true }, { warmupMs: 500, latencyMs: 1_000, downloadMs: 1_000 }),
+  );
+  const locked = computed(() => !h.run.canToggle("latency"));
+  const seen: [string, boolean][] = [];
+  effect(() => void seen.push([h.run.phase(), locked()]));
+  h.run.toggle();
+  await h.clock.advance(300);
+  expect(seen.at(-1)).toEqual(["warmup", true]);
+});

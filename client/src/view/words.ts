@@ -132,6 +132,21 @@ export const STAGE_STATE = {
 /** A stage the next run includes but the shown run did not run, as its chip names it. */
 export const NEXT_RUN = { label: "Next test", tone: null } as const satisfies Word;
 
+/** States a chip's tag names in place of its time. */
+export const TAGGED: ReadonlySet<StageState> = new Set([
+  "partial",
+  "failed",
+  "stopped",
+  "unreached",
+]);
+
+/** The word on a chip's tag: off, queued for the next test, or how its stage fared; null leaves its time or check. */
+export function chipTag(state: StageState, selected: boolean, nextRun: boolean): string | null {
+  if (!selected) return STAGE_STATE.skipped.label;
+  if (nextRun) return NEXT_RUN.label;
+  return TAGGED.has(state) ? STAGE_STATE[state].label : null;
+}
+
 /** What the runner has said about one stage of the shown run. */
 export interface StageFacts {
   planned: boolean;
@@ -368,7 +383,7 @@ export const TIP = {
   wireRate:
     "Wire rate\nPayload plus the protocol headers carried with it\nAn estimate; hover a result for its parts",
   keyShortcuts:
-    "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
+    "Keyboard shortcuts\nS, D, H, R and T act when no field has focus, and Esc stops a test\nTurn off if speech input triggers them",
   gaugeAuto: "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
   gaugeMax: "Maximum\nFixes the chart ceiling\nThe gauge rounds up to a 1, 2, 5 step",
   saveResults: `Save results\nKeeps the newest ${HISTORY_LIMIT.toLocaleString("en-US")} results in this browser\nNothing is uploaded`,

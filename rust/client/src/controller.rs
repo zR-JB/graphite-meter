@@ -4,7 +4,7 @@ use crate::{
     events::{Event, Events, SignInEnd, SignInPrompt},
     model::{Failure, Outcome},
     net::{
-        Client,
+        Client, Fault,
         approval::{self, Approval, Unapproved},
     },
     run::{
@@ -29,13 +29,6 @@ const GRACE: Duration = Duration::from_secs(5);
 /// Why a run without the interface does not sign in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "the server refused the approved sign-in; check its sign-in configuration";
-const INTERNAL: &str = "Internal error";
-
-/// A failure from a panic; `connection-lost` would send a server away for the client's own bug.
-pub fn internal() -> Failure {
-    Failure::new(FailureReason::PathFailed, INTERNAL)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Check(Config),
@@ -347,7 +340,7 @@ async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Futur
     if AssertUnwindSafe(work).catch_unwind().await.is_ok() {
         return;
     }
-    let (failure, elapsed) = (internal(), started.elapsed());
+    let (failure, elapsed) = (Fault::Internal.failure(), started.elapsed());
     events.send(match kind {
         Kind::Run => Event::RunFinished {
             outcome: Outcome::Failed,
@@ -415,7 +408,7 @@ mod tests {
                 (Kind::Check, Event::CheckFailed(failure)) => failure,
                 (_, event) => panic!("{event:?}"),
             };
-            assert_eq!(failure.text, INTERNAL);
+            assert_eq!(failure, Fault::Internal.failure());
         }
         guarded(&events, Kind::Run, Instant::now(), async {}).await;
         assert!(

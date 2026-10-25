@@ -9,7 +9,7 @@ import {
   shapedFleet,
   start,
 } from "./harness";
-import { closeSettings, openSettings } from "../fleet";
+import { choosePath, closeSettings, openSettings } from "../fleet";
 import { expect, test } from "../webview";
 
 test(
@@ -35,10 +35,7 @@ test(
       const running = await start(page, fleet);
       await reached(page, "download");
       const settings = await openSettings(page);
-      await settings
-        .getByRole("group", { name: "Throughput path" })
-        .getByRole("radio", { name: /^HTTP\/2/ })
-        .click();
+      await choosePath(settings, "Throughput path", /^HTTP\/2/);
       await settings.getByRole("button", { name: "Streams per direction, increase" }).click();
       await expect(settings).toContainText("Applies to the next test");
       await closeSettings(page);

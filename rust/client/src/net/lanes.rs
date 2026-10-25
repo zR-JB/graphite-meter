@@ -10,6 +10,7 @@ use crate::model::{Dir, Direction, Failure, LaneHealth, Stage};
 use bytes::Bytes;
 use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
+    lane::MAX_LANE_STREAMS,
     origin::Origin,
     refusal::Refusal,
     route::Route,
@@ -28,7 +29,6 @@ use tokio::{runtime::Handle, sync::watch, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
 const STREAM_BYTES: u64 = 64 << 20;
-const SESSION_LANES: usize = 16;
 /// The block an upload repeats; an attempt that handed on more than one moved bytes.
 const BLOCK_BYTES: usize = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
@@ -70,7 +70,7 @@ pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<G
             }
             (ThroughputTransport::FetchStream, Protocol::Http3) => (Carrier::Path, usize::MAX),
             (ThroughputTransport::FetchStream, _) => (Carrier::Dialed, 1),
-            _ => (Carrier::Session, SESSION_LANES),
+            _ => (Carrier::Session, MAX_LANE_STREAMS),
         };
         let count = lanes[direction];
         plans.extend((0..count).step_by(size).map(|first| GroupPlan {
@@ -192,7 +192,7 @@ impl Lanes {
             let fault = match ended {
                 Ok(Some(fault)) => fault,
                 Ok(None) => continue,
-                Err(_) => Fault::Lost,
+                Err(error) => error.into(),
             };
             self.failed.get_or_insert(fault);
         }
@@ -471,4 +471,30 @@ async fn send(
 fn cache_buster() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH);
     now.unwrap_or_default().as_nanos().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_lane_that_panics_fails_as_the_client_s_own_bug() {
+        let mut tasks = JoinSet::new();
+        tasks.spawn(async { panic!("a lane's bug") });
+        let mut lanes = Lanes {
+            tally: Arc::default(),
+            tasks,
+            count: 1,
+            failed: None,
+        };
+        let failed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match lanes.health() {
+                    LaneHealth::Failed(failure) => break failure,
+                    _ => tokio::task::yield_now().await,
+                }
+            }
+        });
+        assert_eq!(failed.await.unwrap(), Fault::Internal.failure());
+    }
 }

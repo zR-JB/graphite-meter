@@ -268,8 +268,6 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     );
   };
 
-  announceChanges(() => (servers.unresolved().length ? "The saved selection has changed." : ""));
-  announceChanges(() => (servers.catalog() || servers.loading() ? "" : servers.loadError()));
   return (
     <>
       <Show when={() => entries().length > 1}>

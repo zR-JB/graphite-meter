@@ -75,7 +75,7 @@ CONTEXT = {
         "REQUEST_RUN_ID": "github.event.workflow_run.id",
     },
     "run: python3 scripts/ci/release.py publish": {
-        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
+        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha", "DIGEST": "needs.verify.outputs.digest",
     },
     # What the approved job rechecks and publishes comes only from the verify job.
     "run: python3 scripts/ci/release.py recheck": {

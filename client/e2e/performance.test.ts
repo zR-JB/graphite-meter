@@ -383,3 +383,41 @@ test.chrome(
     await expect(tip).toHaveCount(0);
   },
 );
+
+// A link straight to Settings on a slow mobile network: the catalog and each server's check answer one by one.
+for (const [width, height] of [
+  [412, 823],
+  [1350, 940],
+] as const)
+  test.chrome(
+    `Settings opened by its link on a slow network arrives without moving, at ${width} px`,
+    async (page) => {
+      await page.setViewportSize({ width, height });
+      await page.cdp("Network.enable");
+      await page.cdp("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: 300,
+        downloadThroughput: 200_000,
+        uploadThroughput: 93_750,
+      });
+      await page.addInitScript(() => {
+        const shifts: number[] = ((window as any).shifts = []);
+        new PerformanceObserver((list) => {
+          for (const entry of list.getEntries() as (PerformanceEntry & {
+            value: number;
+            hadRecentInput: boolean;
+          })[])
+            if (!entry.hadRecentInput) shifts.push(entry.value);
+        }).observe({ type: "layout-shift", buffered: true });
+      });
+      await open(page, `${home.url}/#/settings`);
+      const settings = page.locator('dialog[aria-label="Settings"]');
+      await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(settings.locator(".server-preflight")).toHaveCount(4, { timeout: 30_000 });
+      await page.evaluate(settled);
+      const shifts: number[] = await page.evaluate(() => (window as any).shifts);
+      expect(shifts.reduce((sum, value) => sum + value, 0)).toBeLessThan(0.01);
+    },
+  );

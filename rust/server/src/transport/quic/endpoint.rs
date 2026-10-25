@@ -226,8 +226,8 @@ impl Udp {
     fn bind(address: SocketAddr, sockets: usize, runtime: &Handle) -> Result<Self, String> {
         let _entered = runtime.enter();
         let bound = graphite_meter_net::bind_udp(address, sockets);
-        let (socket, shortfall) =
-            bound.map_err(|error| could_not(&format!("listen on {address}/udp"), &error))?;
+        let (socket, shortfall) = bound
+            .map_err(|error| could_not(&format!("listen on {address}/udp (GM_H3_ADDR)"), &error))?;
         static WARNED: AtomicBool = AtomicBool::new(false);
         if let Some(shortfall) = shortfall.filter(|_| !WARNED.swap(true, Ordering::Relaxed)) {
             log!(

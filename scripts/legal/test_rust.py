@@ -7,7 +7,7 @@ import unittest
 import zlib
 from contextlib import suppress
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from typing import Any
 from unittest.mock import patch
 
@@ -163,24 +163,24 @@ class CollectorTests(Scratch):
         self.assertEqual(path.read_bytes(), b"changed")
 
     def test_arguments_select_a_shipped_build_inside_the_checkout(self) -> None:
-        out = str(ROOT / "rust/target/notices")
+        out, temporary = str(ROOT / "rust/target/notices"), Path(gettempdir())
         build, template = parse(["--package", "graphite-meter-client", "--target", "x86_64-pc-windows-gnu",
                                  "--out", out, "--version", "1.2.3"])
         self.assertEqual((build.target, build.profile, build.development, template),
                          ("x86_64-pc-windows-gnu", "release", False, False))
         build, _ = parse(["--package", "graphite-meter-server", "--development", "--profile", "ci", "--out", out,
-                          "--browser-assets", str(ROOT / "client/dist"), "--browser-scan", "/tmp/modules.json"])
+                          "--browser-assets", str(ROOT / "client/dist"), "--browser-scan", str(temporary / "modules.json")])
         self.assertTrue(build.development)
         for arguments in (
             ["--package", "graphite-meter-server", "--target", "x86_64-pc-windows-gnu", "--out", out,
-             "--browser-assets", "client/dist", "--browser-scan", "/tmp/scan.json"],
+             "--browser-assets", "client/dist", "--browser-scan", str(temporary / "scan.json")],
             ["--package", "graphite-meter-client", "--target", "x86_64-unknown-linux-musl", "--development",
              "--out", out],
             ["--package", "graphite-meter-client", "--development", "--out", out, "--version", "1.0 beta"],
             ["--package", "graphite-meter-server", "--development", "--out", out],
             ["--package", "graphite-meter-client", "--development", "--out", out, "--browser-assets", "client/dist",
-             "--browser-scan", "/tmp/scan.json"],
-            ["--package", "graphite-meter-client", "--development", "--out", "/tmp/notices"],
+             "--browser-scan", str(temporary / "scan.json")],
+            ["--package", "graphite-meter-client", "--development", "--out", str(temporary / "notices")],
             ["--package", "graphite-meter-client", "--development", "--devel", "--out", out],
         ):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit), \

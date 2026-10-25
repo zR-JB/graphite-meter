@@ -1,6 +1,7 @@
 //! The interface without a terminal: keys, pointer, events, signals and ticks in; frames, chrome, effects and exits out.
 use crossterm::event::{
-    Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
@@ -21,7 +22,7 @@ use graphite_meter_client::{
     status,
     style::Palette,
     text::Profile,
-    tui::{App, Effect},
+    tui::{App, Effect, chrome::Progress},
 };
 use graphite_meter_proto::{
     catalog::{ServerEntry, ServerId},
@@ -328,6 +329,74 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
 }
 
 #[test]
+fn only_an_address_out_of_reach_opens_the_address_and_another_cause_is_said_on_the_dial() {
+    let origin = Origin::parse("https://a.example").unwrap();
+    let failed = |text: &str, reason| {
+        let mut server = prepared_server("a", &origin);
+        server.path = Err(Failure::new(reason, text));
+        Event::Prepared {
+            servers: Arc::new([server]),
+            catalog: Arc::new([]),
+        }
+    };
+    let (mut app, now) = app();
+    app.event(&Event::Checking(Kind::Check), now);
+    app.event(
+        &failed(
+            "measurement capacity reached",
+            FailureReason::ServerCapacity,
+        ),
+        now,
+    );
+    let rows = frame(&mut app, now);
+    assert!(
+        !shows(&mut app, now, "Connect to a server")
+            && shows(&mut app, now, "A: server at capacity"),
+        "{rows:#?}"
+    );
+    assert!(rows.last().unwrap().starts_with("Could not start the test"));
+    let (mut app, now) = self::app();
+    app.event(&Event::Checking(Kind::Check), now);
+    app.event(
+        &failed(
+            graphite_meter_client::net::UNREACHABLE,
+            FailureReason::PathFailed,
+        ),
+        now,
+    );
+    assert!(
+        shows(&mut app, now, "Connect to a server") && shows(&mut app, now, "Could not reach A")
+    );
+    assert!(shows(
+        &mut app,
+        now,
+        "Check the address and that the server is running"
+    ));
+    for (reason, text) in [
+        (
+            FailureReason::PathFailed,
+            "explicit origins need a single test server",
+        ),
+        (
+            FailureReason::SignInRequired,
+            "Sign-in needs TLS verification",
+        ),
+    ] {
+        let (mut app, now) = self::app();
+        app.event(&Event::Checking(Kind::Check), now);
+        app.event(&Event::CheckFailed(Failure::new(reason, text)), now);
+        let rows = frame(&mut app, now);
+        assert!(
+            !shows(&mut app, now, "Connect to a server")
+                && shows(&mut app, now, &format!("meter.example: {}", &text[..20])),
+            "{rows:#?}"
+        );
+        press(&mut app, KeyCode::Char('d'), now);
+        assert!(shows(&mut app, now, text), "Details say it whole");
+    }
+}
+
+#[test]
 fn a_canceled_or_expired_sign_in_asks_again_on_the_next_start() {
     for (end, notice) in [
         (SignInEnd::Canceled, "Sign-in canceled"),
@@ -423,7 +492,48 @@ fn quitting_during_a_run_stops_it_first_and_ends_with_the_signal_s_status() {
 }
 
 #[test]
-fn esc_stops_a_run_at_once_and_quitting_after_one_reports_it() {
+fn a_held_run_key_never_stops_the_test_it_started_and_a_second_tap_does() {
+    let space = KeyCode::Char(' ');
+    let started = |now| {
+        let mut app = App::new(config(), None, (Profile::Plain, Palette::new(true)), now);
+        assert_matches!(command(&press(&mut app, space, now)), Command::Run(_));
+        app
+    };
+    let now = Instant::now();
+    let after = |ms: u64| now + Duration::from_millis(ms);
+    let mut app = started(now);
+    for at in (0..30).map(|repeat| after(1500 + 33 * repeat)) {
+        assert_eq!(press(&mut app, space, at), [], "a repeat of the held key");
+    }
+    assert_eq!(
+        command(&press(&mut app, space, after(1500 + 33 * 29 + 300))),
+        &Command::Stop
+    );
+
+    let mut app = started(now);
+    assert_eq!(
+        press(&mut app, space, after(700)),
+        [],
+        "a first tap reads as a repeat"
+    );
+    assert_eq!(
+        command(&press(&mut app, space, after(1400))),
+        &Command::Stop,
+        "a second tap stops"
+    );
+
+    let mut app = started(now);
+    let release = KeyEvent::new_with_kind(space, KeyModifiers::NONE, KeyEventKind::Release);
+    app.input(Input::Key(release), after(100));
+    assert_eq!(
+        command(&press(&mut app, space, after(200))),
+        &Command::Stop,
+        "a terminal that reports the release lets the next press stop at once"
+    );
+}
+
+#[test]
+fn esc_space_and_r_stop_a_run_after_esc_closes_a_sheet_and_quitting_reports_it() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
@@ -433,6 +543,49 @@ fn esc_stops_a_run_at_once_and_quitting_after_one_reports_it() {
         "one stop is asked for once"
     );
     assert!(frame(&mut app, now).last().unwrap().starts_with("Stopping"));
+    for key in [KeyCode::Char(' '), KeyCode::Char('r')] {
+        let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+        assert_eq!(
+            command(&press(&mut app, key, now)),
+            &Command::Stop,
+            "{key:?}"
+        );
+    }
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('d'), now);
+    assert_eq!(
+        press(&mut app, KeyCode::Esc, now),
+        [],
+        "esc closes Details first"
+    );
+    assert!(!shows(&mut app, now, "Details esc close"));
+    assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('s'), now);
+    assert_eq!(
+        command(&press(&mut app, KeyCode::Char('r'), now)),
+        &Command::Stop,
+        "r stops from Settings"
+    );
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('s'), now);
+    assert_eq!(
+        press(&mut app, KeyCode::Esc, now),
+        [],
+        "esc closes Settings first"
+    );
+    assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
+    let (mut app, now) = self::app();
+    app.event(&prepared(), now);
+    assert_matches!(
+        command(&press(&mut app, KeyCode::Char(' '), now)),
+        Command::Run(_)
+    );
+    assert_eq!(
+        command(&press(&mut app, KeyCode::Char(' '), now + SECOND * 2)),
+        &Command::Stop,
+        "space stops a test still checking its paths"
+    );
     for (signal, outcome, expected) in [
         (Some(TERMINATED), Outcome::Stopped, TERMINATED),
         (Some(INTERRUPTED), Outcome::Stopped, INTERRUPTED),
@@ -636,26 +789,7 @@ fn the_console_follows_a_download_and_takes_presses() {
         frame(&mut app, later)
     );
     assert!(shows(&mut app, later, "100.0 Mbit/s") && shows(&mut app, later, "Download 3.0"));
-    let rate = Rate {
-        mean: 12.5e6,
-        peak: 13e6,
-    };
-    let throughput = Dir {
-        down: Some(Throughput {
-            rate: Some(rate),
-            bytes: 125_000_000,
-        }),
-        up: None,
-    };
-    let result = StageResult {
-        stage: Stage::Download,
-        measured: SECOND * 10,
-        stopped: false,
-        throughput,
-        servers: Vec::new(),
-        failures: Vec::new(),
-    };
-    app.event(&Event::StageFinished(result), later);
+    app.event(&Event::StageFinished(result_of(Stage::Download)), later);
     app.event(&ended(Outcome::Complete), later);
     for fact in [
         "Peak 104.0 Mbit/s",
@@ -826,28 +960,34 @@ fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
     assert!(shows(&mut app, now, "Start test turn on a stage"));
 }
 
+#[test]
+fn the_progress_bar_counts_a_stage_that_ended_partial() {
+    let now = Instant::now();
+    let plan = [(Stage::Download, SECOND * 10), (Stage::Upload, SECOND * 10)];
+    let mut app = running(&["a", "b"], &plan, now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    let progress = |app: &mut App, at: Instant| app.draw(&mut Buffer::empty(FULL), at).progress;
+    assert_eq!(progress(&mut app, now + SECOND * 5), Progress::Share(25));
+    let failure = ServerFailure {
+        server: id("b"),
+        scope: Scope::Throughput,
+        failure: Failure::new(FailureReason::ConnectionLost, "Connection lost"),
+        at: now,
+    };
+    let later = now + SECOND * 10;
+    let result = StageResult {
+        failures: vec![failure],
+        ..result_of(Stage::Download)
+    };
+    app.event(&Event::StageFinished(result), later);
+    assert!(shows(&mut app, later, "Partial"));
+    assert_eq!(progress(&mut app, later), Progress::Share(50));
+}
+
 fn downloaded(now: Instant) -> App {
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     measuring(&mut app, Stage::Download, SECOND * 10, now);
-    let throughput = Dir {
-        down: Some(Throughput {
-            rate: Some(Rate {
-                mean: 12.5e6,
-                peak: 13e6,
-            }),
-            bytes: 125_000_000,
-        }),
-        up: None,
-    };
-    let result = StageResult {
-        stage: Stage::Download,
-        measured: SECOND * 10,
-        stopped: false,
-        throughput,
-        servers: Vec::new(),
-        failures: Vec::new(),
-    };
-    app.event(&Event::StageFinished(result), now);
+    app.event(&Event::StageFinished(result_of(Stage::Download)), now);
     app.event(&ended(Outcome::Complete), now);
     app
 }
@@ -921,18 +1061,18 @@ fn a_settings_change_during_a_run_is_checked_once_the_run_ends() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     press(&mut app, KeyCode::Char('s'), now);
-    for _ in 0..10 {
+    for _ in 0..13 {
         press(&mut app, KeyCode::Down, now);
     }
     assert!(
-        shows(&mut app, now, "Round trips during transfers"),
+        shows(&mut app, now, "On: transfers send no probes"),
         "{:#?}",
         frame(&mut app, now)
     );
     press(&mut app, KeyCode::Char(' '), now);
     assert_eq!(app.tick(now + REST), [], "a check would replace the run");
     app.event(&ended(Outcome::Complete), now + REST);
-    assert!(!checked(app.tick(now + REST)).loaded_latency);
+    assert!(!checked(app.tick(now + REST)).skip_loaded_latency);
 }
 
 #[test]
@@ -984,7 +1124,7 @@ fn the_settings_editor_applies_values_in_bounds_and_says_why_it_refuses_others()
         frame(&mut app, now)
     );
     assert_eq!(checked(app.tick(now + REST)).streams.auto, 3);
-    (0..4).for_each(|_| _ = press(&mut app, KeyCode::Up, now));
+    (0..5).for_each(|_| _ = press(&mut app, KeyCode::Up, now));
     press(&mut app, KeyCode::Enter, now);
     typed(&mut app, "5");
     assert!(

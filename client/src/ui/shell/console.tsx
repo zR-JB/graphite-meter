@@ -11,7 +11,7 @@ import { LegalDialog } from "../legal/legal";
 import { Announcements } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import type { Shell } from "./api";
-import { BINDINGS, RUN_CAP } from "./keys";
+import { BINDINGS, RUN_CAP, STOP_CAP } from "./keys";
 import { land } from "./land";
 import { createLayout } from "./layout";
 import type { Panel } from "./navigation";
@@ -32,11 +32,15 @@ export interface Views {
   connectivity(shell: Shell): Node;
 }
 
-// Moments that mark a result arriving play when it arrives; what the console mounts with shows settled.
-const SETTLES = new Set(["result-sweep", "pop", "grow-x"]);
-const finishSettled = (stage: HTMLElement) => {
-  for (const animation of stage.getAnimations({ subtree: true }))
-    if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName))
+// Mounting changes nothing, so its own CSS motion ends at once; a sheet the link opens, and the moves it makes, play.
+const settle = (frame: HTMLElement) => {
+  for (const animation of frame.getAnimations({ subtree: true }))
+    if (
+      (animation instanceof CSSAnimation || animation instanceof CSSTransition) &&
+      animation.timeline === document.timeline &&
+      Number.isFinite(animation.effect!.getComputedTiming().endTime) &&
+      !(animation.effect as KeyframeEffect).target!.closest(".sheet-layer")
+    )
       animation.finish();
 };
 
@@ -147,8 +151,8 @@ export function mountConsole(
       <LegalDialog open={ctl.legalOpen} invoker={ctl.legalInvoker} onClose={ctl.closeLegal} />,
     ]);
 
-    finishSettled(measurement);
-    nextFrame(() => finishSettled(measurement));
+    settle(frame);
+    nextFrame(() => settle(frame));
     ctl.start();
     onCleanup(markScrolled());
     return shell;
@@ -184,6 +188,18 @@ function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: ()
 function ShortcutHints(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const current = props.shell.runWord;
+  // Escape stops a run only with nothing open above the measurement; its cell stays laid out, so the strip never moves.
+  const stops = computed(() => {
+    const route = props.shell.route();
+    return (
+      app.run.running() &&
+      !app.run.preparing() &&
+      route.kind === "app" &&
+      route.workspace.kind === "measurement" &&
+      !route.panels.length &&
+      !route.legal
+    );
+  });
   return (
     <Show when={app.preferences.keyShortcuts}>
       {() => (
@@ -208,6 +224,10 @@ function ShortcutHints(props: { app: App; shell: Shell }): Node {
                 )}
               </Show>
             ))}
+          <span class="stop-hint" aria-hidden={() => (stops() ? undefined : "true")}>
+            <kbd>{STOP_CAP}</kbd>
+            {RUN_ACTION.stop}
+          </span>
         </div>
       )}
     </Show>

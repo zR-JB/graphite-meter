@@ -160,6 +160,7 @@ impl App {
             Action::Cancel => {
                 self.overlay = Overlay::None;
                 self.notify(Line::styled("Sign-in canceled", self.palette.muted));
+                self.stopping = self.running();
                 Effect::command(Command::Stop)
             }
             _ => Vec::new(),
