@@ -89,7 +89,9 @@ export function Dial(props: {
   // A stage's warmup already reads its stage, muted: the checked round trip, or the rate nothing counts yet.
   const warming = computed(() => phase() === "warmup" && run.running());
   // A stopped transfer stage keeps the rate it reached, muted, with Stopped under it.
-  const stopped = computed(() => phase() === "aborted" && live.rateStage() !== null);
+  const stopped = computed(
+    () => phase() === "aborted" && live.rateStage() !== null && live.endedIn() !== "warmup",
+  );
   const muted = computed(() => warming() || stopped());
   const reads = computed<string>(() => (muted() ? (run.stage() ?? phase()) : phase()));
   // What the needle points at: the round trip on the millisecond scale, the stage's own rate, or nothing.
@@ -306,7 +308,7 @@ export function Dial(props: {
   ) as HTMLElement;
   const headArt = head.querySelector("svg")!;
   cap.style.visibility = "hidden";
-  effect(() => needleLayer.classList.toggle("warming", muted()));
+  effect(() => needleLayer.classList.toggle("muted", muted()));
   // Between runs the needle keeps the hue it last showed; a finished run's latency takes its own.
   effect(() => {
     const stage =

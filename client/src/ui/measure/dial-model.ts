@@ -324,8 +324,8 @@ export class Needle {
   }
 }
 
-/** The note under a finished run that is not complete: the stage it lacks first, else the first cause in server
- *  order; a run that measured nothing names its cause, as every stage lacks a result. */
+/** The note under a finished run that is not complete: the stage it lacks first, else each cause once by reason; a run
+ *  that measured nothing names its causes, as every stage lacks a result. */
 export function endingHint(table: Grid): string {
   const { rows, columns, causes } = table;
   const first = causes[0];
@@ -340,13 +340,23 @@ export function endingHint(table: Grid): string {
   }
   const troubled = rows.filter((row) => row.causes.length);
   if (troubled.length > 1 && table.measured) return DIAL.troubled(troubled.length);
-  // Every cause once, one reason at a time: "Latency and Download: connection lost".
-  const reasons = Map.groupBy(causes, (cause) => reasonLabel(cause.reason));
-  return [...reasons.values()]
-    .map((group) =>
-      rows.length === 1
-        ? `${listed([...new Set(group.map(causePlace))])}: ${lower(reasonLabel(group[0]!.reason))}`
-        : `${listed([...new Set(group.map(({ serverId }) => rows.find((row) => row.server.id === serverId)!.server.name))])}: ${causeAt(...group)}`,
+  if (rows.length === 1) {
+    // One server: "Latency and Download: connection lost".
+    const reasons = Map.groupBy(causes, (cause) => reasonLabel(cause.reason));
+    return [...reasons.values()]
+      .map(
+        (group) =>
+          `${listed([...new Set(group.map(causePlace))])}: ${lower(reasonLabel(group[0]!.reason))}`,
+      )
+      .join("; ");
+  }
+  // Servers that lost the same places for one reason share a line: "Frankfurt and Oslo: connection lost in Download".
+  const own = Map.groupBy(causes, (cause) => `${cause.serverId} ${cause.reason}`).values();
+  const lines = Map.groupBy(own, (group) => causeAt(...group));
+  const name = (id: string) => rows.find((row) => row.server.id === id)!.server.name;
+  return [...lines]
+    .map(
+      ([where, groups]) => `${listed(groups.map((group) => name(group[0]!.serverId)))}: ${where}`,
     )
     .join("; ");
 }

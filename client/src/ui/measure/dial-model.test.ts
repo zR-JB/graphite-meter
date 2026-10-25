@@ -257,7 +257,7 @@ function judged(
   return { rows, columns, outcome, measured, causes: rows.flatMap((row) => row.causes) };
 }
 
-test("a run short of complete names what it lacks first, then the first cause in server order", () => {
+test("a run short of complete names what it lacks first, then each cause once", () => {
   const lost = { stage: "download", reason: "connection-lost" } as const;
   const cases: [string, Grid, string][] = [
     [
@@ -293,7 +293,7 @@ test("a run short of complete names what it lacks first, then the first cause in
         Frankfurt: { cells: { download: "partial" }, causes: [{ ...lost, reason: "timeout" }] },
         Oslo: { cells: { download: "partial" }, causes: [lost] },
       }),
-      "2 servers with issues, each marked on its card",
+      "2 servers with issues",
     ],
     [
       "one server alone",
@@ -343,6 +343,31 @@ test("a run short of complete names what it lacks first, then the first cause in
         Oslo: { cells: { download: "failed", upload: "unreached" }, causes: [lost] },
       }),
       "Frankfurt and Oslo: connection lost in Download",
+    ],
+    [
+      "nothing measured, lost in different places",
+      judged("incomplete", {
+        Frankfurt: {
+          cells: { latency: "failed", download: "unreached" },
+          causes: [{ stage: "start", reason: "connection-lost" }],
+        },
+        Oslo: {
+          cells: { latency: "failed", download: "unreached" },
+          causes: [{ stage: "latency", reason: "connection-lost", scope: "latency" }],
+        },
+      }),
+      "Frankfurt: connection lost at Start; Oslo: connection lost in Latency",
+    ],
+    [
+      "nothing measured, for two reasons",
+      judged("incomplete", {
+        Frankfurt: { cells: { download: "failed", upload: "unreached" }, causes: [lost] },
+        Oslo: {
+          cells: { download: "failed", upload: "unreached" },
+          causes: [{ ...lost, reason: "timeout" }],
+        },
+      }),
+      "Frankfurt: connection lost in Download; Oslo: stopped delivering data in Download",
     ],
   ];
   for (const [name, table, hint] of cases) expect(endingHint(table), name).toBe(hint);

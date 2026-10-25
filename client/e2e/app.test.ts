@@ -190,7 +190,7 @@ test("the page requires Trusted Types and refuses script it did not make", async
   page.errors.length = 0;
 });
 
-test("stopping during download freezes elapsed time and a rerun completes", async (page) => {
+test("stopping during download freezes elapsed time, and a rerun starts afresh and completes", async (page) => {
   await open(page, home.url, {
     config: {
       stages: { ...downloadOnly.stages, latency: true },
@@ -214,6 +214,12 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
       await new Promise((resolve) => requestAnimationFrame(resolve));
   });
   expect(await elapsed.textContent()).toBe(frozen);
+  // A rerun leaves the stopped rate behind: stopped again in Latency, the dial holds no figure.
+  await runButton(page, /^(Start test|Run again)$/).click();
+  await expect(phase(page, "latency")).toHaveCount(1, { timeout: 10_000 });
+  await runButton(page, "Stop test").click();
+  await expect(phase(page, "aborted")).toHaveCount(1);
+  await expect(page.locator(".gauge-value")).toHaveText(/^\D*$/);
   const saved = await run(page);
   expect(saved.result.outcome).toBe("complete");
 });

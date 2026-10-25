@@ -181,14 +181,14 @@
     & circle {
       fill: var(--accent, var(--text-soft));
     }
-    /* A warmup's reading is shown, not counted: its hue faded toward the page until the window opens; opaque, so overlaps paint as one. */
-    &.warming path {
+    /* A warmup's or a stopped stage's reading is shown, not counted: its hue faded toward the page; opaque, so overlaps paint as one. */
+    &.muted path {
       stroke: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
-    &.warming circle {
+    &.muted circle {
       fill: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
-    &.warming .ripple {
+    &.muted .ripple {
       border-color: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
     & .ripple {
