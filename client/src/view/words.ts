@@ -52,6 +52,7 @@ export const STAGE = {
 /** What the run is doing, as the status bar and the dial say it; a finished run reads its outcome. */
 export const PHASE = {
   idle: "Not started",
+  waiting: "Waiting for another tab",
   authenticating: "Checking sign-in",
   connecting: "Checking paths",
   blocked: "Test cannot start",
@@ -95,6 +96,7 @@ export function statusLabel(
 ): string {
   if (preparation === "blocked") return PHASE.blocked;
   if (preparation === "failed") return PHASE["start-failed"];
+  if (preparation === "waiting") return PHASE.waiting;
   if (preparation === "authenticating") return PHASE.authenticating;
   if (preparation === "checking" || preparation === "launching") return PHASE.connecting;
   if (phase === "complete") return OUTCOME[outcome ?? "complete"].label;

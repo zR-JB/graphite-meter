@@ -70,6 +70,7 @@ interface RunEnvironment {
     focus: string;
     release(): void;
   }>;
+  lock(signal: AbortSignal, queued: () => void): Promise<() => void>;
   /** Whether a run of `totalMs` still fits the sign-in; a live change that lengthens the test must. */
   fits(totalMs: number): boolean;
   /** A server failed during the run, or with null the whole run did: a path that failed is checked again. */
@@ -84,6 +85,7 @@ interface RunEnvironment {
 
 export type Preparation =
   | "idle"
+  | "waiting"
   | "authenticating"
   | "checking"
   | "launching"
@@ -157,6 +159,7 @@ export function createRun(env: RunEnvironment) {
   let spanMs = 0;
 
   const running = computed(() => !["idle", "complete", "aborted", "error"].includes(phase()));
+  const queued = computed(() => preparation() === "waiting");
   const preparing = computed(() =>
     ["authenticating", "checking", "launching"].includes(preparation()),
   );
@@ -318,7 +321,19 @@ export function createRun(env: RunEnvironment) {
     release = unsubscribe;
   }
 
-  async function launch(config: TestConfig, signal: AbortSignal): Promise<void> {
+  async function launch(signal: AbortSignal): Promise<void> {
+    const unlock = await env.lock(signal, () => preparation.set("waiting"));
+    try {
+      signal.throwIfAborted();
+      preparation.set("authenticating");
+      await begin(structuredClone(preferences.config.peek()), signal, unlock);
+    } catch (error) {
+      unlock();
+      throw error;
+    }
+  }
+
+  async function begin(config: TestConfig, signal: AbortSignal, unlock: () => void): Promise<void> {
     await env.authorize(
       totalMs(adaptWarmup(config, LONGEST_WARMUP_RTT_MS)) + SESSION_MARGIN_MS,
       signal,
@@ -388,6 +403,7 @@ export function createRun(env: RunEnvironment) {
     release = () => {
       unfollow();
       ready.release();
+      unlock();
     };
     next.start();
   }
@@ -415,7 +431,7 @@ export function createRun(env: RunEnvironment) {
       preparation.set("authenticating");
     });
     const current = () => pending === task;
-    launch(structuredClone(preferences.config.peek()), task.signal)
+    launch(task.signal)
       .catch((cause) => {
         if (!current() || (cause instanceof DOMException && cause.name === "AbortError")) return;
         batch(() => {
@@ -515,7 +531,7 @@ export function createRun(env: RunEnvironment) {
       spanMs = totalMs(current.plan);
     }
     // A change to what Start would run lapses a refused or failed start; the gauge alone leaves it be.
-    if (keys.some((key) => key !== "visualization")) cancel();
+    if (keys.some((key) => key !== "visualization") && !queued.peek()) cancel();
     preferences.set({ config: { ...preferences.config.peek(), ...patch } });
     return true;
   }
@@ -581,6 +597,7 @@ export function createRun(env: RunEnvironment) {
     prepared: prepared as Read<readonly PreparedServer[]>,
     running,
     preparing,
+    queued: queued as Read<boolean>,
     canToggle,
     upcoming: upcoming as Read<TestConfig>,
     waiting: waiting as Read<Partial<TestConfig>>,

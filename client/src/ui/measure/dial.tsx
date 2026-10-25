@@ -232,6 +232,8 @@ export function Dial(props: {
       const ended = ending();
       if (run.preparing())
         return { status: statusLabel(live.preparation(), phase(), undefined), tone: "preparation" };
+      if (live.preparation() === "waiting")
+        return { status: PHASE.waiting, tone: "preparation", hint: DIAL.otherTab };
       if (refused) return { status: refused.status, tone: "error", hint: refused.detail };
       if (ended) return { status: ended.status, tone: ended.tone, hint: ended.hint };
       const quiet = run.live()?.quietMs;
@@ -245,11 +247,12 @@ export function Dial(props: {
     (view) => `${view.status}|${view.tip ?? view.hint}`,
     (leaving) => (leaving.status || leaving.hint ? HANDOFF_OUT_MS : 0),
   );
-  // Preparation speaks only through its outcome; the cards announce a completed run.
+  // Preparation speaks only through its outcome or its wait; the cards announce a completed run.
   announceChanges(() => {
     const refused = refusal();
     const ended = ending();
     if (refused) return [refused.status, refused.detail].filter(Boolean).join(": ");
+    if (live.preparation() === "waiting") return `${PHASE.waiting}: ${DIAL.otherTab}`;
     if (ended) return [ended.status, ended.hint].filter(Boolean).join(": ");
     const now = phase();
     if (run.preparing() || now === "idle" || now === "connecting" || now === "complete") return "";
