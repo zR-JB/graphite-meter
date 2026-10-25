@@ -377,6 +377,7 @@ export function createShell(app: App, layout: Layout) {
       flyout: flyout.peek(),
       pending: app.run.preparing.peek(),
       running: app.run.running.peek(),
+      modified: event.metaKey || event.ctrlKey || event.altKey || event.shiftKey,
     });
     if (!order) return;
     event.preventDefault();

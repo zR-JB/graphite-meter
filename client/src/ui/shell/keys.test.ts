@@ -14,6 +14,7 @@ const idle: KeyFacts = {
   flyout: false,
   pending: false,
   running: false,
+  modified: false,
 };
 
 test("Escape closes the topmost surface it reaches, and stops a run only when none is left", () => {
@@ -56,6 +57,7 @@ test("Escape closes the topmost surface it reaches, and stops a run only when no
     ],
     [{ running: true, editable: true }, null],
     [{ running: true, shortcuts: false }, null],
+    [{ running: true, modified: true }, null],
     [{ workspace: "history", running: true }, { kind: "close-history" }],
     [{}, null],
   ] as const)

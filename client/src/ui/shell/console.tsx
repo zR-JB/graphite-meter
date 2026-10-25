@@ -189,6 +189,7 @@ function ShortcutHints(props: { app: App; shell: Shell }): Node {
     const route = props.shell.route();
     return (
       app.run.running() &&
+      !app.run.preparing() &&
       route.kind === "app" &&
       route.workspace.kind === "measurement" &&
       !route.panels.length &&

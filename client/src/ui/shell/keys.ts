@@ -17,6 +17,8 @@ export interface KeyFacts {
   flyout: boolean;
   pending: boolean;
   running: boolean;
+  /** A modifier is held, which only ever dismisses. */
+  modified: boolean;
 }
 
 export type Command =
@@ -104,5 +106,5 @@ function dismiss(facts: KeyFacts): Command | null {
   if (facts.workspace !== "measurement") return null;
   if (last) return { kind: "close", panel: last };
   if (facts.pending) return { kind: "cancel-start" };
-  return facts.running && facts.shortcuts ? { kind: "stop" } : null;
+  return facts.running && facts.shortcuts && !facts.modified ? { kind: "stop" } : null;
 }
