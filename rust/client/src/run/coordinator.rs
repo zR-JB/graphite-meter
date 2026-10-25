@@ -30,9 +30,6 @@ use std::{
 use tokio::{task::JoinHandle, time::sleep_until};
 use tokio_util::sync::{CancellationToken, DropGuard};
 
-/// How long a stage's upload sessions may take to finish, and a stopped stage's.
-const FINISH: Duration = Duration::from_secs(10);
-const STOPPED_FINISH: Duration = Duration::from_secs(1);
 const NO_SURVIVORS: &str = "All selected test servers failed";
 
 struct Seat<'a> {
@@ -202,7 +199,7 @@ impl<'a> Seat<'a> {
 }
 
 impl Run<'_> {
-    /// `stage` over `seats` for `duration`; a stop finishes it as stopped.
+    /// `stage` over `seats` for `duration`; a stop in its window finishes it as stopped.
     async fn stage(&self, stage: Stage, duration: Duration, seats: &[&Seat<'_>]) -> StageResult {
         let config = self.config;
         let members = seats.iter().map(|seat| Member {
@@ -255,17 +252,7 @@ impl Run<'_> {
             }
             None => live.engine.stop(Instant::now()),
         }
-        let budget = if self.token.is_cancelled() {
-            STOPPED_FINISH
-        } else {
-            FINISH
-        };
-        join_all(
-            live.participants
-                .into_iter()
-                .map(|member| member.finish(budget)),
-        )
-        .await;
+        join_all(live.participants.into_iter().map(Participant::finish)).await;
         live.engine.result()
     }
 
@@ -369,9 +356,7 @@ impl Live<'_> {
                 Decision::Checkpoint(budget) => self.checkpoint = Some(budget),
                 Decision::CloseWindow => {
                     closed = true;
-                    participants
-                        .iter_mut()
-                        .for_each(|member| member.close(FINISH));
+                    participants.iter_mut().for_each(Participant::close);
                 }
                 Decision::Failed(failure) => {
                     let index = participants
@@ -565,14 +550,14 @@ impl Participant {
         }
     }
 
-    /// The window closed: downloads stop, the upload session finishes within `budget` and the prober drains.
-    fn close(&mut self, budget: Duration) {
+    /// The window closed: downloads stop, the upload session finishes and the prober drains.
+    fn close(&mut self) {
         self.down = None;
         if let Some(prober) = &self.prober {
             prober.close();
         }
         if let Some(up) = self.up.take() {
-            self.finishing = Some(tokio::spawn(up.finish(budget)));
+            self.finishing = Some(tokio::spawn(up.finish()));
         }
     }
 
@@ -587,11 +572,11 @@ impl Participant {
         }
     }
 
-    /// Closes it if the window did not, and waits up to `budget` for its upload session to finish.
-    async fn finish(mut self, budget: Duration) {
-        self.close(budget);
+    /// Closes it if the window did not, and waits for its upload session to finish.
+    async fn finish(mut self) {
+        self.close();
         if let Some(finishing) = self.finishing.take() {
-            let _ = tokio::time::timeout(budget, finishing).await;
+            let _ = finishing.await;
         }
     }
 }
