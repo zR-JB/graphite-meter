@@ -726,7 +726,7 @@ mod terms_tests {
         let floor = quic::noq_floor(&config(&totals).limits).unwrap();
         assert_eq!(
             floor >> 10,
-            981,
+            984,
             "noq's stream floor for 324 request streams, without HTTP/3's state"
         );
     }
