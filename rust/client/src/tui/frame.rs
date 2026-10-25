@@ -554,17 +554,11 @@ impl App {
                 Line::default(),
             ],
             (None, Some(text)) => {
-                let said = match text == crate::net::UNREACHABLE {
-                    true => warn(format!("Could not reach {host}")),
-                    false => warn(format!("{host}: {text}")),
+                let next = match self.address_failed() {
+                    true => "Check the address and that the server is running; Enter tries again.",
+                    false => "Enter tries again.",
                 };
-                [
-                    said,
-                    Line::styled(
-                        "Check the address and that the server is running; Enter tries again.",
-                        palette.muted,
-                    ),
-                ]
+                [warn(text), Line::styled(next, palette.muted)]
             }
             (None, None) => [Line::default(), Line::default()],
         };
@@ -784,10 +778,10 @@ impl App {
         if self.view.servers.is_empty() {
             entries.push(Entry::Heading("Server".into()));
             entries.push(item("Server address", address));
-            entries.push(Entry::Text(Line::styled(
-                "Its test servers show here once it answers.",
-                palette.muted,
-            )));
+            entries.push(Entry::Text(match &self.view.check {
+                Check::Failed(failure) => Line::styled(&failure.text, palette.warn),
+                _ => Line::styled("Its test servers show here once it answers.", palette.muted),
+            }));
         }
         if let Some(run) = self.view.run.as_ref().filter(|run| !run.issues.is_empty()) {
             entries.push(Entry::Heading("Issues".into()));

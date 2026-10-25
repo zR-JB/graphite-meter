@@ -287,7 +287,7 @@ impl App {
                         Line::styled("Ready  ", self.palette.ok).and(ready, self.palette.text),
                     );
                 }
-                if current && !self.running() && servers.iter().all(|server| server.path.is_err()) {
+                if current && !self.running() && self.address_failed() {
                     self.unreachable();
                 }
                 if prepared && self.remembering && self.config.url != self.kept {
@@ -303,7 +303,7 @@ impl App {
             Event::CheckFailed(_) => {
                 self.setup.chooser = false;
                 // A sign-in that lapsed leaves the address as it is; a server that could not be reached opens it.
-                if !self.running() && matches!(self.view.check, Check::Failed(_)) {
+                if !self.running() && self.address_failed() {
                     self.unreachable();
                 }
             }
@@ -358,7 +358,7 @@ impl App {
         Vec::new()
     }
 
-    /// Opens the address again after its check found no server to run with, unless something else is open.
+    /// Opens the address again when it is to blame, unless something else is open.
     fn unreachable(&mut self) {
         if matches!(self.overlay, Overlay::None) && self.config.url.is_some() {
             self.ask_for_server();
