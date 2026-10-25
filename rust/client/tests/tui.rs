@@ -5,7 +5,7 @@ use crossterm::event::{
 };
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
-    config::{self, Config},
+    config::{self, Config, PathChoice},
     controller::{Command, Kind},
     events::{Event, Probed, SignInEnd, SignInPrompt},
     measure::{
@@ -26,7 +26,7 @@ use graphite_meter_client::{
 };
 use graphite_meter_proto::{
     catalog::{ServerEntry, ServerId},
-    discovery::{IpFamily, Protocol, ThroughputTransport},
+    discovery::{IpFamily, LatencyTransport, Protocol, ThroughputTransport},
     origin::{BaseUrl, Origin},
     reason::FailureReason,
 };
@@ -284,6 +284,71 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
     let config = checked(app.tick(now + REST));
     let ids: Vec<_> = config.servers.iter().map(ServerId::as_str).collect();
     assert_eq!(ids, ["a", "b", "c", "d"]);
+}
+
+#[test]
+fn explicit_origins_stay_only_while_the_one_checked_server_stays_selected() {
+    let origin = Origin::parse("https://a.example:8443").ok();
+    let explicit = PathChoice {
+        throughput_origin: origin.clone(),
+        protocol: Some(Protocol::Http2),
+        throughput_transport: Some(ThroughputTransport::FetchStream),
+        latency_origin: origin,
+        latency_transport: Some(LatencyTransport::WebSocket),
+    };
+    let automatic = PathChoice {
+        throughput_origin: None,
+        latency_origin: None,
+        ..explicit
+    };
+    let chooser = [
+        KeyCode::Char('s'),
+        KeyCode::Down,
+        KeyCode::Down,
+        KeyCode::Enter,
+    ];
+    let (space, down, enter) = (KeyCode::Char(' '), KeyCode::Down, KeyCode::Enter);
+    let mut address = vec![KeyCode::Char('s'), KeyCode::Enter];
+    address.extend([KeyCode::Backspace; 40]);
+    address.extend("other.example".chars().map(KeyCode::Char));
+    address.push(KeyCode::Enter);
+    for (keys, servers, paths) in [
+        ([&chooser[..], &[enter]].concat(), vec![id("a")], &explicit),
+        (
+            [&chooser[..], &[space, enter]].concat(),
+            Vec::new(),
+            &automatic,
+        ),
+        (
+            [&chooser[..], &[down, space, enter]].concat(),
+            vec![id("a"), id("b")],
+            &automatic,
+        ),
+        (
+            [&chooser[..], &[space, down, space, enter]].concat(),
+            vec![id("b")],
+            &automatic,
+        ),
+        (address, Vec::new(), &automatic),
+    ] {
+        let now = Instant::now();
+        let config = Config {
+            paths: explicit.clone(),
+            ..config()
+        };
+        let mut app = App::new(config, None, (Profile::Plain, Palette::new(true)), now);
+        app.tick(now);
+        app.event(&prepared(), now);
+        for code in &keys {
+            press(&mut app, *code, now);
+        }
+        let checked = checked(app.tick(now + REST));
+        assert_eq!(
+            (&checked.servers, &checked.paths),
+            (&servers, paths),
+            "{keys:?}"
+        );
+    }
 }
 
 #[test]
