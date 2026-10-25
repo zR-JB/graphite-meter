@@ -71,11 +71,7 @@ test.chrome(
       await fleet.close();
     }
   },
-  {
-    timeout: 120_000,
-    failing:
-      "until step 11: the upload reuses the download's QUIC connection, whose Cubic left slow start",
-  },
+  { timeout: 120_000 },
 );
 
 budgetTest("the HTTP/3 runs", pages);

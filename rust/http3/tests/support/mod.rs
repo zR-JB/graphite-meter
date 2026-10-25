@@ -139,11 +139,13 @@ pub async fn pair(setup: Setup) -> Result<Peers, TestError> {
     })
 }
 
-/// The server of these peers runs the layer. `stop` shuts it down, and `outcomes` carries what handlers report.
+/// The server of these peers runs the layer. `stop` shuts it down, `retire` retires it, and `outcomes` carries what
+/// handlers report.
 pub struct Served<T = ()> {
     pub peers: Peers,
     pub serving: Task,
     pub stop: Arc<Notify>,
+    pub retire: Arc<Notify>,
     pub outcomes: mpsc::UnboundedReceiver<T>,
 }
 
@@ -154,12 +156,18 @@ impl Peers {
         F: Future<Output = ()> + Send + 'static,
     {
         let connection = server::Connection::new(self.server.clone(), Some(self.budget.clone()));
-        let stop = Arc::new(Notify::new());
-        let serving = tokio::spawn(serve(connection, Arc::new(handler), stop.clone()));
+        let (stop, retire) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let serving = tokio::spawn(serve(
+            connection,
+            Arc::new(handler),
+            stop.clone(),
+            retire.clone(),
+        ));
         Served {
             peers: self,
             serving,
             stop,
+            retire,
             outcomes: mpsc::unbounded_channel().1,
         }
     }
@@ -175,6 +183,7 @@ impl Peers {
             peers,
             serving,
             stop,
+            retire,
             ..
         } = self.serve(move |request, stream| {
             let (scenario, outcomes) = (scenario.clone(), outcomes.clone());
@@ -190,6 +199,7 @@ impl Peers {
             peers,
             serving,
             stop,
+            retire,
             outcomes: outcome,
         }
     }
@@ -223,6 +233,7 @@ async fn serve<F, H>(
     mut connection: server::Connection,
     handler: Arc<H>,
     stop: Arc<Notify>,
+    retire: Arc<Notify>,
 ) -> Result<(), Error>
 where
     H: Fn(http::Request<()>, RequestStream) -> F + Send + Sync + 'static,
@@ -233,6 +244,10 @@ where
             request = connection.next() => request?,
             () = stop.notified() => {
                 connection.shutdown(4, "shutdown");
+                continue;
+            }
+            () = retire.notified() => {
+                connection.retire();
                 continue;
             }
         };
