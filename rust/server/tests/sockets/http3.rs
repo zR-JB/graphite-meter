@@ -173,6 +173,19 @@ pub(super) async fn pass(mut duration: Duration) {
 const CANCELLED: Error = Error::Reset(Code::H3_REQUEST_CANCELLED);
 
 #[tokio::test]
+async fn the_companion_points_at_the_public_port_of_a_remapped_listener() {
+    let h3 = H3::start(&[("GM_H3_PUBLIC_ORIGIN", "https://localhost:17249")]).await;
+    let connector = TlsConnector::from(Arc::new(h3.identity.client(&[b"http/1.1"])));
+    let socket = TcpStream::connect(h3.server.companion.unwrap())
+        .await
+        .unwrap();
+    let name = ServerName::try_from("localhost").unwrap();
+    let tls = connector.connect(name, socket).await.unwrap();
+    let probe = Client::new(tls).request("GET /probe", "").await;
+    assert_eq!(probe.header("alt-svc"), Some("h3=\":17249\""));
+}
+
+#[tokio::test]
 async fn the_companion_points_every_answer_at_http3_and_refuses_transfers_readably() {
     let h3 = H3::start(&[]).await;
     let (companion, port) = (h3.server.companion.unwrap(), h3.server.quic.unwrap().port());
