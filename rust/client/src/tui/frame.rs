@@ -351,7 +351,7 @@ impl App {
         let width = if area.width < 96 {
             area.width
         } else {
-            (area.width * 2 / 5).clamp(56, 80)
+            (area.width * 2 / 5).clamp(60, 80)
         };
         let sheet = Rect::new(area.right() - width, area.y, width, area.height);
         canvas.clear(sheet);

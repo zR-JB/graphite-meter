@@ -22,10 +22,10 @@ pub enum Row {
     Protocol,
     Latency,
     Stage(Stage),
-    LoadedLatency,
     Warmup,
     IdleCadence,
     LoadedCadence,
+    SkipLoadedLatency,
     ForceStreams,
     Streams,
     Insecure,
@@ -47,11 +47,12 @@ const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
     (None, Row::Stage(Stage::Download), "Download", "Server to client."),
     (None, Row::Stage(Stage::Upload), "Upload", "Client to server, timed by the server as it receives."),
     (None, Row::Stage(Stage::Bidirectional), "Bidirectional", "Download and upload at once."),
-    (None, Row::LoadedLatency, "Loaded latency", "Round trips during transfers: the latency the load adds."),
     (Some("Advanced"), Row::Warmup, "Warmup", "Opens the connections before each stage; at least 10 round trips"),
     (None, Row::IdleCadence, "Idle probe interval",
         "How often idle latency is probed: on each reply, or at a fixed interval."),
     (None, Row::LoadedCadence, "Loaded probe interval", "How often latency is probed during transfers."),
+    (None, Row::SkipLoadedLatency, "Skip loaded latency if the Latency stage is off",
+        "On: transfers send no probes while the Latency stage is off. With that stage on, they always measure the latency the load adds."),
     (None, Row::ForceStreams, "Exact stream count", "Off: each path picks its own. On: the count below everywhere."),
     (None, Row::Streams, "HTTP/1.1 stream limit", "The most HTTP/1.1 streams per direction."),
     (None, Row::Insecure, "Skip TLS verification", "Accepts any certificate. Unsafe, and sign-in is refused."),
@@ -108,7 +109,7 @@ impl App {
     pub(super) fn flag(&self, row: Row) -> Option<bool> {
         match row {
             Row::Stage(stage) => Some(self.config.stages.contains(&stage)),
-            Row::LoadedLatency => Some(self.config.loaded_latency),
+            Row::SkipLoadedLatency => Some(self.config.skip_loaded_latency),
             Row::ForceStreams => Some(self.config.streams.forced.is_some()),
             Row::Insecure => Some(self.config.insecure),
             Row::Remember => Some(self.remembering),
@@ -157,9 +158,11 @@ impl App {
             {
                 return Line::styled("Enter again resets", palette.warn);
             }
-            Row::Remember | Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => {
-                String::new()
-            }
+            Row::Remember
+            | Row::SkipLoadedLatency
+            | Row::ForceStreams
+            | Row::Insecure
+            | Row::Reset => String::new(),
         };
         let style = if inert { palette.muted } else { palette.value };
         match self.flag(row) {
@@ -239,7 +242,7 @@ impl App {
                 );
             }
             Row::Streams => help.push_str(&format!(" ←→ ±1, from 1 to {MAX_STREAMS}.")),
-            Row::LoadedLatency | Row::Insecure | Row::ForceStreams => {
+            Row::SkipLoadedLatency | Row::Insecure | Row::ForceStreams => {
                 help.push_str(" Space switches it.");
             }
             _ => {}

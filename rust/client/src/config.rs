@@ -41,7 +41,7 @@ pub struct Config {
     pub streams: Streams,
     pub ping: Cadence,
     pub loaded_ping: Cadence,
-    pub loaded_latency: bool,
+    pub skip_loaded_latency: bool,
     pub insecure: bool,
     pub report: bool,
 }
@@ -105,7 +105,7 @@ impl Default for Config {
             },
             ping: CADENCES[0].1,
             loaded_ping: CADENCES[2].1,
-            loaded_latency: true,
+            skip_loaded_latency: true,
             insecure: false,
             report: false,
         }
@@ -145,7 +145,11 @@ impl Config {
             .stages
             .iter()
             .any(|stage| !stage.directions().is_empty());
-        self.stages.contains(&Stage::Latency) || self.loaded_latency && transfers
+        self.stages.contains(&Stage::Latency) || self.loaded_latency() && transfers
+    }
+
+    pub fn loaded_latency(&self) -> bool {
+        self.stages.contains(&Stage::Latency) || !self.skip_loaded_latency
     }
 
     /// Whether a stage uploads, which takes receiver checkpoints.
@@ -547,8 +551,6 @@ const FLAGS: [Flag<Flags>; 22] = [
         |f| f.config.paths.latency_transport.map_or("auto", LatencyTransport::name).into()),
     row!("legal", "", "Print the licenses of the bundled software and exit",
         |f, v| f.legal = flag::parse_bool(v)?, |f| f.legal.to_string()),
-    row!("loaded-latency", "", "Measure latency while transfer stages are loaded",
-        |f, v| f.config.loaded_latency = flag::parse_bool(v)?, |f| f.config.loaded_latency.to_string()),
     row!("loaded-ping", "cadence", "Loaded probe interval: reply-driven, fast, medium, slow or a duration from \
         80ms to 15s", |f, v| f.config.loaded_ping = cadence(v)?, |f| cadence_name(f.config.loaded_ping)),
     row!("ping", "cadence", "Idle probe interval: reply-driven, fast, medium, slow or a duration from 80ms to \
@@ -558,6 +560,8 @@ const FLAGS: [Flag<Flags>; 22] = [
         |f, v| f.config.report = flag::parse_bool(v)?, |f| f.config.report.to_string()),
     row!("server", "id", "Test server ID from the server catalog; repeat for up to 4 (default: its default selection)",
         |f, v| server(&mut f.config.servers, v)?, |_f| String::new()),
+    row!("skip-loaded-latency", "", "Skip loaded latency if the Latency stage is off",
+        |f, v| f.config.skip_loaded_latency = flag::parse_bool(v)?, |f| f.config.skip_loaded_latency.to_string()),
     row!("stages", "list", "Comma-separated stages: latency (ping), download (down), upload (up) or bidirectional \
         (bidi)", |f, v| f.config.stages = stages(v)?,
         |f| f.config.stages.iter().map(|stage| stage.name()).collect::<Vec<_>>().join(",")),
@@ -628,6 +632,23 @@ mod tests {
             run("-url meter.example").unwrap().url,
             Origin::parse("https://meter.example").ok()
         );
+    }
+
+    #[test]
+    fn transfers_skip_loaded_latency_only_while_the_latency_stage_is_off() {
+        for (args, loaded, probes) in [
+            ("-stages down", false, false),
+            ("-stages down -skip-loaded-latency=false", true, true),
+            ("-stages ping,down", true, true),
+            ("-stages ping -skip-loaded-latency=false", true, true),
+        ] {
+            let config = run(args).unwrap();
+            assert_eq!(
+                (config.loaded_latency(), config.probes()),
+                (loaded, probes),
+                "{args}"
+            );
+        }
     }
 
     #[test]

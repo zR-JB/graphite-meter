@@ -83,8 +83,8 @@ def train(target: str, profile: str, runner: list[str]) -> Path:
     client = wrapped(binaries["graphite-meter-client"], runner, fixture.directory)
     with fixture.server(server_binary, "train") as server:
         for listener, direction in TRAINING:
-            transfer(client, server, listener, direction, "--loaded-latency=true")
-        transfer(client, server, "http3", "download", "--loaded-latency=true", "--loaded-ping", "reply-driven",
+            transfer(client, server, listener, direction, "--skip-loaded-latency=false")
+        transfer(client, server, "http3", "download", "--skip-loaded-latency=false", "--loaded-ping", "reply-driven",
                  "--latency-transport", "webtransport", "--latency-origin", server.origin("http3"))
     recorded = sorted(raw.glob("*.profraw"))
     if not recorded:

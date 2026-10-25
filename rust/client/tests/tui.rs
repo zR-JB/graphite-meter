@@ -964,18 +964,18 @@ fn a_settings_change_during_a_run_is_checked_once_the_run_ends() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     press(&mut app, KeyCode::Char('s'), now);
-    for _ in 0..10 {
+    for _ in 0..13 {
         press(&mut app, KeyCode::Down, now);
     }
     assert!(
-        shows(&mut app, now, "Round trips during transfers"),
+        shows(&mut app, now, "On: transfers send no probes"),
         "{:#?}",
         frame(&mut app, now)
     );
     press(&mut app, KeyCode::Char(' '), now);
     assert_eq!(app.tick(now + REST), [], "a check would replace the run");
     app.event(&ended(Outcome::Complete), now + REST);
-    assert!(!checked(app.tick(now + REST)).loaded_latency);
+    assert!(!checked(app.tick(now + REST)).skip_loaded_latency);
 }
 
 #[test]
@@ -1027,7 +1027,7 @@ fn the_settings_editor_applies_values_in_bounds_and_says_why_it_refuses_others()
         frame(&mut app, now)
     );
     assert_eq!(checked(app.tick(now + REST)).streams.auto, 3);
-    (0..4).for_each(|_| _ = press(&mut app, KeyCode::Up, now));
+    (0..5).for_each(|_| _ = press(&mut app, KeyCode::Up, now));
     press(&mut app, KeyCode::Enter, now);
     typed(&mut app, "5");
     assert!(
