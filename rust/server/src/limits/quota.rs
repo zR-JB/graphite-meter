@@ -18,7 +18,7 @@ pub struct Quota(Arc<Inner>);
 
 struct Inner {
     total: Total,
-    /// A client's narrowest key may hold this much. Each wider key holds twice the one before it.
+    /// A client's narrowest key may hold this much (see `ClientKeys::shares`).
     share: usize,
     /// Many clients share this key, which bounds nothing.
     exempt: Option<ClientKey>,
@@ -98,9 +98,9 @@ impl Quota {
     ) -> Result<Hold, Full> {
         let total = self.0.total();
         let mut state = lock(&self.0.state);
-        if self.0.keys(keys).enumerate().any(|(index, key)| {
+        if self.0.shares(keys).any(|(key, share)| {
             let held = state.held.get(&key).copied().unwrap_or(0);
-            held.saturating_add(weight) > self.0.share.saturating_mul(1 << index)
+            held.saturating_add(weight) > share
         }) {
             state.refused_client += 1;
             return Err(Full::Client);
@@ -163,9 +163,13 @@ impl Inner {
         }
     }
 
+    fn shares<'a>(&'a self, keys: &'a ClientKeys) -> impl Iterator<Item = (ClientKey, usize)> + 'a {
+        keys.shares(self.share)
+            .filter(move |(key, _)| Some(key) != self.exempt.as_ref())
+    }
+
     fn keys<'a>(&'a self, keys: &'a ClientKeys) -> impl Iterator<Item = ClientKey> + 'a {
-        keys.iter()
-            .filter(move |key| Some(key) != self.exempt.as_ref())
+        self.shares(keys).map(|(key, _)| key)
     }
 }
 

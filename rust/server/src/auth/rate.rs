@@ -15,7 +15,7 @@ use tokio::time::Instant;
 const WINDOW: Duration = Duration::from_mins(1);
 const MAX_KEYS: usize = 2048;
 
-/// Counts attempts per client, `limit` for its narrowest key and twice that for each wider one.
+/// Counts attempts per client against each key's share of `limit`.
 pub(super) struct Attempts {
     name: &'static str,
     limit: usize,
@@ -39,7 +39,7 @@ impl Attempts {
 
     /// Records an attempt unless its key's share is spent, `ceiling` engaged or the table full, which `known` bypasses.
     pub fn allow(&self, keys: &ClientKeys, known: bool, ceiling: Option<&Ceiling>) -> bool {
-        let keys: Vec<_> = keys.iter().collect();
+        let keys: Vec<_> = keys.shares(self.limit).collect();
         let mut table = lock(&self.table);
         let now = Instant::now();
         let Table { keys: held, logged } = &mut *table;
@@ -49,12 +49,12 @@ impl Attempts {
                 !times.is_empty()
             });
         }
-        for (wider, key) in keys.iter().enumerate() {
+        for (key, share) in &keys {
             let full = held.len() >= MAX_KEYS;
             match held.get_mut(key) {
                 Some(times) => {
                     expire(times, now);
-                    if times.len() >= self.limit << wider {
+                    if times.len() >= *share {
                         return false;
                     }
                 }
@@ -71,7 +71,7 @@ impl Attempts {
         if ceiling.is_some_and(Ceiling::engaged) {
             return false;
         }
-        for key in &keys {
+        for (key, _) in &keys {
             if let Some(times) = held.get_mut(key) {
                 times.push_back(now);
             }
@@ -117,15 +117,13 @@ impl Ceiling {
     }
 }
 
-/// Tells if `keys`' client holds its share of `limit`. `held` counts per key, each wider key holding twice the last.
+/// Tells if `keys`' client holds its share of `limit`, as `held` counts per key.
 pub(super) fn share_full(
     keys: &ClientKeys,
     limit: usize,
     held: impl Fn(&ClientKey) -> usize,
 ) -> bool {
-    keys.iter()
-        .enumerate()
-        .any(|(wider, key)| held(&key) >= limit << wider)
+    keys.shares(limit).any(|(key, share)| held(&key) >= share)
 }
 
 fn expire(times: &mut VecDeque<Instant>, now: Instant) {
