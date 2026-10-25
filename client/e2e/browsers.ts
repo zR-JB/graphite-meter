@@ -159,19 +159,41 @@ interface Bidi {
 }
 
 // One Firefox per test process; each page is a user context of its own, with its own storage and cookies.
-let firefox: Promise<Bidi> | undefined;
-let stopFirefox: (() => Promise<void>) | undefined;
+let firefox: { bidi: Promise<Bidi>; stop(): Promise<void> } | undefined;
 
 /** Ends this process's browser, so the next page gets a new one without the old one's network state. */
 export async function freshBrowser() {
   if (browser === "chrome") return removeProfiles();
-  const stopping = stopFirefox;
-  [firefox, stopFirefox] = [undefined, undefined];
-  await stopping?.();
+  await firefox?.stop();
 }
 function launchFirefox(): Promise<Bidi> {
-  return (firefox ??= (async () => {
-    const profile = mkdtempSync(join(tmpdir(), "gm-firefox-"));
+  if (firefox) return firefox.bidi;
+  const profile = mkdtempSync(join(tmpdir(), "gm-firefox-"));
+  let child: Bun.Subprocess<"ignore", "ignore", "pipe"> | undefined;
+  const remove = () => {
+    child?.kill();
+    try {
+      rmSync(profile, { recursive: true, force: true });
+    } catch {}
+  };
+  process.on("exit", remove);
+  async function stop(): Promise<void> {
+    if (firefox === launch) firefox = undefined;
+    process.off("exit", remove);
+    if (child) {
+      child.kill();
+      await Promise.race([child.exited, Bun.sleep(5_000)]);
+      child.kill("SIGKILL");
+      await child.exited;
+    }
+    remove();
+  }
+  const launch = { bidi: start(), stop };
+  firefox = launch;
+  launch.bidi.catch(stop);
+  return launch.bidi;
+
+  async function start(): Promise<Bidi> {
     const ca = process.env.GM_E2E_CA;
     // JSON loads as a plain document of its origin, as in Chrome, so a test can work on that origin from it.
     writeFileSync(
@@ -202,7 +224,7 @@ function launchFirefox(): Promise<Bidi> {
         const certutil = Bun.spawnSync(["certutil", "-d", `sql:${profile}`, ...args]);
         if (certutil.exitCode !== 0) throw new Error(`certutil ${args[0]}: ${certutil.stderr}`);
       }
-    const child = Bun.spawn(
+    child = Bun.spawn(
       [
         process.env.GM_FIREFOX_PATH ?? "firefox",
         "--headless",
@@ -213,26 +235,17 @@ function launchFirefox(): Promise<Bidi> {
       ],
       { stdout: "ignore", stderr: "pipe" },
     );
-    const stop = () => {
-      child.kill();
-      try {
-        rmSync(profile, { recursive: true, force: true });
-      } catch {}
-    };
-    process.on("exit", stop);
-    stopFirefox = async () => {
-      process.off("exit", stop);
-      child.kill();
-      await Promise.race([child.exited, Bun.sleep(5_000)]);
-      child.kill("SIGKILL");
-      await child.exited;
-      stop();
-    };
     const reader = child.stderr.getReader();
     let banner = "";
     let endpoint: string | undefined;
+    const late = new Promise<never>((_, fail) =>
+      setTimeout(
+        () => fail(new Error(`Firefox printed no WebDriver BiDi banner in 30 s: ${banner}`)),
+        30_000,
+      ).unref(),
+    );
     while (!endpoint) {
-      const { value, done } = await reader.read();
+      const { value, done } = await Promise.race([reader.read(), late]);
       if (done) throw new Error(`Firefox exited before listening: ${banner}`);
       banner += new TextDecoder().decode(value);
       endpoint = /WebDriver BiDi listening on (ws:\/\/\S+)/.exec(banner)?.[1];
@@ -254,6 +267,7 @@ function launchFirefox(): Promise<Bidi> {
       closed = new Error("Firefox closed its WebDriver BiDi session");
       for (const call of pending.values()) call.reject(closed);
       pending.clear();
+      void stop();
     };
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(String(data));
@@ -285,7 +299,7 @@ function launchFirefox(): Promise<Bidi> {
     });
     await bidi.send("session.subscribe", { events: ["log.entryAdded"] });
     return bidi;
-  })());
+  }
 }
 
 async function firefoxDriver(events: DriverEvents): Promise<Driver> {
