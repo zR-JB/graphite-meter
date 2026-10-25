@@ -75,7 +75,7 @@ struct Running {
 async fn bind(env: &[(&str, &str)]) -> Server {
     for _ in 0..8 {
         match Server::bind(config(env), pool()).await {
-            Err(error) if error.ends_with("/udp: address already in use") => continue,
+            Err(error) if error.ends_with("/udp (GM_H3_ADDR): address already in use") => continue,
             bound => return bound.unwrap(),
         }
     }
