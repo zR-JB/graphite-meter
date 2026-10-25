@@ -84,6 +84,7 @@ pub async fn run(
         plan: plan.clone(),
         focus,
         at: started,
+        loaded_latency: config.loaded_latency(),
     });
     let run = Run {
         prepared,

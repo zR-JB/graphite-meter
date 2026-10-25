@@ -76,6 +76,7 @@ fn departed(b_measured: bool) -> (View, [ServerFailure; 2]) {
             plan,
             focus: id("a"),
             at,
+            loaded_latency: true,
         },
         Event::ServerFailed(unprepared.clone()),
         stage(Stage::Latency),
