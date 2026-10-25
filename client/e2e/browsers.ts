@@ -380,9 +380,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
       awaitPromise: true,
     });
     if (result.type === "exception")
-      throw new Error(
-        result.exceptionDetails.exception?.value?.message ?? result.exceptionDetails.text,
-      );
+      throw new Error(result.exceptionDetails.text.replace(/^\w*Error: /, ""));
     const value = result.result.value;
     return value === undefined ? (undefined as T) : JSON.parse(value);
   };
