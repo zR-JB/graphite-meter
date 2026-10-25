@@ -79,6 +79,16 @@ pub(super) struct Failed {
     pub unsent: bool,
 }
 
+impl From<Fault> for Failed {
+    fn from(fault: Fault) -> Self {
+        Self {
+            fault,
+            broken: false,
+            unsent: false,
+        }
+    }
+}
+
 impl Conn {
     /// A connection to `origin` over `via`, HTTP/2 if TLS agrees; TCP runs where dialed, QUIC on `home` or a runtime.
     pub(super) async fn dial(
@@ -169,12 +179,12 @@ impl Conn {
     }
 
     /// Sends `request` with `body` and reads its answer's head, failing unless it is a 200.
-    pub async fn open(
+    pub(super) async fn open(
         &mut self,
         client: &Client,
         request: &Request,
         body: Payload,
-    ) -> Result<Incoming, Fault> {
+    ) -> Result<Incoming, Failed> {
         let mut head = client.head(request)?;
         if body.remaining > 0 {
             let headers = head.headers_mut();
@@ -184,8 +194,8 @@ impl Conn {
             );
             headers.insert(header::CONTENT_LENGTH, body.remaining.into());
         }
-        let answer = self.send(head, body).await.map_err(|failed| failed.fault)?;
-        client.check(request, answer)
+        let answer = self.send(head, body).await?;
+        Ok(client.check(request, answer)?)
     }
 
     pub(super) async fn send(

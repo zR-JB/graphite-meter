@@ -32,6 +32,8 @@ const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
 const CLOSE_FLUSH: Duration = Duration::from_secs(1);
 /// A connection that did no work this long was kept open by a peer sending unasked: browsers PING only for requests.
 const UNASKED: Duration = IDLE_BOUND.saturating_mul(2);
+/// A connection quiet this long is retired, so no peer sends a request as the idle bound makes the server forget it.
+const QUIET: Duration = IDLE_BOUND.saturating_sub(Duration::from_secs(10));
 
 /// An endpoint's accepts; dropping it refuses new connections while running ones go on.
 pub struct Listener {
@@ -227,9 +229,14 @@ impl Http3 {
                 }
                 _ = tuning.tick() => {
                     send_window.tune(&quic, !running.is_empty(), self.app.budget());
-                    if worked.lapsed(Instant::now(), !running.is_empty(), quic.send_buffered_bytes()) {
+                    let idle = worked.idle(Instant::now(), !running.is_empty(), quic.send_buffered_bytes());
+                    if idle >= UNASKED {
                         quic.close(http3::Code::H3_NO_ERROR.into(), b"");
                         return Ok(());
+                    }
+                    if idle >= QUIET && !retired {
+                        retired = true;
+                        http.retire();
                     }
                 }
             }
@@ -244,11 +251,11 @@ struct Worked {
 }
 
 impl Worked {
-    fn lapsed(&mut self, now: Instant, running: bool, unacked: u64) -> bool {
+    fn idle(&mut self, now: Instant, running: bool, unacked: u64) -> Duration {
         if running || unacked != self.unacked {
             (self.at, self.unacked) = (now, unacked);
         }
-        now.duration_since(self.at) >= UNASKED
+        now.duration_since(self.at)
     }
 }
 
@@ -274,23 +281,29 @@ mod tests {
             at: start,
             unacked: 0,
         };
-        assert!(!worked.lapsed(at(30), true, 4 << 20), "a request runs");
+        assert!(
+            worked.idle(at(30), true, 4 << 20) < UNASKED,
+            "a request runs"
+        );
         for (secs, unacked) in [(40, 2 << 20), (80, 1 << 20), (130, 1)] {
             assert!(
-                !worked.lapsed(at(secs), false, unacked),
+                worked.idle(at(secs), false, unacked) < UNASKED,
                 "a tail moving at {secs} s"
             );
         }
-        assert!(!worked.lapsed(at(189), false, 1));
+        assert!(worked.idle(at(189), false, 1) < UNASKED);
         assert!(
-            worked.lapsed(at(190), false, 1),
+            worked.idle(at(190), false, 1) >= UNASKED,
             "a tail stalled for a minute"
         );
         let mut quiet = Worked {
             at: start,
             unacked: 0,
         };
-        assert!(!quiet.lapsed(at(59), false, 0));
-        assert!(quiet.lapsed(at(60), false, 0), "nothing ran nor waited");
+        assert!(quiet.idle(at(59), false, 0) < UNASKED);
+        assert!(
+            quiet.idle(at(60), false, 0) >= UNASKED,
+            "nothing ran nor waited"
+        );
     }
 }

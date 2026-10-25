@@ -260,28 +260,37 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
 }
 
 #[tokio::test]
-async fn a_connection_its_peer_keeps_open_without_requests_closes_after_a_minute() {
+async fn a_quiet_connection_is_retired_before_the_idle_bound_and_closed_after_a_minute() {
     let h3 = H3::start(&[]).await;
     let connection = h3.connect(transport(None)).await;
     for _ in 0..2 {
         assert_eq!(connection.send("GET", "/probe", b"").await.0.status(), 200);
-        pass(Duration::from_secs(55)).await;
-        assert_eq!(
-            connection.closed_within(Duration::from_millis(10)).await,
-            None,
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        pass(Duration::from_secs(18)).await;
+        assert!(
+            !connection.requests.going_away(),
             "a request restarts the bound"
         );
     }
-    pass(Duration::from_millis(4500)).await;
+    pass(Duration::from_secs(3)).await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !connection.requests.going_away() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("GOAWAY, well before the server forgets it");
     assert_eq!(
         connection.closed_within(Duration::from_millis(10)).await,
         None,
-        "not before a minute"
+        "retiring closes nothing"
     );
-    pass(Duration::from_millis(10500)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    pass(Duration::from_secs(65)).await;
     assert_eq!(
         connection.closed_within(Duration::from_secs(1)).await,
-        Some(Code::H3_NO_ERROR)
+        Some(Code::H3_NO_ERROR),
+        "a peer that keeps it open unasked"
     );
 }
 

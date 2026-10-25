@@ -133,12 +133,14 @@ WebSocket 1001 only with that reason) server stopped, which takes that server ou
 lifetime endings. The server ends a session with its `WT_CLOSE_SESSION` capsule and FIN, and stops reading
 the CONNECT stream (`STOP_SENDING` `WT_SESSION_GONE`) only after the peer's FIN or a second without it: Chromium and
 Firefox drop the code of a close whose `STOP_SENDING` arrives first. The server answers no packet for a QUIC
-connection it has forgotten, and a quiet idle connection, retired or not, ends silently at the 30 s QUIC idle timeout, because Firefox
-forgets an origin's HTTP/3 on a graceful close or a stateless reset. Browsers send PINGs only while a request is open,
-so only a peer that keeps a connection open for 60 s with no request running and its unacknowledged reply bytes
-unchanged gets `H3_NO_ERROR`. At shutdown the server sends `GOAWAY`, gives connections up to 5 s to close on their own
-(a second after it ended their last session, so the session's code arrives first), then closes every remaining QUIC
-connection with `H3_NO_ERROR`.
+connection it has forgotten, and a quiet idle connection ends silently at the 30 s QUIC idle timeout, because Firefox
+forgets an origin's HTTP/3 on a graceful close or a stateless reset. After 20 s without work (a request running or
+reply bytes awaiting acknowledgement) the server retires a connection with a `GOAWAY` that refuses nothing, from which
+its idle timeout runs: the peer's idle timer can end a little after the server's, and a request sent between the two
+would get no answer. Browsers send PINGs only while a request is open, so only a peer that keeps a connection open for
+60 s with no request running and its unacknowledged reply bytes unchanged gets `H3_NO_ERROR`. At shutdown the server
+sends `GOAWAY`, gives connections up to 5 s to close on their own (a second after it ended their last session, so the
+session's code arrives first), then closes every remaining QUIC connection with `H3_NO_ERROR`.
 
 | Cause                        | WebSocket close                | WebTransport close          |
 | ---------------------------- | ------------------------------ | --------------------------- |
