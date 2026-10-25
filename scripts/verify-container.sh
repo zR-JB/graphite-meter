@@ -81,6 +81,10 @@ fi
 licenses='{{ index .Config.Labels "org.opencontainers.image.licenses" }}'
 test "$("$engine" inspect -f "$licenses" "$image")" = AGPL-3.0-or-later
 test "$("$engine" inspect -f '{{.Config.User}}' "$image")" = 65532:65532
+"$engine" exec "$container" /graphite-meter healthcheck
+if [ "${engine##*/}" != podman ]; then
+    test "$("$engine" inspect -f '{{json .Config.Healthcheck.Test}}' "$image")" = '["CMD","/graphite-meter","healthcheck"]'
+fi
 # Relative GM_* paths resolve from /.
 case "$("$engine" inspect -f '{{.Config.WorkingDir}}' "$image")" in
     '' | /) ;;

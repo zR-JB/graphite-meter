@@ -358,6 +358,7 @@ fn write_usage(usage: &mut dyn Write) -> std::io::Result<()> {
 Commands:
   version, --version  Print the version
   hash-password       Read a password twice on stdin and print its Argon2id hash
+  healthcheck         Exit 0 when this configuration's clear listener answers /probe within 2 s
   --legal             Print the reviewed project and dependency notices
 
 Options:

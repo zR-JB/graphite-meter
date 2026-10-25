@@ -135,6 +135,8 @@ class OCITests(unittest.TestCase):
             ("blob", '"os": "linux"}', '"os": "linux", "variant": "v8"}', r"has \['architecture', 'os', 'variant'\]"),
             ("blob", '{"architecture": "arm64", "os": "linux", "config"',
              '{"architecture": "amd64", "os": "linux", "config"', "linux/arm64 image is configured for linux/amd64"),
+            ("blob", '"/graphite-meter", "healthcheck"]', '"/bin/true"]', "health check is \\['CMD', '/bin/true'\\]"),
+            ("blob", '"Healthcheck"', '"Unchecked"', "Healthcheck must be a JSON object"),
         ):
             def edit(data: bytes) -> bytes:
                 return data.replace(old.encode(), new.encode(), 1)

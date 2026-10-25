@@ -12,6 +12,7 @@ source build. Besides serving, it takes these commands:
 | ---------------------- | --------------------------------------------------------------------------------------------------- |
 | `version`, `--version` | Print the version.                                                                                  |
 | `hash-password`        | Read a password twice on stdin (1 to 1024 bytes, hidden on a terminal) and print its Argon2id hash. |
+| `healthcheck`          | Exit 0 when the clear listener answers `/probe` within 2 s; otherwise log why and exit 1.           |
 | `--legal`              | Print the project and dependency license notices.                                                   |
 | `--help`               | Print every flag with its variable and default, then the variables without a flag.                  |
 

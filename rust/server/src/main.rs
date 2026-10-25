@@ -1,16 +1,19 @@
-//! Runs the binary. It handles `version`, `hash-password` and `--legal`, or serves as the environment and flags say.
+//! Runs the binary. It handles `version`, `hash-password`, `healthcheck` and `--legal`, or serves as the settings say.
 
 use graphite_meter_net::Pool;
+use graphite_meter_proto::duration;
 use graphite_meter_server::{
     assets::NOTICES,
     auth::password,
-    config::{self, Config, ENGINE_VERSION, Loaded},
+    config::{self, Config, ENGINE_VERSION, ListenerKind, Loaded},
     log,
     runtime::{self, Server},
 };
 use std::{
     io::{self, BufRead, IsTerminal, Read, Write},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs},
     process::ExitCode,
+    time::Duration,
 };
 use zeroize::Zeroizing;
 
@@ -32,6 +35,7 @@ fn main() -> ExitCode {
             Err(error) => Some(("legal", error)),
         },
         [only] if only == "hash-password" => hash_password().err().map(|error| ("auth", error)),
+        [only] if only == "healthcheck" => healthcheck().err().map(|error| ("health", error)),
         _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
             Ok(Loaded::Help) => None,
             Ok(Loaded::Config(config)) => {
@@ -82,6 +86,69 @@ fn serve(config: Config) -> Result<(), String> {
             .map_err(|error| format!("could not watch for stop signals: {error}"))?;
         Server::bind(config, pool).await?.serve(stop).await
     })
+}
+
+fn healthcheck() -> Result<(), String> {
+    const BOUND: Duration = Duration::from_secs(2);
+    const REQUEST: &str = "GET /probe HTTP/1.1\r\nHost: localhost\r\nX-Real-IP: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let Loaded::Config(config) = config::load(|name| std::env::var_os(name), [], &mut io::sink())?
+    else {
+        return Err("the settings name no listener".into());
+    };
+    if let Some(zone) = &config.log_zone {
+        log::show_in(zone.clone());
+    }
+    let address = &config
+        .listener(ListenerKind::H1)
+        .expect("the clear listener is required")
+        .address;
+    let targets: Vec<SocketAddr> = match address.host.as_deref() {
+        None | Some("0.0.0.0") => vec![SocketAddr::from((Ipv4Addr::LOCALHOST, address.port))],
+        Some("[::]") => vec![SocketAddr::from((Ipv6Addr::LOCALHOST, address.port))],
+        Some(_) => address
+            .to_string()
+            .to_socket_addrs()
+            .map_err(|error| config::could_not(&format!("resolve {address}"), &error))?
+            .collect(),
+    };
+    let mut refused = format!("{address} resolves to no address");
+    for target in targets {
+        let failed = |error: io::Error| match error.kind() {
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {
+                format!(
+                    "{target} did not answer /probe within {}",
+                    duration::format(BOUND)
+                )
+            }
+            io::ErrorKind::UnexpectedEof => {
+                format!("{target} closed the connection without answering /probe")
+            }
+            _ => config::could_not(&format!("ask {target} for /probe"), &error),
+        };
+        let mut stream = match TcpStream::connect_timeout(&target, BOUND) {
+            Ok(stream) => stream,
+            Err(error) => {
+                refused = failed(error);
+                continue;
+            }
+        };
+        stream.set_read_timeout(Some(BOUND)).map_err(failed)?;
+        stream.set_write_timeout(Some(BOUND)).map_err(failed)?;
+        stream.write_all(REQUEST.as_bytes()).map_err(failed)?;
+        let mut head = [0; 12];
+        stream.read_exact(&mut head).map_err(failed)?;
+        let status = head
+            .strip_prefix(b"HTTP/1.1 ")
+            .and_then(|code| std::str::from_utf8(code).ok()?.parse::<u16>().ok());
+        return match status {
+            Some(status) if status < 500 => Ok(()),
+            Some(status) => Err(format!("{target} answered /probe with HTTP {status}")),
+            None => Err(format!(
+                "{target} answered /probe without an HTTP/1.1 status"
+            )),
+        };
+    }
+    Err(refused)
 }
 
 /// Reads a password twice, without echo on a terminal, and prints its hash.

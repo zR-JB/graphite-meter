@@ -290,7 +290,7 @@ impl fmt::Debug for Secret {
 }
 
 /// `could not {action}: {message}`, the system's message in lower case without its code.
-pub(crate) fn could_not(action: &str, error: &std::io::Error) -> String {
+pub fn could_not(action: &str, error: &std::io::Error) -> String {
     let message = error.to_string().to_lowercase();
     let message = message.split(" (os error").next().unwrap_or_default();
     format!("could not {action}: {message}")

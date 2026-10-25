@@ -49,6 +49,7 @@ FILE_LIMITS = {SERVER: LAYER_LIMIT, NOTICES: LAYER_LIMIT, SOURCE: BLOB_LIMIT}
 # Opens an unreviewed development build's notices; its executable carries it too (rust/legal/src/lib.rs).
 DEVELOPMENT = "UNREVIEWED DEVELOPMENT BUILD"
 STAGE = ("container/Dockerfile", "server")
+HEALTHCHECK = ["CMD", "/graphite-meter", "healthcheck"]
 
 
 def canonical(name: str) -> bool:
@@ -260,9 +261,12 @@ def verify(version: str, revision: str, archive: Path,
                 config = blob(tar, object_field(manifest, "config", arch), CONFIG_TYPE)
                 if (config.get("os"), config.get("architecture")) != ("linux", arch):
                     fail(f"linux/{arch} image is configured for {config.get('os')}/{config.get('architecture')}")
+                runtime = object_field(config, "config", arch)
                 for key, value in labels.items():
-                    if (found := object_field(object_field(config, "config", arch), "Labels", arch).get(key)) != value:
+                    if (found := object_field(runtime, "Labels", arch).get(key)) != value:
                         fail(f"OCI label {key} for linux/{arch} is {found!r}; expected {value!r}")
+                if (test := object_field(runtime, "Healthcheck", arch).get("Test")) != HEALTHCHECK:
+                    fail(f"linux/{arch} image health check is {test!r}; expected {HEALTHCHECK!r}")
                 source, server = check_image_files(tar, manifest, str(image["digest"]))
                 if check_files is not None:
                     check_files(arch, source, server)
