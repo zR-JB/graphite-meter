@@ -2,19 +2,12 @@
 import type { App } from "../../app/app";
 import type { HistoryRecord } from "../../app/history/records";
 import type { LatencySummary } from "../../engine/measure/latency";
-import { movedBytes, type ServerMeasurementSummary } from "../../engine/run/result";
+import { grid, movedBytes, type ServerMeasurementSummary } from "../../engine/run/result";
 import { STAGES } from "../../engine/run/schedule";
 import type { Role, ServerIdentity } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, signal, untrack } from "../../lib/signal";
-import {
-  fmtBytes,
-  fmtCount,
-  fmtCounted,
-  fmtDuration,
-  fmtLatency,
-  fmtRate,
-} from "../../view/format";
+import { fmtBytes, fmtCount, fmtCounted, fmtDuration } from "../../view/format";
 import { throughputScales } from "../../view/scales";
 import {
   allServersLabel,
@@ -23,8 +16,6 @@ import {
   PATH,
   PATH_TIP,
   POPULATION,
-  reasonLabel,
-  STAGE,
   transportLabel,
 } from "../../view/words";
 import { Icon } from "../kit/icon";
@@ -159,6 +150,7 @@ export function ResultDetail(props: {
     if (threw) props.onBroken();
   };
   const transferred = movedBytes(run);
+  const table = grid(result);
   const title = `result-${record.id}-title`;
 
   const fact = (label: string, value: Node | string | (() => string), aside = "") => (
@@ -192,28 +184,14 @@ export function ResultDetail(props: {
     return find(inspected()) ?? find(followed()) ?? run.selection[0];
   });
   const measured = computed(() => run.servers.find(({ server }) => server.id === shown()?.id));
+  // What each server measured and why not is the grid's, under the cards.
   const serverFacts = (server: ServerIdentity, entry: ServerMeasurementSummary | undefined) => {
-    const failure = run.failures.find(({ serverId }) => serverId === server.id);
     const ip = entry?.throughput.clientIpVersion;
     return [
       fact("Name", server.name),
       server.location && fact("Location", server.location),
       server.url && fact("Address", server.url),
-      failure && (
-        <div>
-          <dt>Status</dt>
-          <dd class="status">
-            <span class="status-dot inline" data-tone="err" />
-            {reasonLabel(failure.reason)}
-          </dd>
-        </div>
-      ),
       ip && fact("IP family", `IPv${ip}`),
-      multiple && [
-        fact(STAGE.download.short, () => fmtRate(entry?.download?.reportedBytesPerSec, units())),
-        fact(STAGE.upload.short, () => fmtRate(entry?.upload?.reportedBytesPerSec, units())),
-        fact(STAGE.latency.short, fmtLatency(entry?.latency?.reportedMs)),
-      ],
       pathFact(
         "throughput",
         entry
@@ -293,11 +271,10 @@ export function ResultDetail(props: {
               aggregate={() =>
                 allServersLabel(run.selection.length, run.participants.length, run.servers.length)
               }
-              unavailable={() =>
-                run.selection
-                  .filter(({ id }) => !run.servers.some(({ server }) => server.id === id))
-                  .map(({ id }) => id)
-              }
+              note={(id) => {
+                const outcome = table.rows.find((row) => row.server.id === id)?.outcome;
+                return outcome && outcome !== "complete" ? OUTCOME[outcome].label : "";
+              }}
             />
           )}
           <button

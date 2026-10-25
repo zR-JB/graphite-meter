@@ -66,6 +66,13 @@ export const CARDS = {
 
 export const LENS = "Servers shown in the results";
 
+/** The grid of servers by stages under a multi-server result, and the causes under it. */
+export const GRID = {
+  label: "Each server's result by stage",
+  server: "Server",
+  after: "Not reached after it:",
+} as const;
+
 export const TOAST = {
   unsaved: "Not saved",
 } as const;

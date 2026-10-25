@@ -7,6 +7,7 @@ import { MISSING } from "../../view/format";
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
 import {
   cardLine,
+  gridView,
   liveCard,
   serverIssues,
   settledCard,
@@ -408,4 +409,78 @@ test("a card's line names who failed in its stage and who never reached it; one 
     },
   } as unknown as RunResult);
   expect(cardLine(both, "download")).toBe("Frankfurt and Oslo: connection lost");
+});
+
+test("the server grid reads each server's value or word per planned stage, then each cause and what it cost", () => {
+  const frankfurt = { id: "f", name: "Frankfurt", url: "" };
+  const oslo = { id: "o", name: "Oslo", url: "" };
+  const bergen = { id: "b", name: "Bergen", url: "" };
+  const ran = {
+    latency: "not-run",
+    download: "complete",
+    upload: "complete",
+    bidirectional: "not-run",
+  };
+  const failure = (serverId: string, stage: string, reason: string, message = "") => ({
+    serverId,
+    stage,
+    atMs: 0,
+    scope: "throughput",
+    reason,
+    message,
+  });
+  const result = {
+    latency: null,
+    download: transfer(2.5e6),
+    upload: transfer(1e6),
+    bidirectional: null,
+    stages: { ...ran, download: "partial", upload: "partial" },
+    outcome: "partial",
+    multiServer: {
+      selection: [frankfurt, oslo, bergen],
+      servers: [
+        { server: frankfurt, download: transfer(2e6), upload: transfer(1e6), stages: ran },
+        {
+          server: oslo,
+          download: transfer(5e5),
+          upload: null,
+          stages: { ...ran, download: "partial", upload: "not-run" },
+        },
+      ],
+      failures: [
+        failure("o", "download", "connection-lost", "download lane 2 failed: network error"),
+        failure("b", "download", "server-capacity"),
+      ],
+    },
+  } as unknown as RunResult;
+  const view = gridView(result, grid(result), BITS);
+  expect(view.stages).toEqual(["download", "upload"]);
+  expect(view.units).toEqual({ download: "Mbit/s", upload: "Mbit/s" });
+  expect(
+    view.rows.map(({ name, word, cells }) => [
+      name,
+      word?.label ?? "",
+      ...cells.map(({ text, word }) => `${text}${word ? ` ${word.tone}` : ""}`),
+    ]),
+  ).toEqual([
+    ["Frankfurt", "", "16.00", "8.00"],
+    ["Oslo", "Incomplete", "4.00 warn", "Not reached"],
+    ["Bergen", "Incomplete", "Not reached", "Not reached"],
+  ]);
+  // The engine's own text stays in the cell's tip.
+  expect(view.rows[1]!.cells[0]!.tip).toBe(
+    "Partial\nConnection lost\ndownload lane 2 failed: network error",
+  );
+  expect(view.notes).toEqual([
+    {
+      tone: "warn",
+      head: "Oslo · Download",
+      text: "Connection lost. Not reached after it: Upload.",
+    },
+    {
+      tone: "warn",
+      head: "Bergen · Start",
+      text: "Server at capacity. Not reached after it: Download and Upload.",
+    },
+  ]);
 });

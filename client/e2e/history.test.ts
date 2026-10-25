@@ -503,6 +503,76 @@ test("version 3's run-wide engine version moves to its latency server, and a res
   await shows("oslo", "IPv4", { Server: "0.9.1" });
 });
 
+test("a partial three-server result shows every server's stages and causes, and the lens opens a server dropped at Start", async (page) => {
+  await fixturePage(page);
+  const current = record(1);
+  const run = current.result.multiServer;
+  const self = run.servers[0]!;
+  const stages = { ...self.stages, download: "partial", upload: "partial" } as const;
+  const oslo = {
+    ...self,
+    server: { id: "oslo", name: "Oslo", url: "https://oslo.example" },
+    upload: null,
+    stages: { ...self.stages, download: "partial", upload: "not-run" },
+  } as const;
+  const bergen = { id: "bergen", name: "Bergen", url: "https://bergen.example" };
+  const failure = (serverId: string, reason: string) => ({
+    serverId,
+    stage: "download",
+    atMs: 0,
+    scope: "throughput",
+    reason,
+    message: "",
+  });
+  const partial = {
+    ...current,
+    result: {
+      ...current.result,
+      stages,
+      outcome: "partial",
+      multiServer: {
+        ...run,
+        selection: [self.server, oslo.server, bergen],
+        participants: [self.server.id],
+        servers: [self, oslo],
+        failures: [failure("oslo", "connection-lost"), failure("bergen", "server-capacity")],
+      },
+    },
+  };
+  await seed(page, { records: [partial] });
+  await history(page, partial.id);
+  const grid = page.locator(".detail-pane .server-grid");
+  await expect(grid.locator("tbody tr")).toHaveCount(3);
+  // Each cell's parts as words: a server's name and its outcome, a dot and its word.
+  const rows = () =>
+    grid.locator("tbody tr").all((trs) =>
+      trs.map((tr) =>
+        [...tr.children].map((cell) =>
+          [...cell.childNodes]
+            .map((part) => part.textContent!.trim())
+            .filter(Boolean)
+            .join(" "),
+        ),
+      ),
+    );
+  const [, osloRow, bergenRow] = await rows();
+  expect(osloRow!.slice(0, 1)).toEqual(["Oslo Incomplete"]);
+  expect(osloRow!.at(-1)).toBe("Not reached");
+  expect(bergenRow!.slice(1)).toEqual(["Not reached", "Not reached", "Not reached"]);
+  await expect(grid.locator(".notice")).toHaveText([
+    "Oslo · Download Connection lost. Not reached after it: Upload.",
+    "Bergen · Start Server at capacity. Not reached after it: Latency, Download and Upload.",
+  ]);
+  const lens = page.getByRole("combobox", { name: "Servers shown in this result" });
+  await expect(lens.locator('option[value="bergen"]')).toHaveText("Bergen · Incomplete");
+  await lens.fill("bergen");
+  const card = (stage: string) => page.locator(`.detail-pane .card[data-tone="${stage}"]`);
+  await expect(card("upload").locator(".name .status")).toHaveText("Not reached");
+  await expect(card("upload").locator(".line .reason")).toHaveText(
+    "Left at Start: server at capacity",
+  );
+});
+
 test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears over the clock", async (page) => {
   await fixturePage(page);
   const malformed = { id: id(9), completedAt: base, unexpected: "raw row" };

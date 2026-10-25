@@ -30,15 +30,17 @@ import {
 } from "../../view/format";
 import {
   listed,
+  OUTCOME,
   POPULATION,
   reasonLabel,
+  serverLabel,
   STAGE,
   STAGE_STATE,
   TIP,
   type StageState,
   type Word,
 } from "../../view/words";
-import { CARDS, FACT, type FactKey } from "./copy";
+import { CARDS, FACT, GRID, type FactKey } from "./copy";
 
 type CardStatus =
   | "pending"
@@ -547,4 +549,94 @@ export function resultSentence(cards: readonly CardModel[]): string {
       return `${STAGE[card.stage].label} ${headline}${status}${jitter}`;
     })
     .join("; ");
+}
+
+export interface GridCell {
+  stage: Stage;
+  /** The server's own value, or the cell's word when it has none. */
+  text: string;
+  /** Partial and Failed carry a dot of their tone; Complete and Not reached none. */
+  word: Word | null;
+  tip: string;
+}
+export interface GridNote {
+  tone: "err" | "warn";
+  /** Server and where the cause arose, or only where when one server ran. */
+  head: string;
+  text: string;
+}
+export interface GridView {
+  stages: Stage[];
+  /** Each column's unit, shared by its cells. */
+  units: Partial<Record<Stage, string>>;
+  rows: { id: string; name: string; word: Word | null; cells: GridCell[] }[];
+  notes: GridNote[];
+}
+
+const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+
+/** The result grid in words: every server's value or word per planned stage, then each cause and what it cost. */
+export function gridView(result: RunResult, table: Grid, units: RateUnits): GridView {
+  const stages = STAGES.filter((stage) => table.columns[stage] !== "skipped");
+  const tier = units.tier ?? 0;
+  const several = table.rows.length > 1;
+  const value = (stage: Stage, id: string): string => {
+    const server = result.multiServer.servers.find((entry) => entry.server.id === id);
+    if (stage === "latency") return server?.latency ? fmtMs(server.latency.reportedMs) : MISSING;
+    const lanes =
+      stage === "bidirectional"
+        ? [server?.bidirectional?.down, server?.bidirectional?.up]
+        : [server?.[stage]];
+    if (!lanes.every(Boolean)) return MISSING;
+    const bytesPerSec = lanes.reduce((sum, lane) => sum + lane!.reportedBytesPerSec, 0);
+    return fmtSpeed(toRateUnit(bytesPerSec, units, tier));
+  };
+  const rows = table.rows.map(({ server, cells, outcome }) => ({
+    id: server.id,
+    name: serverLabel(server),
+    word: outcome === "complete" ? null : OUTCOME[outcome],
+    cells: stages.map((stage): GridCell => {
+      const { status, cause } = cells[stage];
+      const shown = status === "complete" || status === "partial";
+      const word = status === "complete" ? null : STAGE_STATE[status];
+      const why = cause && [reasonLabel(cause.reason), cause.message].filter(Boolean);
+      return {
+        stage,
+        text: shown ? value(stage, server.id) : word!.label,
+        word: status === "unreached" ? null : word,
+        tip: [word?.label, ...(why ?? [])].filter(Boolean).join("\n"),
+      };
+    }),
+  }));
+  const notes = table.rows.flatMap(({ server, cells, causes }) =>
+    causes.map((cause): GridNote => {
+      const after = stages.filter(
+        (stage) => cells[stage].status === "unreached" && cells[stage].cause === cause,
+      );
+      const failed = stages.some(
+        (stage) => cells[stage].status === "failed" && cells[stage].cause === cause,
+      );
+      const place = causePlace(cause);
+      return {
+        tone: failed ? "err" : "warn",
+        head: several ? `${server.name} · ${place}` : place,
+        text: [
+          sentence(reasonLabel(cause.reason)),
+          after.length
+            ? sentence(`${GRID.after} ${listed(after.map((stage) => STAGE[stage].label))}`)
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      };
+    }),
+  );
+  return {
+    stages,
+    units: Object.fromEntries(
+      stages.map((stage) => [stage, stage === "latency" ? "ms" : rateUnit(units, tier)]),
+    ),
+    rows,
+    notes,
+  };
 }

@@ -1324,22 +1324,95 @@
       color: var(--text-soft);
     }
   }
-  .result-summary .issues {
+  /* Each server's result by stage, ruled with hairlines as the facts lists are; a phone stacks a block per server. */
+  .server-grid {
     display: grid;
-    grid-template-columns: auto auto;
-    justify-content: center;
-    gap: 2px var(--space-3);
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
-    &.attributed {
-      grid-template-columns: auto auto auto;
-      & dt {
-        color: var(--text);
-        font-weight: var(--w-strong);
-      }
+    gap: var(--space-2);
+    & table {
+      width: 100%;
+      border: var(--hairline) solid var(--border);
+      border-radius: var(--r-chrome);
+      border-spacing: 0;
+      background: var(--surface-1);
+      box-shadow: var(--elev-tile);
     }
-    & .reason {
+    & :is(th, td) {
+      padding: 7px var(--row-inset);
+      text-align: end;
+      white-space: nowrap;
+    }
+    & :is(th, td):first-child {
+      text-align: start;
+    }
+    & tbody > tr > * {
+      border-top: var(--hairline) solid var(--border-subtle);
+    }
+    & thead th {
       color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+      vertical-align: bottom;
+    }
+    & thead .unit {
+      display: block;
+      color: var(--text-muted);
+      font: var(--role-caption);
+    }
+    & tbody th {
+      font: var(--w-strong) var(--type-md) / 1.35 var(--font-sans);
+    }
+    & tbody th .word,
+    & td.short {
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+    }
+    & tbody th .word {
+      display: block;
+    }
+    & td {
+      font: var(--role-figure-sm);
+    }
+    & .status-dot.inline {
+      margin-inline-end: 0.4em;
+    }
+  }
+  @container results (max-width: 520px) {
+    .server-grid {
+      & thead {
+        display: none;
+      }
+      & :is(table, tbody, tr) {
+        display: grid;
+      }
+      & table {
+        gap: var(--space-2);
+        border: 0;
+        background: none;
+        box-shadow: none;
+      }
+      & tr {
+        padding-inline: var(--row-inset);
+        border: var(--hairline) solid var(--border);
+        border-radius: var(--r-chrome);
+        background: var(--surface-1);
+        box-shadow: var(--elev-tile);
+      }
+      & tr > * {
+        display: flex;
+        justify-content: space-between;
+        gap: var(--space-3);
+        padding-inline: 0;
+      }
+      & tbody tr > th {
+        border-top: 0;
+      }
+      & tbody th .word {
+        display: inline;
+      }
+      & td::before {
+        content: attr(data-label);
+        color: var(--text-soft);
+        font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+      }
     }
   }
   /* A phone's card: the name and status at the left, the headline at the right, the facts a wrapping row. */
