@@ -89,12 +89,9 @@ impl RequestStream {
     }
 
     pub(crate) fn abort(&mut self, code: Code) -> Error {
-        self.recv.stop(code);
+        let error = self.recv.abort(code);
         self.send.reset(code);
-        self.recv
-            .failed
-            .get_or_insert(Error::Protocol(code))
-            .clone()
+        error
     }
 
     pub(crate) fn shared(&self) -> &Arc<Shared> {
