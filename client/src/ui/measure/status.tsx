@@ -137,20 +137,16 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     tone: CONNECTIVITY.recovering.tone as Tone,
   }));
   const causes = computed(() => run.table()?.causes ?? []);
-  // A toast notes the newest cause, where it happened first, as the card it marks names its stage: "Bergen · Start".
-  const issue = computed(() => {
-    const cause = causes().reduce<Cause | null>(
-      (newest, each) => (!newest || each.atMs >= newest.atMs ? each : newest),
-      null,
-    );
-    if (!cause) return { kicker: "", message: "" };
+  const keyOf = (cause: Cause) => `${cause.serverId} ${cause.stage} ${cause.scope} ${cause.reason}`;
+  const named = (cause: Cause) => {
     const server = run.table()!.rows.find((row) => row.server.id === cause.serverId)!.server.name;
     const several = (run.details()?.selection.length ?? 0) > 1;
+    // Where it happened leads, as the card it marks names its stage: "Bergen · Start", then what happened.
     return {
       kicker: several ? `${server} · ${causePlace(cause)}` : causePlace(cause),
       message: reasonLabel(cause.reason),
     };
-  });
+  };
   const toast = signal<{ kicker: string; message: string; tone: Tone }>({
     kicker: "",
     message: "",
@@ -166,14 +162,22 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     toast.set(next);
     timer = window.setTimeout(() => lingering.set(false), LINGER_MS);
   };
-  let seen = 0;
+  // A toast notes each cause as it arrives, the newest when several do.
+  let seen = new Set<string>();
   effect(() => {
     const phase = run.phase();
-    const count = causes().length;
-    const added = count > seen;
-    seen = count;
-    if (phase === "idle") show(null);
-    else if (added) show({ ...untrack(issue), tone: "err" });
+    const all = causes();
+    if (phase === "idle") {
+      seen = new Set();
+      return show(null);
+    }
+    const fresh = all.filter((cause) => !seen.has(keyOf(cause)));
+    seen = new Set(all.map(keyOf));
+    const newest = fresh.reduce<Cause | null>(
+      (latest, each) => (!latest || each.atMs >= latest.atMs ? each : latest),
+      null,
+    );
+    if (newest) show({ ...untrack(() => named(newest)), tone: "err" });
   });
   const unsaved = computed(
     () =>
@@ -192,7 +196,7 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
   );
   announceChanges(() => (stalled() ? `${stall().kicker}: ${stall().message}` : ""));
   announceChanges(() => (unsaved() ? `${TOAST.unsaved}: ${app.saver.warning()}` : ""));
-  announceChanges(() => (issue().message ? `${issue().kicker}: ${issue().message}` : ""));
+  announceChanges(() => (lingering() ? `${toast().kicker}: ${toast().message}` : ""));
   // Out of layout while it shows nothing, so a stage that resizes never lays it out; laid out for its fade as it goes.
   const showing = computed(() => lingering() || stalled() || unsaved());
   const leaving = signal(false);

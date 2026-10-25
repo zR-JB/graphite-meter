@@ -1577,7 +1577,7 @@
       translate: 0 4px;
     }
   }
-  /* A narrow page docks the toast across its width on the status strip, so it covers no card; a stall shows for its reading time too. */
+  /* A narrow page docks the toast across its width, above the status strip; a stall shows for its reading time too. */
   @media (max-width: 759px) {
     .phase-toast {
       inset-inline: 0;
@@ -1592,7 +1592,7 @@
     }
   }
   /* A phone hides the strip, so the toast docks on the bottom edge. */
-  @media (max-width: 520px), (max-height: 520px) and (pointer: coarse) {
+  @media (max-width: 520px), (max-width: 759px) and (max-height: 520px) and (pointer: coarse) {
     .phase-toast {
       bottom: 0;
       padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
