@@ -142,3 +142,31 @@ async fn a_stop_closes_every_listener_and_ends_the_work_on_each_transport() {
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn a_websocket_upgraded_during_the_drain_closes_with_the_server() {
+    let server = start(&[]).await;
+    let mut stream = TcpStream::connect(server.address).await.unwrap();
+    let head = "GET /ws/progress?id=forged HTTP/1.1\r\nHost: test\r\nConnection: Upgrade\r\n";
+    stream.write_all(head.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let stopped = server.stop();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let rest = "Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+        Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    stream.write_all(rest.as_bytes()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(6), stopped)
+        .await
+        .expect("the server returns once drained")
+        .unwrap()
+        .unwrap();
+    let mut received = Vec::new();
+    tokio::time::timeout(
+        Duration::from_millis(300),
+        stream.read_to_end(&mut received),
+    )
+    .await
+    .expect("the socket closes with the server")
+    .unwrap();
+    assert!(received.starts_with(b"HTTP/1.1 101"), "{received:?}");
+}
