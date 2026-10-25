@@ -21,7 +21,7 @@ use graphite_meter_client::{
     status,
     style::Palette,
     text::Profile,
-    tui::{App, Effect},
+    tui::{App, Effect, chrome::Progress},
 };
 use graphite_meter_proto::{
     catalog::{ServerEntry, ServerId},
@@ -636,26 +636,7 @@ fn the_console_follows_a_download_and_takes_presses() {
         frame(&mut app, later)
     );
     assert!(shows(&mut app, later, "100.0 Mbit/s") && shows(&mut app, later, "Download 3.0"));
-    let rate = Rate {
-        mean: 12.5e6,
-        peak: 13e6,
-    };
-    let throughput = Dir {
-        down: Some(Throughput {
-            rate: Some(rate),
-            bytes: 125_000_000,
-        }),
-        up: None,
-    };
-    let result = StageResult {
-        stage: Stage::Download,
-        measured: SECOND * 10,
-        stopped: false,
-        throughput,
-        servers: Vec::new(),
-        failures: Vec::new(),
-    };
-    app.event(&Event::StageFinished(result), later);
+    app.event(&Event::StageFinished(result_of(Stage::Download)), later);
     app.event(&ended(Outcome::Complete), later);
     for fact in [
         "Peak 104.0 Mbit/s",
@@ -826,28 +807,34 @@ fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
     assert!(shows(&mut app, now, "Start test turn on a stage"));
 }
 
+#[test]
+fn the_progress_bar_counts_a_stage_that_ended_partial() {
+    let now = Instant::now();
+    let plan = [(Stage::Download, SECOND * 10), (Stage::Upload, SECOND * 10)];
+    let mut app = running(&["a", "b"], &plan, now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    let progress = |app: &mut App, at: Instant| app.draw(&mut Buffer::empty(FULL), at).progress;
+    assert_eq!(progress(&mut app, now + SECOND * 5), Progress::Share(25));
+    let failure = ServerFailure {
+        server: id("b"),
+        scope: Scope::Throughput,
+        failure: Failure::new(FailureReason::ConnectionLost, "Connection lost"),
+        at: now,
+    };
+    let later = now + SECOND * 10;
+    let result = StageResult {
+        failures: vec![failure],
+        ..result_of(Stage::Download)
+    };
+    app.event(&Event::StageFinished(result), later);
+    assert!(shows(&mut app, later, "Partial"));
+    assert_eq!(progress(&mut app, later), Progress::Share(50));
+}
+
 fn downloaded(now: Instant) -> App {
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     measuring(&mut app, Stage::Download, SECOND * 10, now);
-    let throughput = Dir {
-        down: Some(Throughput {
-            rate: Some(Rate {
-                mean: 12.5e6,
-                peak: 13e6,
-            }),
-            bytes: 125_000_000,
-        }),
-        up: None,
-    };
-    let result = StageResult {
-        stage: Stage::Download,
-        measured: SECOND * 10,
-        stopped: false,
-        throughput,
-        servers: Vec::new(),
-        failures: Vec::new(),
-    };
-    app.event(&Event::StageFinished(result), now);
+    app.event(&Event::StageFinished(result_of(Stage::Download)), now);
     app.event(&ended(Outcome::Complete), now);
     app
 }
