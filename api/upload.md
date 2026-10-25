@@ -1,6 +1,6 @@
 # Upload measurement protocol
 
-Every upload belongs to a server-minted, owner-bound measurement session: uploads without an ID are
+Every upload belongs to a server-minted, owner-bound upload ID: uploads without one are
 rejected, and counter records always carry explicit `bytes` and `nanos`. See also the
 [discovery boundary](discovery.md), [WebTransport routes](wire.md#webtransport-routes) and
 [throughput definitions](../docs/MEASUREMENTS.md#throughput).
@@ -12,7 +12,8 @@ rejected, and counter records always carry explicit `bytes` and `nanos`. See als
    first request that uses an ID makes its owner: the lease it presents, else
    its sign-in, else its client address. Every later request for that ID must
    present the same owner, so with a lease it may come from any address and
-   origin; the clients send the control requests below to the discovery origin.
+   reach any of the server's origins, while it names the `Origin` that took the lease or none;
+   the clients send the control requests below to the discovery origin.
 2. `GET /upload/progress?id=...` attaches to the receiver's NDJSON feed. Its
    `ready` record confirms that the aggregate and reader claim are established.
    When the discovery origin answered over confirmed HTTP/1.1 and offers the
@@ -34,11 +35,11 @@ rejected, and counter records always carry explicit `bytes` and `nanos`. See als
 `POST /upload/checkpoint?id=...` returns a fresh `{ "bytes": N, "nanos": N }`
 snapshot of an existing receiver aggregate with `Cache-Control: no-store`.
 It applies the same owner check as data and progress. It never allocates an
-aggregate, replaces a progress reader, finalizes the upload, or refreshes its
-activity/idle-retention lifetime. Missing/expired IDs and foreign owners use the
+aggregate, replaces a progress reader, finalizes the upload, or extends how
+long the server keeps it. Missing/expired IDs and foreign owners use the
 usual [refusal codes](refusals.txt). Both fields obey the same counter contract below.
-The discovery capability `uploadCheckpoint: true` advertises this operation;
-coordinated upload tests require it before starting.
+The discovery capability `uploadCheckpoint: true` advertises this operation; the
+browser requires it of every server, the terminal client for a run with an upload stage.
 
 WebTransport `/wt/upload?id=...` uses the same aggregate and ownership rules. Its
 server-opened unidirectional stream carries the same NDJSON feed; client streams

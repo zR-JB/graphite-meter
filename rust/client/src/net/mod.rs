@@ -136,14 +136,6 @@ impl Client {
         self.shared.runtimes.latency()
     }
 
-    /// The same client with control connections of its own, apart from those its lanes may share.
-    pub fn apart(&self) -> Self {
-        Self {
-            shared: self.shared.clone(),
-            connections: Arc::default(),
-        }
-    }
-
     pub async fn json<T>(
         &self,
         via: Protocol,

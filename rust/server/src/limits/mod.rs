@@ -108,6 +108,10 @@ impl Quotas {
             .acquire_within(keys, 1, Some(&self.operations))
     }
 
+    pub fn session_beside_handler(&self, keys: &ClientKeys) -> Result<Hold, Full> {
+        self.sessions.acquire(keys, 1)
+    }
+
     /// Receive-window credit for a connection an admitted client funds; none past its share or the clients' half.
     pub fn credit(&self, keys: &ClientKeys, bytes: usize) -> Option<Hold> {
         self.credit.acquire(keys, bytes).ok()

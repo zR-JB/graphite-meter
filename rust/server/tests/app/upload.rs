@@ -254,6 +254,40 @@ async fn a_lease_admits_its_grant_then_charges_its_client_and_ends_on_delete() {
 }
 
 #[tokio::test]
+async fn work_on_a_lease_holds_the_clients_share_until_it_ends_also_past_the_lease() {
+    let app = app(&[
+        ALL_LISTENERS.as_slice(),
+        &[
+            ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "2"),
+            ("GM_MAX_SESSIONS_PER_CLIENT", "1"),
+        ],
+    ]
+    .concat());
+    let body = serde_json::json!({"measurements": 2, "sessions": 1});
+    let lease = json(take_lease(&app, "192.0.2.1", request("POST", "/lease"), body).await).await;
+    let token = lease["token"].as_str().unwrap();
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let download = leased("GET", "/download?bytes=100000", token);
+        held.push(send(&app, Endpoint::H2, empty(download)).await);
+    }
+    let unleased = send(
+        &app,
+        Endpoint::H2,
+        empty(request("GET", "/download?bytes=1")),
+    )
+    .await;
+    assert_eq!(
+        header(&unleased, "graphite-meter-refusal"),
+        Some("client-limit")
+    );
+    send(&app, Endpoint::H1, empty(leased("DELETE", "/lease", token))).await;
+    assert_eq!(active(&app).await, 2, "both downloads still run");
+    drop(held);
+    assert_eq!(active(&app).await, 0);
+}
+
+#[tokio::test]
 async fn a_lease_admits_its_sessions_from_its_url_and_past_them_charges_the_client() {
     let app = app(&[
         ALL_LISTENERS.as_slice(),

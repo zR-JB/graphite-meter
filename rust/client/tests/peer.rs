@@ -1,6 +1,8 @@
 //! The network layer against canned peers: what a real server never does, proxies, the trust store and grants over TLS.
 use graphite_meter_client::{
     config::{Config, PathChoice},
+    controller::{Command, Controller},
+    events::Events,
     model::Stage,
     net::{Client, Fault, ReadBuffer, Request, ThroughputPath},
     run::{prepare::prepare, upload::UploadSession},
@@ -520,5 +522,56 @@ async fn a_transfer_port_whose_probe_names_another_api_version_is_named() {
             "{at} runs Graphite Meter 0.15.0, newer than this client ({}); update this client.",
             graphite_meter_client::VERSION
         )
+    );
+}
+
+/// A check replaced by a run, the run stopped, and the check a stop starts again end their leases, which the server
+/// would otherwise hold against this client's share until they idle out.
+#[tokio::test]
+async fn a_check_or_run_cut_short_ends_its_lease() {
+    let (listener, served) = local().await;
+    let mut heads = peer(listener, None, |_, head| match target(head) {
+        // The probe's answer never completes, so every check is still running when it is cut short.
+        "/probe" => Some("HTTP/1.1 200 OK\r\ncontent-length: 64\r\n\r\n{".into()),
+        _ => discovery(head, false, ""),
+    });
+    let config = downloads(&origin("http", served), Stage::Download);
+    let (events, _received) = Events::channel();
+    let mut controller = Controller::new(true, Arc::new(Pool::inline()), events);
+    let mut seen = Vec::new();
+    let mut probed = async |seen: &mut Vec<String>| {
+        while let Some((_, head)) = heads.recv().await {
+            seen.push(head);
+            if target(seen.last().unwrap()) == "/probe" {
+                return;
+            }
+        }
+    };
+    for command in [
+        Command::Check(config.clone()),
+        Command::Run(config.clone()),
+        Command::Stop,
+    ] {
+        controller.command(command);
+        probed(&mut seen).await;
+    }
+    controller.command(Command::Stop);
+    controller.settled().await;
+    let leases = |seen: &[String]| {
+        let leases = seen.iter().filter(|head| target(head) == "/lease");
+        leases
+            .map(|head| head.starts_with("DELETE ") && head.contains("graphite-meter-lease: t\r\n"))
+            .collect::<Vec<_>>()
+    };
+    let ended = tokio::time::timeout(Duration::from_secs(2), async {
+        while leases(&seen).len() < 6 {
+            seen.extend(heads.recv().await.map(|(_, head)| head));
+        }
+    });
+    ended.await.unwrap_or_default();
+    assert_eq!(
+        leases(&seen),
+        [false, true].repeat(3),
+        "each lease taken, then ended with its token"
     );
 }

@@ -143,7 +143,7 @@ jobs:
         # A stalled cache download falls back to the mirror in a minute instead of ten.
         env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
         with:
-          path: ${{ runner.temp }}/apt-cross
+          path: ${{ runner.temp }}/apt-cross/*.deb
           key: apt-cross-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
       # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers, which install while
       # Rust sets up. A stalled mirror fails the step in minutes instead of holding the job to its limit.
@@ -155,7 +155,7 @@ jobs:
           scripts/ci/apt-cached.sh cross "$RUNNER_TEMP/apt-cross"
           read -r url sha256 < <(python3 scripts/ci/toolchains.py llvm-mingw)
           archive="$RUNNER_TEMP/llvm-mingw.tar.xz"
-          curl -fsSL --retry 3 -o "$archive" "$url"
+          curl -fsSL --connect-timeout 20 --max-time 60 --retry 3 --retry-all-errors -o "$archive" "$url"
           printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
           mkdir "$RUNNER_TEMP/llvm-mingw"
           tar -xJf "$archive" --strip-components=1 -C "$RUNNER_TEMP/llvm-mingw"
@@ -430,7 +430,6 @@ jobs:
             uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
             with:
               chrome-version: ${{ needs.plan.outputs.chrome }}
-              install-dependencies: true
           # Mozilla's release archive, held to the SHA-256 Plan selected beside its version.
           - id: firefox
             name: Install Firefox
@@ -440,7 +439,7 @@ jobs:
               FIREFOX_SHA256: ${{ needs.plan.outputs.firefox_sha256 }}
             run: |
               archive="$RUNNER_TEMP/firefox.tar.xz"
-              curl -fsSL --retry 3 -o "$archive" \
+              curl -fsSL --connect-timeout 20 --max-time 60 --retry 3 --retry-all-errors -o "$archive" \
                 "https://ftp.mozilla.org/pub/firefox/releases/$FIREFOX_VERSION/linux-x86_64/en-US/firefox-$FIREFOX_VERSION.tar.xz"
               printf '%s  %s\n' "$FIREFOX_SHA256" "$archive" | sha256sum -c -
               tar -xJf "$archive" -C "$RUNNER_TEMP"
@@ -468,7 +467,7 @@ jobs:
         # A stalled cache download falls back to the mirror in a minute instead of ten.
         env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
         with:
-          path: ${{ runner.temp }}/apt-certutil
+          path: ${{ runner.temp }}/apt-certutil/*.deb
           key: apt-certutil-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
       # The network group's Firefox trusts the run's CA through certutil.
       - name: Install certutil

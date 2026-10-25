@@ -2,13 +2,11 @@
 use crate::{
     events::{Run, View},
     format::{
-        self, MISSING, arrow, compact_stage, count, direction_label, label, outcome_label,
-        population_label, round_trip,
+        self, MISSING, arrow, count, direction_label, label, outcome_label, population_label,
+        round_trip,
     },
     measure::latency::{Population, Summary, added},
-    model::{
-        Direction, Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus, Throughput,
-    },
+    model::{Direction, Outcome, ServerFailure, Stage, StageResult, StageStatus, Throughput},
     net::approval::EXPIRED,
     style::Palette,
     text::{Line, Style, wrap},
@@ -476,22 +474,17 @@ impl Report<'_> {
             lines.extend([Line::default(), Line::styled("Issues", palette.heading)]);
         }
         for (stage, issue) in &run.issues {
-            let scope = if issue.scope == Scope::Latency {
-                "latency"
-            } else {
-                "throughput"
-            };
             let at = issue
                 .at
                 .saturating_duration_since(run.at.unwrap_or(issue.at));
-            let (name, stage, at) = (
+            let (name, place, at) = (
                 self.name(&issue.server),
-                compact_stage(*stage),
+                format::place(*stage, issue.scope),
                 format::duration(at),
             );
             let reason = issue.failure.reason.label();
             lines.push(Line::plain(format!(
-                "{name} · {stage} {scope} · at {at} · {reason}"
+                "{name} · {place} · at {at} · {reason}"
             )));
         }
         lines.into_iter().map(|line| line.fit(self.width)).collect()

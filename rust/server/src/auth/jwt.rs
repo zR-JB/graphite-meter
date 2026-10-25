@@ -104,6 +104,10 @@ impl Key {
 pub(super) struct Jwks(Vec<Key>);
 
 impl Jwks {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// The usable signing keys of a key set; a key not for signatures, or one this server cannot read, is skipped.
     pub fn parse(document: &[u8]) -> Option<Self> {
         #[derive(Deserialize)]

@@ -9,11 +9,10 @@ notice text; the pinned builder image and toolchain establish binary provenance 
 import os
 import re
 import subprocess
-import urllib.request
 from pathlib import Path
 
 from ..ci.github_api import confined_path
-from ..ci.toolchains import rust_channel
+from ..ci.toolchains import download, rust_channel
 from .model import Json, LegalError, array, obj, read_json, sha256, string, strings, text
 
 SYSROOT = "$RUST_SYSROOT/"
@@ -95,9 +94,8 @@ def fetch_notices(repo: Path, entry: dict[str, Json]) -> None:
         if path.exists():
             data = path.read_bytes()
         else:
-            with urllib.request.urlopen(text(sources[relative], "url"), timeout=30) as response:
-                data = response.read(MAX_NOTICE_BYTES + 1)
-        if len(data) > MAX_NOTICE_BYTES or sha256(data) != text(sources[relative], "sha256"):
+            data = download(text(sources[relative], "url"), MAX_NOTICE_BYTES)
+        if sha256(data) != text(sources[relative], "sha256"):
             raise LegalError(f"runtime notice bytes differ from the reviewed source: {relative}")
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
