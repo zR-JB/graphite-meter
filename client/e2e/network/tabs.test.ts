@@ -65,5 +65,11 @@ test(
       await fleet.close();
     }
   },
-  { timeout: 120_000, failing: "until step 13: tabs share no lock on runs" },
+  {
+    timeout: 120_000,
+    failing: {
+      until: "until step 13: tabs share no lock on runs",
+      error: /^contains: \[\{"kind":"css","value":"#console"\}\]/,
+    },
+  },
 );

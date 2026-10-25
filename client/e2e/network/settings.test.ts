@@ -58,6 +58,9 @@ test(
   },
   {
     timeout: 120_000,
-    failing: "until step 12: Settings locks paths and streams while a test runs",
+    failing: {
+      until: "until step 12: Settings locks paths and streams while a test runs",
+      error: /^not actionable: .* for .*"name":"Throughput path"/s,
+    },
   },
 );
