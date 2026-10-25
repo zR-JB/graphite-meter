@@ -18,7 +18,7 @@ export class Lane {
   line = new Float64Array(0);
   n = 0;
   #sums = new Float64Array(0);
-  #counts = new Uint32Array(0);
+  #counts = new Float64Array(0);
   #lines = new Float64Array(0);
 
   /** Rebins one stage's samples of one direction; samples before `start` stay out, those past the span pile into the last column. */
@@ -32,7 +32,7 @@ export class Lane {
   ): void {
     if (this.#sums.length !== columns) {
       this.#sums = new Float64Array(columns);
-      this.#counts = new Uint32Array(columns);
+      this.#counts = new Float64Array(columns);
       this.t = new Float64Array(columns);
       this.v = new Float64Array(columns);
       this.line = new Float64Array(columns);
@@ -42,16 +42,30 @@ export class Lane {
       this.#counts.fill(0);
     }
     const length = span || 1;
+    const columnAt = (t: number) =>
+      Math.min(columns - 1, Math.floor(((t - start) / length) * columns));
+    const edge = (column: number) => start + (column / columns) * length;
     for (const sample of samples) {
       if (sample.stage !== stage || sample.dir !== dir || sample.t < start) continue;
-      const column = Math.min(columns - 1, Math.floor(((sample.t - start) / length) * columns));
-      // A recovery inside a bin keeps only its new line, never an average with what failed before it.
-      if (this.#lines[column] !== sample.continuityId) {
-        this.#sums[column] = this.#counts[column] = 0;
-        this.#lines[column] = sample.continuityId;
+      const first = columnAt(sample.t0);
+      const last = columnAt(sample.t1);
+      for (let column = first; column <= last; column++) {
+        // A folded sample's ticks spread over the columns its time covers, so a fold leaves each column's mean.
+        const ticks =
+          first === last
+            ? sample.ticks
+            : (sample.ticks *
+                (Math.min(sample.t1, column === last ? sample.t1 : edge(column + 1)) -
+                  Math.max(sample.t0, edge(column)))) /
+              (sample.t1 - sample.t0);
+        // A recovery inside a bin keeps only its new line, never an average with what failed before it.
+        if (this.#lines[column] !== sample.continuityId) {
+          this.#sums[column] = this.#counts[column] = 0;
+          this.#lines[column] = sample.continuityId;
+        }
+        this.#sums[column]! += sample.bytesPerSec * ticks;
+        this.#counts[column]! += ticks;
       }
-      this.#sums[column]! += sample.bytesPerSec;
-      this.#counts[column]!++;
     }
     this.n = 0;
     for (let column = 0; column < columns; column++) {
@@ -111,7 +125,7 @@ export interface ReplyBar {
   hi: number;
 }
 
-/** A stage's reply buckets as bars, narrower ones joined whole on the first bucket's grid, so a live bar only grows; timeouts have none. */
+/** A stage's reply buckets as bars, joined in power-of-two groups on the series' grid so no fold moves an edge; timeouts have none. */
 export function replyBars(
   buckets: readonly LatencyBucket[],
   phase: LatencyBucket["phase"],
@@ -119,13 +133,14 @@ export function replyBars(
   span: number,
   width: number,
 ): ReplyBar[] {
+  const origin = buckets.find((bucket) => bucket.phase === phase)?.startT ?? start;
   const replies = buckets.filter((bucket) => bucket.phase === phase && bucket.medianRttMs !== null);
-  const origin = replies[0]?.startT ?? start;
   let bucketMs = 0;
-  for (const bucket of replies.slice(0, 3))
-    bucketMs = Math.max(bucketMs, bucket.endT - bucket.startT);
+  for (const bucket of replies) bucketMs = Math.max(bucketMs, bucket.endT - bucket.startT);
   const pitchMs = (REPLY_PX / Math.max(1, width)) * (span || 1);
-  const groupMs = bucketMs ? Math.max(1, Math.ceil(pitchMs / bucketMs)) * bucketMs : pitchMs;
+  const groupMs = bucketMs
+    ? bucketMs * 2 ** Math.max(0, Math.ceil(Math.log2(pitchMs / bucketMs)))
+    : pitchMs;
   const bars: ReplyBar[] = [];
   let group = Number.NaN;
   let continuity = Number.NaN;

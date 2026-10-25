@@ -28,7 +28,6 @@ import {
   serverEvidence,
   settled,
   settledCard,
-  shapeSoFar,
   shownEvidence,
   type CardModel,
   type Evidence,
@@ -420,20 +419,16 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
         held: idle?.p50Ms ?? null,
       };
     }
-    live.stageSamples();
-    const samples = run.throughput;
-    const start = live.stageSamples.peek()[stage as TransferStage]?.first ?? 0;
+    const trace = live.stageSamples()[stage as TransferStage];
     const sample = run.live();
-    const lastOf = (dir: "down" | "up") =>
-      samples.findLast((each) => each.stage === stage && each.dir === dir)?.bytesPerSec ?? 0;
     return {
       ...none,
       own: running && live.rateStage() === stage,
       spoken:
         sample?.stage === stage ? (sample.down ?? 0) + (sample.bridgedUp ?? sample.up ?? 0) : null,
-      held: lastOf("down") + lastOf("up") || null,
+      held: (trace && trace.latest.down + trace.latest.up) || null,
       bytes: run.stageBytes(),
-      shape: shapeSoFar(samples, stage, start),
+      shape: trace?.shape() ?? null,
     };
   };
   const model = (stage: Stage) =>

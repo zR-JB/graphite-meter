@@ -177,9 +177,9 @@ test("warmup replies move the live round trip and never enter a bucket, a summar
   h.start();
   const result = await h.result();
   expect(result.latencyByStage.latency).toMatchObject({ probeCount: 4, maxMs: 10 });
-  // The first replies show at once, later ones as one median per 200 ms.
+  // One median per 200 ms bucket, as the window's, and the last as the window opens.
   expect(h.events.flatMap((event) => (event.type === "warmupReply" ? [event.rttMs] : []))).toEqual([
-    900, 700,
+    900, 500,
   ]);
   for (const event of h.events) {
     if (event.type === "latency") expect(event.bucket.maxRttMs).toBeLessThan(100);

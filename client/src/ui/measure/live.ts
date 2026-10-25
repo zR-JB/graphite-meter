@@ -217,17 +217,8 @@ function createLive(app: App) {
     });
   });
 
-  /** Each transfer stage's sample count and first and last time, as a key that changes only with that stage's samples. */
-  const stageSamples = computed(() => {
-    run.throughputVersion();
-    const seen: Partial<Record<TransferStage, { count: number; first: number; last: number }>> = {};
-    for (const sample of run.throughput) {
-      const entry = (seen[sample.stage] ??= { count: 0, first: sample.t, last: sample.t });
-      entry.count++;
-      entry.last = sample.t;
-    }
-    return seen;
-  });
+  /** Each transfer stage's running facts; a new object per sample, so readers follow the facts that change in place. */
+  const stageSamples = computed(() => (run.throughputVersion(), { ...run.traces }));
   /** Keys each bucket phase so the key changes only when that phase's buckets do. */
   const bucketKeys = computed(() => {
     const keys: Partial<Record<LatencyBucket["phase"], number>> = {};

@@ -1,8 +1,7 @@
-// Groups a server's probe outcomes into time buckets for display; late outcomes revise the last ten seconds.
+// Groups a server's probe outcomes into fixed time buckets for display; late outcomes revise the last ten seconds.
 import type { Stage } from "../run/schedule";
 import { midpointMedian, nearestRank } from "./latency";
 
-export const SERIES_LIMIT = 1_200;
 const MIN_WIDTH_MS = 200;
 /** A late outcome may still revise a closed bucket this far back. */
 export const REVISION_MS = 10_000;
@@ -23,13 +22,9 @@ export interface LatencyBucket {
   timeoutCount: number;
 }
 
-/** A width at which a stage of `spanMs` fits the series; with a fixed probe spacing no bucket is empty by construction. */
-export function bucketWidth(spanMs: number, intervalMs: number | null): number {
-  const base = Math.max(
-    MIN_WIDTH_MS,
-    Math.ceil(Math.max(0, spanMs) / SERIES_LIMIT / MIN_WIDTH_MS) * MIN_WIDTH_MS,
-  );
-  return intervalMs ? Math.ceil(base / intervalMs) * intervalMs : base;
+/** One width for every stage length; with a fixed probe spacing no bucket is empty by construction. */
+export function bucketWidth(intervalMs: number | null): number {
+  return intervalMs ? Math.ceil(MIN_WIDTH_MS / intervalMs) * intervalMs : MIN_WIDTH_MS;
 }
 
 interface Open {
@@ -44,43 +39,40 @@ export class LatencyBuckets {
   #phase: LatencyBucket["phase"] = "idle";
   #continuity = 0;
   #width = MIN_WIDTH_MS;
-  #intervalMs: number | null = null;
+  #origin = 0;
+  #warmup = false;
   #pending: Open | null = null;
   #closed: Open[] = [];
   /** Holds closed buckets revised since the last report. They go out once per tick, not once per outcome. */
   #revised = new Set<Open>();
 
   /** `emit` receives each bucket that closes with probes, and each revision at the next `closeThrough` or `flush`. */
-  constructor(readonly emit: (bucket: LatencyBucket) => void) {}
+  constructor(readonly emit: (bucket: LatencyBucket, warmup: boolean) => void) {}
 
   reset(
     t: number,
     phase: Stage,
     continuity: number,
-    spanMs: number,
     intervalMs: number | null,
+    warmup = false,
   ): void {
     this.#phase = phase;
-    this.#intervalMs = intervalMs;
-    this.#width = bucketWidth(spanMs, intervalMs);
+    this.#warmup = warmup;
+    this.#width = bucketWidth(intervalMs);
+    this.#origin = t;
     this.restart(t, continuity);
   }
 
+  /** A new line's buckets keep the stage's grid, so a series folds them on the same slot edges. */
   restart(t: number, continuity: number): void {
     this.#continuity = continuity;
-    this.#pending = this.#open(t);
+    this.#pending = this.#open(this.#aligned(t));
     this.#closed = [];
     this.#revised.clear();
   }
 
-  /** A longer stage only widens buckets, so drawn ones never split. */
-  widen(spanMs: number): void {
-    this.#width = Math.max(this.#width, bucketWidth(spanMs, this.#intervalMs));
-    if (this.#pending) this.#pending.endT = this.#pending.startT + this.#width;
-  }
-
   observe(t: number, rttMs: number, timedOut: boolean): void {
-    this.#pending ??= this.#open(t);
+    this.#pending ??= this.#open(this.#aligned(t));
     this.#close(t);
     const pending = this.#pending!;
     const target =
@@ -101,7 +93,7 @@ export class LatencyBuckets {
   }
 
   #report(): void {
-    for (const bucket of this.#revised) this.emit(this.#summary(bucket, bucket.endT));
+    for (const bucket of this.#revised) this.emit(this.#summary(bucket, bucket.endT), this.#warmup);
     this.#revised.clear();
   }
 
@@ -118,7 +110,7 @@ export class LatencyBuckets {
         this.#pending = this.#open(pending.startT + skipped * this.#width);
         continue;
       }
-      if (pending.pings) this.emit(this.#summary(pending, pending.endT));
+      if (pending.pings) this.emit(this.#summary(pending, pending.endT), this.#warmup);
       this.#closed.push(pending);
       while (this.#closed[0]!.endT < pending.endT - REVISION_MS) this.#closed.shift();
       this.#pending = this.#open(pending.endT);
@@ -136,7 +128,14 @@ export class LatencyBuckets {
     this.#pending = null;
     this.#closed = [];
     if (pending?.pings)
-      this.emit(this.#summary(pending, Math.max(pending.startT, Math.min(pending.endT, atT))));
+      this.emit(
+        this.#summary(pending, Math.max(pending.startT, Math.min(pending.endT, atT))),
+        this.#warmup,
+      );
+  }
+
+  #aligned(t: number): number {
+    return this.#origin + Math.floor((t - this.#origin) / this.#width) * this.#width;
   }
 
   #open(startT: number): Open {

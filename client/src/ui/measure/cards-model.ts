@@ -2,7 +2,6 @@
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyResult, LatencySummary } from "../../engine/measure/latency";
 import type { WireModel } from "../../engine/measure/overhead";
-import { stabilityPct } from "../../engine/measure/stability";
 import {
   grid,
   type Cause,
@@ -11,7 +10,7 @@ import {
   type MultiServerResult,
   type RunResult,
 } from "../../engine/run/result";
-import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
+import { STAGES, type Stage } from "../../engine/run/schedule";
 import {
   fmtBytes,
   fmtCount,
@@ -427,30 +426,6 @@ export function liveCard(
 
 const spokenOf = ({ figure, unit }: { figure: string; unit: string }) =>
   figure === MISSING ? null : `${figure} ${unit}`;
-
-/** Finds Peak and Stability so far from each lane's mean per whole second since `start`, lanes added per second. */
-export function shapeSoFar(
-  samples: readonly { t: number; bytesPerSec: number; stage: string; dir: string }[],
-  stage: TransferStage,
-  start: number,
-): LiveEvidence["shape"] {
-  const seconds = new Map<number, Map<string, { sum: number; n: number }>>();
-  for (const sample of samples) {
-    if (sample.stage !== stage || sample.t < start) continue;
-    const second = Math.floor((sample.t - start) / 1000);
-    const lanes = seconds.get(second) ?? new Map<string, { sum: number; n: number }>();
-    seconds.set(second, lanes);
-    const cell = lanes.get(sample.dir) ?? { sum: 0, n: 0 };
-    lanes.set(sample.dir, cell);
-    cell.sum += sample.bytesPerSec;
-    cell.n++;
-  }
-  if (!seconds.size) return null;
-  const rates = [...seconds.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, lanes]) => lanes.values().reduce((total, { sum, n }) => total + sum / n, 0));
-  return { peak: Math.max(...rates), stability: rates.length >= 2 ? stabilityPct(rates) : null };
-}
 
 export interface Issue {
   server: string;

@@ -83,6 +83,9 @@ test("a plot bin never averages across a recovery and its curves end at each con
     bytesCumulative: 0,
     stage: "download",
     dir: "down",
+    ticks: 1,
+    t0: t,
+    t1: t,
   });
   lane.fill(
     [sample(10, 10, 0), sample(20, 90, 1), sample(120, 100, 1)],
