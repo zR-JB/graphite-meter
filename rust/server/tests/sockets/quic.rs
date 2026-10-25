@@ -230,13 +230,19 @@ async fn under_pressure_an_admitted_upload_reserves_no_receive_credit() {
     let id = h3.server.upload_id().await;
     let pressure = budget.lease(budget.usage().limit / 4 * 3).unwrap();
     let before = settled(&budget).await;
-    let mut answer = connection
-        .send("POST", &format!("/upload?id={id}"), b"held back")
+    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
+    upload
+        .send_data(bytes::Bytes::from_static(b"held back"))
         .await
-        .1;
-    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":9}"#);
+        .unwrap();
     let held = settled(&budget).await.saturating_sub(before);
-    assert!(held < CONNECTION_CREDIT / 4, "{held} bytes under pressure");
+    assert!(
+        held < CONNECTION_CREDIT / 4,
+        "{held} bytes while it reads under pressure"
+    );
+    upload.finish().await.unwrap();
+    assert_eq!(answer.response().await.unwrap().status(), 200);
+    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":9}"#);
     drop(pressure);
 }
 

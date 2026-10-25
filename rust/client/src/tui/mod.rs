@@ -327,14 +327,16 @@ impl App {
             }
             Event::RunStarted { .. } => self.stopping = false,
             Event::ServerFailed(failure) => {
-                let name = self
-                    .view
-                    .servers
-                    .iter()
-                    .find(|path| path.id == failure.server);
-                let name = name.map_or(failure.server.as_str(), |path| path.name.as_str());
-                let text = format!("{name}: {}", failure.failure.reason.label());
-                self.notify(Line::styled(text, self.palette.warn));
+                let recorded = self.view.run.as_ref().and_then(|run| run.issues.last());
+                if let Some((stage, _)) = recorded {
+                    let issue = match self.several() {
+                        true => format!("Issue on {}", self.name(Some(&failure.server))),
+                        false => "Issue".into(),
+                    };
+                    let place = format::place(*stage, failure.scope);
+                    let text = format!("{issue} · {place}: {}", failure.failure.reason.label());
+                    self.notify(Line::styled(text, self.palette.warn));
+                }
             }
             Event::RunFinished { error, .. } => {
                 self.stopping = false;

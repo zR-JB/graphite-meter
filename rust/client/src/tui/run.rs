@@ -237,10 +237,11 @@ impl App {
             .servers
             .iter()
             .find(|server| Some(&server.id) == id);
-        server.map_or_else(
-            || crate::format::MISSING.into(),
-            |server| server.name.clone(),
-        )
+        match (server, id) {
+            (Some(server), _) => server.name.clone(),
+            (None, Some(id)) => id.as_str().to_owned(),
+            (None, None) => crate::format::MISSING.into(),
+        }
     }
 
     pub(super) fn elapsed(&self) -> Duration {

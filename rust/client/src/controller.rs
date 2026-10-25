@@ -254,10 +254,13 @@ impl Work {
             for (origin, grant) in &state.grants {
                 client.grant(origin, grant);
             }
-            let mut prepared = self
+            let checked = self
                 .stop
-                .run_until_cancelled(prepare(config, client.clone()))
-                .await?;
+                .run_until_cancelled(prepare(config, client.clone()));
+            let Some(mut prepared) = checked.await else {
+                client.end_leases().await;
+                return None;
+            };
             let Some((origin, issuer)) = asking(&prepared, config.url.as_ref()) else {
                 return Some(prepared);
             };

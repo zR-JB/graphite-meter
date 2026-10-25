@@ -358,9 +358,35 @@ Commands:
 
 Options:
 ";
+    const ENVIRONMENT: &str = "
+Environment only:
+  GM_TRUSTED_PROXIES                 Proxy CIDRs allowed to supply X-Real-IP, X-Forwarded-Proto and X-Forwarded-Host
+  GM_AUTH_PASSWORD_HASH              Inline operator Argon2id PHC hash; prefer the file
+  GM_AUTH_OIDC_CLIENT_SECRET         Inline OIDC client secret; prefer the file
+  GM_SERVER_CATALOG                  Server catalog JSON
+  GM_SERVER_CATALOG_FILE             Absolute path of a server catalog JSON file
+  TZ                                 Time zone name for log times, such as Europe/Berlin (default: UTC)
+  HTTPS_PROXY, HTTP_PROXY, NO_PROXY  Proxy for OIDC requests
+  SSL_CERT_FILE, SSL_CERT_DIR        CA roots for OIDC requests (default: the system's)
+  TOKIO_WORKER_THREADS               Runtime worker threads (default: one per CPU)
+";
     write!(
         usage,
-        "{COMMANDS}{}",
+        "{COMMANDS}{}{ENVIRONMENT}",
         flag::options(SETTINGS, &Settings::default())
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn usage_names_every_variable_without_a_flag() {
+        let mut usage = Vec::new();
+        super::write_usage(&mut usage).unwrap();
+        let usage = String::from_utf8(usage).unwrap();
+        for flag in super::SETTINGS.iter().filter(|flag| flag.name.is_empty()) {
+            let env = flag.env.unwrap();
+            assert!(usage.contains(&format!("\n  {env} ")), "{env}");
+        }
+    }
 }

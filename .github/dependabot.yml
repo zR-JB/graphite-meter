@@ -5,13 +5,13 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 7
+      default-days: 2
   - package-ecosystem: cargo
     directory: /rust
     schedule:
       interval: weekly
     cooldown:
-      default-days: 7
+      default-days: 2
     groups:
       rust-deps:
         patterns: ["*"]
@@ -20,7 +20,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 7
+      default-days: 2
     groups:
       client-deps:
         patterns: ["*"]

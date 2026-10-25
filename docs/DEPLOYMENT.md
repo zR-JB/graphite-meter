@@ -28,24 +28,31 @@ Open <http://localhost:7246>, or `http://SERVER_IP:7246` from another device. Ov
 HTTP/1.1 throughput and WebSocket latency. Browsers expose WebTransport only in a secure context, so remote
 WebTransport needs HTTPS and the native HTTP/3 listener.
 
+Keep host and container ports equal. Discovery advertises a listener at its own port, so with `-p 8080:7246` the
+page loads but says "Could not reach http://SERVER_IP:7246". To serve on 8080, run `-e GM_H1_ADDR=:8080 -p 8080:8080`.
+
 ## Without Docker
 
 Every release since 0.13.1 also attaches the server alone for Linux as
 `graphite-meter-server_X.Y.Z_linux_amd64.tar.gz` and `graphite-meter-server_X.Y.Z_linux_arm64.tar.gz`. Each holds the
-same static executable as the image, with its license notices, and needs nothing else installed. Download one with
-`checksums.txt`, check it and start it:
+same static executable as the image, with its license notices, and needs nothing else installed. Download one, check
+it and start it:
 
 ```sh
 curl -fLO https://github.com/zR-JB/graphite-meter/releases/download/vX.Y.Z/graphite-meter-server_X.Y.Z_linux_amd64.tar.gz
-curl -fLO https://github.com/zR-JB/graphite-meter/releases/download/vX.Y.Z/checksums.txt
-sha256sum --check --ignore-missing checksums.txt
+gh release verify-asset vX.Y.Z graphite-meter-server_X.Y.Z_linux_amd64.tar.gz -R zR-JB/graphite-meter
 tar -xzf graphite-meter-server_X.Y.Z_linux_amd64.tar.gz
 ./graphite-meter-server_X.Y.Z_linux_amd64/graphite-meter-server
 ```
 
-It listens on port 7246 on every address and takes the same `GM_*` variables and flags as the image, listed in the
-[server reference](REFERENCE.md#settings). For OIDC sign-in it finds the system CA bundle on Debian, Ubuntu, Fedora,
-RHEL, openSUSE, Alpine and Arch without configuration.
+Releases are immutable, so GitHub signs an attestation of their files, and the [GitHub CLI](https://cli.github.com),
+signed in with `gh auth login` on any machine, checks a download against it. Without the CLI, the release's
+`checksums.txt` and `sha256sum --check --ignore-missing checksums.txt` catch a damaged download, but that file comes
+from the same page, so it proves nothing more.
+
+The server listens on port 7246 on every address and takes the same `GM_*` variables and flags as the image, listed
+in the [server reference](REFERENCE.md#settings). For OIDC sign-in it finds the system CA bundle on Debian, Ubuntu,
+Fedora, RHEL, openSUSE, Alpine and Arch without configuration.
 
 To keep it running, install it, create an unprivileged user and a settings file, which may stay empty:
 
@@ -104,9 +111,10 @@ export GM_PUBLIC_HOST=meter.example.com GM_CERT_NAME=meter.example.com GM_CERTIF
 docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
 ```
 
-It publishes TCP 7247 to 7249 and UDP 7249 and mounts the tree read-only. The key must be readable by the
-[container user](#container-user). For issuance and renewal, see the
-[TLS Quadlet](../container/quadlet/README.md#native-tls-with-certbot), which uses Cloudflare DNS-01.
+Compose reads these three variables to fill in the overlay; the server does not. It publishes TCP 7247 to 7249 and
+UDP 7249 and mounts the tree read-only. The key must be readable by the [container user](#container-user). For
+issuance and renewal, see the [TLS Quadlet](../container/quadlet/README.md#native-tls-with-certbot), which uses
+Cloudflare DNS-01.
 
 Prefer an ECDSA P-256 key, which the TLS Quadlet issues with `certbot --key-type ecdsa`. Every TLS and QUIC
 handshake signs with the key, and an RSA-2048 key costs about four times the CPU per handshake.
@@ -152,16 +160,20 @@ by it:
   ```
 
 - Docker secrets need `sudo chown 65532:65532 FILE && sudo chmod 0400 FILE`.
-- Quadlet needs nothing. Podman secrets are world-readable inside the container. Your user owns the TLS and
-  Tailscale keys, and those units map it to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
+- The TLS and Tailscale Quadlets need nothing: your user owns their keys, and those units map it to the image user
+  with `UserNS=keep-id:uid=65532,gid=65532`. Podman secrets are world-readable inside the container. A rootful
+  default Quadlet (`/etc/containers/systemd/`) that mounts a root-owned `/etc/letsencrypt` needs the group grant
+  above.
 
 ## Native listeners
 
 Each listener has its own address and advertised origin, so a client picks a protocol by picking an address. The
-clear HTTP/1.1 listener on `GM_H1_ADDR` is required and also serves the UI and discovery. The other listeners stay
-off until they get an address. HTTP/3 serves WebTransport and needs its port open for both TCP and UDP end to
-end. All TLS listeners share `GM_TLS_CERT` and `GM_TLS_KEY`. The server reloads a valid replacement certificate and
-key on its own and keeps the previous pair through an incomplete renewal.
+clear HTTP/1.1 listener on `GM_H1_ADDR` is required. It and the HTTPS HTTP/1.1 listener serve the UI, discovery and
+WebSockets as well as probes, transfers and upload control; HTTP/2 and HTTP/3 serve probes, transfers, leases and
+upload control only. The other listeners stay off until they
+get an address. HTTP/3 serves WebTransport and needs its port open for both TCP and UDP end to end. All TLS
+listeners share `GM_TLS_CERT` and `GM_TLS_KEY`. The server reloads a valid replacement certificate and key on its
+own and keeps the previous pair through an incomplete renewal.
 
 ```env
 GM_H1_TLS_ADDR=:7247
@@ -185,10 +197,11 @@ GM_H3_PUBLIC_ORIGIN=https://meter.example.com:7249
   `GM_PUBLIC_LATENCY_ORIGINS`, and they usually name a reverse proxy. The browser reports the protocol it reached,
   and the server reports what arrived upstream. `self` is the origin that served that server's discovery request.
 
-An upload belongs to the lease its client took, so its progress feed, checkpoints and finalize go to the server's
-discovery origin, whichever origin carries the upload. When discovery answered over confirmed HTTP/1.1 and that origin
-also offers WebSocket latency, the browser reads the feed over `/ws/progress`, which holds none of the browser's six
-connections; otherwise, as over HTTP/2 and HTTP/3, it reads `/upload/progress`.
+An upload's checkpoints and finalize go to the origin the browser read the server's `/preflight` from, whichever
+origin carries the upload. A WebTransport upload carries its progress feed in its own session. Any other upload
+reads it from that origin: over `/ws/progress` when the browser reports that the origin answered over HTTP/1.1 and
+it offers WebSocket latency, which takes none of the six HTTP/1.1 connections a browser opens per origin, and over
+`/upload/progress` otherwise.
 
 An origin cannot be both native and negotiated, except as a latency-only origin. Browsers differ on clear HTTP
 loopback from an HTTPS page, so advertise HTTPS paths for HTTPS deployments, including on `localhost`.
@@ -233,6 +246,7 @@ server {
 
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $http_host;
 
@@ -257,9 +271,15 @@ with `nginx -t`.
 meter.example {
     reverse_proxy graphite-meter:7246 {
         header_up X-Real-IP {remote_host}
+        transport http {
+            keepalive 10s
+        }
     }
 }
 ```
+
+`keepalive 10s` drops idle upstream connections before Graphite Meter closes them at 15 s; Caddy keeps them for
+2 minutes by default.
 
 ### Traefik
 
@@ -272,8 +292,8 @@ docker compose -f container/docker-compose.yml -f container/docker-compose.traef
 
 Traefik needs no header middleware. For a client outside `forwardedHeaders.trustedIPs` it drops the client's
 `X-Real-Ip` and `X-Forwarded-*` headers, sets `X-Real-Ip` to the connection peer and appends the same address to
-`X-Forwarded-For`. It sends a WebSocket upgrade's protocol as `wss`, which counts as HTTPS. Two settings exist only
-in Traefik's static configuration, never in labels, and the overlay sets both as flags:
+`X-Forwarded-For`. It sends a WebSocket upgrade's protocol as `wss`, which counts as HTTPS. Two settings belong to
+Traefik's static configuration, which labels cannot set, so the overlay passes both as flags:
 
 - `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0` is needed because Traefik's 60 s default
   cuts an upload stage that streams one request body for longer.
@@ -316,8 +336,8 @@ Register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorizat
 succeeds, and hybrid retries it in the background.
 
 Advertised origins must use the authentication hostname, but their ports may differ. Clear HTTP/1.1 cannot be
-advertised. The default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so set `none` behind a proxy or
-`http1-tls,http2,http3`, or the server refuses to start.
+advertised. The default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so behind a proxy set `none` with
+`GM_PUBLIC_ORIGINS=self`, or else list `http1-tls,http2,http3`; otherwise the server refuses to start.
 
 Sessions, device cookies and rate limits are listed under [sign-in limits](REFERENCE.md#sign-in-limits).
 
@@ -339,9 +359,10 @@ mounted read-only, and restart. Usually a list of the other servers' origins is 
 export GM_SERVER_CATALOG='["https://fra.example.net","https://ams.example.net"]'
 ```
 
-Each server's name, location and paths come from its own `/preflight`, and until discovery succeeds the client
-shows the hostname. Do not list `/preflight` or `/probe` paths. The object form adds named IDs, a default selection
-and extra measurement hosts, within the [catalog rules](REFERENCE.md#server-catalog):
+Each server's name, location and paths come from its own `/preflight`, and until discovery succeeds the browser
+shows the host and any non-default port of its URL, or in the object form the entry's `name`, else its `id`. Do not
+list `/preflight` or `/probe` paths. The object form adds named IDs, a default selection and extra measurement
+hosts, within the [catalog rules](REFERENCE.md#server-catalog):
 
 ```json
 {
@@ -396,8 +417,9 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 | Symptom                                    | Check                                                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | Another device cannot open the page        | Use the server IP, not `localhost`; publish and allow TCP 7246.                             |
+| The page loads but cannot reach the server | Keep host and container ports equal; see [one container](#one-container).                   |
 | WebTransport is unavailable                | Check for an HTTPS page, a trusted certificate, browser support, an advertised HTTP/3 origin and TCP and UDP reachability. |
-| WebTransport failed 4 times on this page   | Its handshakes failed or timed out, often UDP that a firewall drops; fix that, then reload the page. |
+| WebTransport failed 4 times on this page   | Its handshakes failed or timed out, often UDP that a firewall drops; fix that, then reload the page, or wait 5 minutes after the last failure. |
 | An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.          |
 | A local peer fails only from a hosted page | Check local-network permission and HTTPS; see the [server catalog](#server-catalog).        |
 | A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the terminal client accepts literals.     |

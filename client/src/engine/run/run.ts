@@ -37,8 +37,8 @@ import {
 import { pageClock, RunClock, type Clock } from "./clock";
 import {
   failureScope,
+  graded,
   lanes,
-  outcomeOf,
   stageStatus,
   type MultiServerResult,
   type RunResult,
@@ -375,16 +375,13 @@ export class Run {
     this.#emit({ type: "aborted", t: this.#elapsed });
   }
 
-  /** Ends now with what was measured; each stage left unfinished fails for `reason` on each of `servers`. */
-  end(
-    reason: FailureReason,
-    message: string,
-    servers: readonly { id: string }[] = this.#participants(),
-  ): void {
+  /** Ends now with what was measured; the stage it ends in fails for `reason`, and the later ones read as not reached. */
+  end(reason: FailureReason, message: string): void {
     if (this.#state !== "running") return;
-    for (const stage of STAGES)
-      if (planned(this.#plan, stage) && !this.#settled.has(stage))
-        for (const { id } of servers) this.#record(id, failureScope(stage), reason, message, stage);
+    const stage = STAGES.find((each) => planned(this.#plan, each) && !this.#settled.has(each));
+    if (stage)
+      for (const { id } of this.#participants())
+        this.#record(id, failureScope(stage), reason, message, stage);
     this.#finish();
   }
 
@@ -1140,9 +1137,7 @@ export class Run {
           `All selected test servers failed. ${server.prepared.server.name}: ${message}`,
         );
       // A sole server skips to its next stage; several that all fail end the run as incomplete.
-      return this.#servers.length === 1
-        ? this.#skip(stage)
-        : this.end(reason, "No server was left to run this stage", this.#servers);
+      return this.#servers.length === 1 ? this.#skip(stage) : this.#finish();
     }
     if (stage.phase === "measuring" && stage.activity.transfer.length)
       this.#aggregate.dropout(
@@ -1356,8 +1351,18 @@ export class Run {
       this.#emit({ type: "stall", stall: null });
       if (!this.#current(stage)) return;
     }
-    const status = this.#settle(name);
-    this.#emit({ type: "stageEnd", stage: name, status, results: { ...this.#results } });
+    this.#settle(name);
+    const { stages } = graded({
+      ...this.#results,
+      stages: this.#statuses(),
+      multiServer: this.details(),
+    });
+    this.#emit({
+      type: "stageEnd",
+      stage: name,
+      status: stages[name],
+      results: { ...this.#results },
+    });
     // A handler may have ended or stopped the run.
     if (!this.#current(stage)) return;
     this.#tickAt = this.#clock.resume();
@@ -1447,9 +1452,8 @@ export class Run {
   }
 
   /** A stage's results and status are reduced once, the moment it ends. */
-  #settle(name: Stage): StageStatus {
-    const settled = this.#settled.get(name);
-    if (settled) return settled.status;
+  #settle(name: Stage): void {
+    if (this.#settled.has(name)) return;
     const stage = this.#stages.get(name);
     const plan = stage?.plan ?? {
       planned: planned(this.#plan, name),
@@ -1458,7 +1462,7 @@ export class Run {
     };
     if (!stage && !plan.planned) {
       this.#settled.set(name, { status: "not-run", plan });
-      return "not-run";
+      return;
     }
     if (stage) this.#reduce(name, plan.early);
     const measured = lanes(this.#results, name).every(Boolean);
@@ -1480,13 +1484,16 @@ export class Run {
         this.#record(id, failureScope(name), "insufficient-evidence", message, name);
     }
     // A server that stayed but measured too little for its own result says so, as the run does; the stage's status counts it.
-    if (stage && name !== "latency")
-      for (const id of stage.seats.keys()) {
-        const own = stage.activity.transfer.map((dir) => {
-          const result = this.#aggregate.serverResult(name, dir, id);
-          this.#own.set(`${name}\t${dir}\t${id}`, result);
-          return result;
-        });
+    if (stage)
+      for (const [id, seat] of stage.seats) {
+        const own =
+          name === "latency"
+            ? [seat.server.latency.result()]
+            : stage.activity.transfer.map((dir) => {
+                const result = this.#aggregate.serverResult(name, dir, id);
+                this.#own.set(`${name}\t${dir}\t${id}`, result);
+                return result;
+              });
         if (!own.every(Boolean) && !this.#failed(name, id))
           this.#record(
             id,
@@ -1498,7 +1505,12 @@ export class Run {
       }
     const status = stageStatus(lanes(this.#results, name), this.#failed(name));
     this.#settled.set(name, { status, plan });
-    return status;
+  }
+
+  #statuses(): Record<Stage, StageStatus> {
+    return Object.fromEntries(
+      STAGES.map((stage) => [stage, this.#settled.get(stage)?.status ?? "not-run"]),
+    ) as Record<Stage, StageStatus>;
   }
 
   #reduce(name: Stage, early: boolean): void {
@@ -1577,9 +1589,8 @@ export class Run {
     if (this.#state !== "running") return;
     this.#state = "completed";
     const durationMs = this.#clock.runMs();
-    const stages = Object.fromEntries(
-      STAGES.map((stage) => [stage, this.#settle(stage)]),
-    ) as Record<Stage, StageStatus>;
+    for (const stage of STAGES) this.#settle(stage);
+    const stages = this.#statuses();
     const plans = Object.fromEntries(
       STAGES.map((stage) => [stage, this.#settled.get(stage)!.plan]),
     ) as StagePlans;
@@ -1589,16 +1600,16 @@ export class Run {
       this.#results.latency = focus.result();
       stages.latency = stageStatus([this.#results.latency], this.#failed("latency"));
     }
-    const result: RunResult = {
+    // A stage measured without every selected server is partial, as History reads any record.
+    const result: RunResult = graded({
       ...this.#results,
       multiServer: this.details(),
-      outcome: outcomeOf(Object.values(stages), this.#failures.length),
       stages,
       latencyByStage: focus.summaries(),
       addedLatency: focus.addedLatency(),
       startedAt: this.#clock.startedAt,
       durationMs,
-    };
+    });
     this.#release();
     this.#emit({ type: "complete", result, plans });
   }

@@ -1,7 +1,7 @@
 //! Every figure, unit and label the report and the interface print (`api/format.testvectors.json`).
 use crate::{
     config::{Config, preset},
-    model::{Cadence, Direction, Outcome, Stage, StageStatus},
+    model::{Cadence, Direction, Outcome, Scope, Stage, StageStatus},
     net::{LatencyPath, ThroughputPath},
 };
 use graphite_meter_proto::{
@@ -12,6 +12,12 @@ use std::time::Duration;
 
 pub const MISSING: &str = "–";
 
+/// `value` with `places` decimals, an exact tie rounded up as the browser's `toFixed` does, not to even.
+fn fixed(value: f64, places: usize) -> String {
+    let scale = 10_f64.powi(places as i32);
+    format!("{:.places$}", (value * scale).round() / scale)
+}
+
 /// Milliseconds: one decimal below 100, whole from there.
 pub fn ms(value: f64) -> String {
     let decimals = if (value * 10.0).round().abs() < 1000.0 {
@@ -19,7 +25,7 @@ pub fn ms(value: f64) -> String {
     } else {
         0
     };
-    format!("{value:.decimals$}")
+    fixed(value, decimals)
 }
 
 /// A round trip in milliseconds; below 0.1 shows as `< 0.1`.
@@ -54,9 +60,9 @@ pub fn added(value: f64) -> String {
 /// A speed in its unit: two decimals below 100, one below 1000, whole from there.
 pub fn speed(value: f64) -> String {
     match () {
-        _ if (value * 10.0).round() >= 10_000.0 => format!("{value:.0}"),
-        _ if (value * 100.0).round() >= 10_000.0 => format!("{value:.1}"),
-        _ => format!("{value:.2}"),
+        _ if (value * 10.0).round() >= 10_000.0 => fixed(value, 0),
+        _ if (value * 100.0).round() >= 10_000.0 => fixed(value, 1),
+        _ => fixed(value, 2),
     }
 }
 
@@ -87,14 +93,14 @@ pub fn bytes(count: u64) -> String {
     }
     match tier {
         0 => format!("{count} B"),
-        _ => format!("{value:.1} {}", UNITS[tier]),
+        _ => format!("{} {}", fixed(value, 1), UNITS[tier]),
     }
 }
 
 /// A share in percent: two decimals below 1%, so a rare timeout stays legible, one from there.
 pub fn percent(ratio: f64) -> String {
     let places = if ratio > 0.0 && ratio < 0.01 { 2 } else { 1 };
-    format!("{:.places$}%", ratio * 100.0)
+    format!("{}%", fixed(ratio * 100.0, places))
 }
 
 /// A dial or axis label: decimals down to the third significant figure, no trailing zeros.
@@ -102,8 +108,8 @@ pub fn tick(value: f64) -> String {
     if value == 0.0 || value.is_nan() {
         return "0".into();
     }
-    let places = (2 - value.abs().log10().floor() as i32).clamp(0, 6) as usize;
-    let text = format!("{value:.places$}");
+    let places = (2 - value.abs().log10().floor() as i32).clamp(0, 100) as usize;
+    let text = fixed(value, places);
     match text.contains('.') {
         true => text.trim_end_matches('0').trim_end_matches('.').into(),
         false => text,
@@ -121,7 +127,7 @@ pub fn count(value: usize) -> String {
 pub fn duration(duration: Duration) -> String {
     let seconds = duration.as_secs_f64();
     if (seconds * 10.0).round() < 600.0 {
-        return format!("{seconds:.1} s");
+        return format!("{} s", fixed(seconds, 1));
     }
     let pair = |large: u64, unit: &str, small: u64, small_unit: &str| match small {
         0 => format!("{large} {unit}"),
@@ -139,14 +145,18 @@ pub fn duration(duration: Duration) -> String {
 pub fn stage_time(planned: Duration) -> String {
     let seconds = planned.as_secs_f64();
     match (seconds * 10.0).round() < 600.0 {
-        true => format!("{} s", format!("{seconds:.1}").trim_end_matches(".0")),
+        true => format!("{} s", fixed(seconds, 1).trim_end_matches(".0")),
         false => duration(planned),
     }
 }
 
 /// Seconds into a stage over its planned time; the seconds keep counting past a minute.
 pub fn progress(elapsed: Duration, planned: Duration) -> String {
-    format!("{:.1} / {}", elapsed.as_secs_f64(), stage_time(planned))
+    format!(
+        "{} / {}",
+        fixed(elapsed.as_secs_f64(), 1),
+        stage_time(planned)
+    )
 }
 
 pub fn label(stage: Stage) -> &'static str {
@@ -158,20 +168,20 @@ pub fn label(stage: Stage) -> &'static str {
     }
 }
 
-pub fn compact_stage(stage: Stage) -> &'static str {
-    if stage == Stage::Bidirectional {
-        "Bi-dir"
-    } else {
-        label(stage)
-    }
-}
-
 pub fn population(stage: Stage) -> &'static str {
     match stage {
         Stage::Latency => "Idle",
         Stage::Download => "Loaded download",
         Stage::Upload => "Loaded upload",
         Stage::Bidirectional => "Loaded bidirectional",
+    }
+}
+
+pub fn place(stage: Stage, scope: Scope) -> &'static str {
+    match scope {
+        Scope::Server => "Start",
+        Scope::Latency if stage != Stage::Latency => population(stage),
+        _ => label(stage),
     }
 }
 
@@ -332,25 +342,6 @@ pub fn cadence(cadence: Cadence) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn durations_read_as_the_browser_writes_them() {
-        let seconds = Duration::from_secs_f64;
-        for (value, shown, planned) in [
-            (0.5, "0.5 s", "0.5 s"),
-            (4.0, "4.0 s", "4 s"),
-            (59.94, "59.9 s", "59.9 s"),
-            (59.96, "1 min", "1 min"),
-            (65.0, "1 min 5 s", "1 min 5 s"),
-            (7500.0, "2 h 5 min", "2 h 5 min"),
-            (7170.0, "2 h", "2 h"),
-        ] {
-            assert_eq!(
-                (duration(seconds(value)), stage_time(seconds(value))),
-                (shown.into(), planned.into())
-            );
-        }
-    }
 
     #[test]
     fn a_location_the_name_holds_reads_once() {

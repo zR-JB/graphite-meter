@@ -27,7 +27,7 @@ A self-hosted speed and latency test, in one container or one binary, for the br
 - **Honest gaps.** Missing data shows as missing, never as zero, and no result is graded.
 - **Every web transport.** Throughput over HTTP/1.1, HTTP/2, HTTP/3 or WebTransport, latency over WebSocket or WebTransport, picked automatically or by hand.
 - **Several servers.** One run measures one to four servers on one schedule and shows them combined or one at a time.
-- **Terminal client.** `graphite-meter-client` runs the same test and reports the same numbers in the same words as the browser.
+- **Terminal client.** `graphite-meter-client` runs the same test and names its failures and outcomes in the same words as the browser.
 - **Built for fast links.** Profile-optimized release builds and a server that spreads every protocol, HTTP/3 included, across all CPU cores.
 - **Smooth while it measures.** Timing runs in background workers, so the page stays responsive and rates update live; animation steps aside when your system asks for reduced motion.
 - **Adjustable.** Choose servers, paths, stage times and warmup, early finish, probe cadence, stream count, units and History; light, dark or automatic theme.
@@ -52,8 +52,9 @@ It still runs behind nginx, Caddy or Traefik when you need one; see [reverse pro
 docker run -d --name graphite-meter --restart unless-stopped -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open `http://SERVER_IP:7246`. Over plain HTTP the test uses HTTP/1.1 and WebSocket; HTTP/2, HTTP/3 and WebTransport need TLS
-from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse proxy](docs/DEPLOYMENT.md#reverse-proxies).
+Open `http://SERVER_IP:7246`. Over plain HTTP the test uses HTTP/1.1 and WebSocket; HTTP/2 and HTTP/3 need TLS from
+the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a
+[reverse proxy](docs/DEPLOYMENT.md#reverse-proxies), and WebTransport needs the native HTTP/3 listener.
 
 ## Terminal
 

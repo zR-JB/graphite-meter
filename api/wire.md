@@ -25,20 +25,17 @@ with no length prefix or trailing newline. Only two directional forms exist:
 | Client → server | `PING,<id>`               | Client-owned uint32 probe ID.                                            |
 | Server → client | `PONG,<id>,<handling-ns>` | Echoed ID and mandatory uint64 server handling duration, in nanoseconds. |
 
-Decimal fields contain only digits: no sign, whitespace, exponent, or fraction.
-IDs have at most 10 digits and fit uint32; durations have at most 20 digits and
-fit uint64. Zero is valid. Missing, extra, or malformed fields invalidate the
-entire message. Receivers ignore malformed messages without replying or closing
-the transport, and parsers never invent a zero duration. The server reads a WebSocket
-binary message like a text one, and ends the bus with close code `1009` on a message
-longer than 2048 bytes; a valid PING is at most 15.
+Decimal fields contain only digits: no sign, whitespace, exponent, or fraction. IDs have at most 10 digits and fit
+uint32; durations have at most 20 digits and fit uint64. Zero is valid. Missing, extra, or malformed fields
+invalidate the entire message. Receivers ignore malformed messages without replying or closing the transport, and
+parsers never invent a zero duration. The server reads a WebSocket binary message like a text one, and ends the bus
+with close code `1009` on a message longer than 2048 bytes, `1007` on text that is not UTF-8 and `1002` on a
+WebSocket protocol error; a valid PING is at most 15.
 
-A matching valid probe reply establishes application readiness. Unknown IDs,
-duplicate replies, and messages from a replaced connection cannot establish it.
-Native preflight sends an actual probe; datagram verification retries within its
-bounded deadline. Browser warmup probes retain their existing measurement
-exclusion. Transport open/close owns the connection lifetime; there are no hello,
-ready, goodbye, capability, or error frames.
+A matching valid probe reply establishes application readiness. Unknown IDs, duplicate replies, and messages from a
+replaced connection cannot establish it. The terminal client's path check sends a real PING; datagram verification
+retries within its bounded deadline. Browser warmup probes never enter a population. Transport open/close owns the
+connection lifetime; there are no hello, ready, goodbye, capability, or error frames.
 
 Each client owns a per-bus `uint32` counter, `id = (id + 1) >>> 0`; the server keeps no per-probe state and echoes
 the parsed id. Only the in-flight window (at most 16 probes) is live, so a wrapped id never matches a pending one.
@@ -66,10 +63,11 @@ network RTT. See [measurement definitions](../docs/MEASUREMENTS.md) for populati
 
 `/ws/progress?id=` carries an upload's progress feed as WebSocket text messages: each record of
 `GET /upload/progress` without its newline, and a heartbeat as an empty message. It has that route's owner check,
-reader replacement and records, and the socket credentials of `/ws/ping`; the peer sends nothing. A refused id, or
-a client at capacity, gets its `error` record as the only message. The socket closes normally after the terminal record. It holds none of the
-browser's HTTP/1.1 connections to the origin. The browser opens it on the server's discovery origin, with the lease
-that owns the upload, and only when discovery answered over confirmed HTTP/1.1.
+reader replacement and records, and the socket credentials of `/ws/ping`; the peer sends nothing. A refused id, or a
+client at capacity, gets its `error` record as the only message. The socket closes normally after the terminal
+record. It holds none of the browser's HTTP/1.1 connections to the origin. The browser opens it on the server's
+discovery origin, with the lease that owns the upload, and only for a fetch upload when discovery answered over
+confirmed HTTP/1.1 and offers a WebSocket latency target.
 
 ## WebTransport routes
 
@@ -80,7 +78,7 @@ content it defines. Streams are raw bytes end to end.
 | Route          | Query                               | Streams                                                                                                                                                                                                                    | Datagrams                                                                                                                                  |
 | -------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `/wt/ping`     | `lease=`                            | none                                                                                                                                                                                                                       | the message bus above, one frame per datagram                                                                                              |
-| `/wt/download` | `bytes=&streams=&datagrams=&lease=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check                     | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
+| `/wt/download` | `bytes=&streams=&datagrams=&lease=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the terminal client's transport check   | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
 | `/wt/upload`   | `id=&datagrams=&lease=`             | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is refused, not served. The server opens one unidirectional stream on establishment carrying the progress feed      | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained                               |
 
 `streams=` and `bytes=` are clamped, never rejected: a missing, non-numeric, or sub-1 `streams`
@@ -109,27 +107,28 @@ its lease as `lease=`, or an `Authorization: Bearer` grant for native clients. S
 [socket credentials](#socket-credentials).
 
 The upload `id` is minted with the [lease](discovery.md#the-lease) and finalized by `DELETE /upload/progress?id=`
-over HTTP; only the measured bytes ride the session. The HTTP/3 origin's TCP side serves no control route and no
-transfer, and refuses a transfer with `409 wrong-protocol` ([refusals](discovery.md#refusals)). The progress feed
-carries the same NDJSON records as `GET /upload/progress`; see the [upload contract](upload.md).
+over HTTP; only the measured bytes ride the session. The HTTP/3 origin's TCP side serves only `/probe`, which brings
+the browser to HTTP/3, and refuses a transfer with `409 wrong-protocol` ([refusals](discovery.md#refusals)). The
+progress feed carries the same NDJSON records as `GET /upload/progress`; see the [upload contract](upload.md).
 
 ### Lane endings
 
 `GM_MAX_SESSION_DURATION` bounds the two transfer session routes; `/wt/ping` lives under the request bound
 (`GM_MAX_OPERATION_DURATION`). A session also ends when the peer closes it, which a client does once the finalizing
 DELETE has returned. An establish-only `/wt/download?bytes=0` session, whose answer is the handshake, closes after a
-5 s linger; a `/wt/upload` refused at connect sends its `error` record on a server stream and closes after a 2 s
-linger.
+5 s linger; a `/wt/upload` whose progress feed is refused on establishment (its id, or the client's or server's
+upload share) sends its `error` record on a server stream and closes after a 2 s linger.
 
-Every lane shares one 30 s idle bound. WebSocket buses and WebTransport sessions close after 30 to 45 s without traffic
-from the peer (a progress heartbeat or datagram flood is the server's own, so a `/wt/download?datagrams=` session the
-peer never speaks on closes too); an HTTP upload that stops sending is answered `408` ([upload](upload.md)); an HTTP
-download the peer stops draining is closed. The native client derives its 15 s fixed-cadence ceiling from this bound.
-A client treats a bound-driven close as a reconnect, not a stage failure, and redials with the same upload `id`: the
-server keeps one aggregate per id, so the counters carry across.
+Every lane shares one 30 s idle bound. WebSocket buses and WebTransport sessions close 30 s after the peer's last
+traffic (a datagram flood or a WebTransport upload's feed is the server's own, so a `/wt/download?datagrams=`
+session the peer never speaks on closes too, while a `/ws/progress` socket counts its feed, heartbeats included); an
+HTTP upload that stops sending is answered `408` ([upload](upload.md)); an HTTP download the peer stops draining is
+closed. The terminal client derives its 15 s fixed-cadence ceiling from this bound. A client treats a bound-driven
+close as a reconnect, not a stage failure, and redials with the same upload `id`: the server keeps one aggregate per
+id, so the counters carry across.
 
 A server-ended bus or session names its cause ([laneendings.txt](laneendings.txt)); clients may treat any close as a
-reconnect. The browser acts only on `authentication required` (it asks for sign-in); the native client also redials
+reconnect. On `authentication required` both clients record sign-in required for that server, and both redial
 idle and lifetime endings. The server ends a session with its `WT_CLOSE_SESSION` capsule and FIN, and stops reading
 the CONNECT stream (`STOP_SENDING` `WT_SESSION_GONE`) only after the peer's FIN or a second without it: Chromium and
 Firefox drop the code of a close whose `STOP_SENDING` arrives first. The server never closes an idle QUIC connection,
@@ -155,5 +154,5 @@ sign-in that took the lease. The page's session or its measurement grant takes t
 itself never enters a URL. A lease presented from another requesting `Origin` than the one that took it signs in
 nothing. It ends with its sign-in, and logout cancels the work it admitted.
 
-Native bearer grants remain eligible for direct authenticated socket connections, under their existing origin rules,
-with the lease in the `Graphite-Meter-Lease` field.
+The terminal client presents a bearer grant in `Authorization` instead, with the lease in the `Graphite-Meter-Lease`
+field.

@@ -10,8 +10,6 @@ esac
 dir=$2
 apt=(sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Dir::Cache::archives="$dir")
 mkdir -p "$dir/partial"
-# What apt keeps there besides the .debs is not the runner's to read, so it would fail the cache's save.
-trap 'sudo rm -rf "$dir/partial" "$dir/lock"' EXIT
 if ! compgen -G "$dir/*.deb" >/dev/null; then
   "${apt[@]}" update
   "${apt[@]}" install -y --no-install-recommends --download-only "${packages[@]}"
