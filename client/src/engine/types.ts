@@ -184,6 +184,8 @@ export interface StageEvents {
   receiver(checkpoint: Checkpoint): void;
   /** Client-consumed bytes before the measured window, which only the live rate reads. */
   warmupDownload(bytes: number): void;
+  /** Round trips of the bus's probes before the window: the latency warmup's live reading. */
+  warmupReplies(rttsMs: readonly number[]): void;
   /** A receiver observation before the measured window, which only the live rate reads. */
   warmupReceiver(checkpoint: Checkpoint): void;
   probes(outcomes: readonly ProbeOutcome[]): void;
@@ -282,6 +284,8 @@ export interface ProbeChannelOptions {
 export interface ProbeChannelEvents {
   ready(): void;
   outcomes(batch: readonly ProbeOutcome[]): void;
+  /** Round trips of probes sent outside a measured window; only a warmup reads them. */
+  unmeasured?(rttsMs: readonly number[]): void;
   interrupted(count: number, reason: "unresolved" | "send-failed"): void;
   /** The connection was lost, once per outage; its owner may redial it once; `resumed` when replies flow again. */
   stalled(detail: string): void;
@@ -293,6 +297,8 @@ export interface ProbeChannelEvents {
 export interface ProbeChannel {
   /** Outcomes count from now on; probes sent before never enter a population. */
   measure(): void;
+  /** Until `measure` or `stop`, replies arrive as `unmeasured` round trips: a latency warmup's live reading. */
+  warm(): void;
   /** Probes at this start-to-start spacing (null: on each reply), at most `maxInFlight` in flight, from the next send on. */
   pace(intervalMs: number | null, maxInFlight?: number): void;
   /** Ends the measured window: its probes drain to their deadlines outside it, and the bus probes on, unmeasured, until disposed. */

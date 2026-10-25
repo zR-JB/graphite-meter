@@ -329,3 +329,22 @@ test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wak
   expect(lags(idle)).toEqual(Array(10).fill(50));
   expect(idle.clock.wakes).toBeLessThanOrEqual(21);
 });
+
+test("a warming bus sends its replies before the window as unmeasured round trips, never as outcomes", () => {
+  const b = bus(50, 4, (id) => 5 + id);
+  const unmeasured = () => b.of("unmeasured").flatMap(({ rtts }) => rtts);
+  b.prober.start();
+  b.prober.warm();
+  b.prober.opened();
+  b.run(170);
+  expect(b.outcomes()).toEqual([]);
+  // Once the window opens, replies are outcomes alone; the last warmup reply still goes out.
+  b.prober.measure();
+  b.run(400);
+  expect(b.outcomes().length).toBeGreaterThan(0);
+  expect(unmeasured()).toEqual([5, 6, 7, 8]);
+  // A parked bus probes on unmeasured, and says nothing of it.
+  b.prober.stop();
+  b.run(1_000);
+  expect(unmeasured()).toEqual([5, 6, 7, 8]);
+});

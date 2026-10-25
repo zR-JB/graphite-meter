@@ -103,6 +103,66 @@ test("the idle track draws one bar per reply bucket and grows as each closes", a
   expect(live).toBeGreaterThanOrEqual(5);
 });
 
+test("every stage's warmup reads Warmup on the dial, its chip and its card, and the latency warmup's replies reach the page", async (page) => {
+  // The probe worker's round trips before the window: the latency warmup's live reading.
+  await page.addInitScript(() => {
+    const counts = ((window as any).unmeasured = { messages: 0 });
+    const Real = window.Worker;
+    window.Worker = class extends Real {
+      constructor(...args: ConstructorParameters<typeof Worker>) {
+        super(...args);
+        this.addEventListener("message", ({ data }: MessageEvent) => {
+          if (data?.type === "unmeasured") counts.messages++;
+        });
+      }
+    };
+  });
+  await open(page, home.url, {
+    config: { duration: { ...baseConfig.duration, warmupMs: 2000 } },
+  });
+  await ready(page);
+  await page.evaluate(() => {
+    const words: Record<string, string[]> = {};
+    const figures: string[] = [];
+    // A word leaving through its handoff is not the word shown.
+    const text = (selector: string) =>
+      document
+        .querySelector(`${selector}:not(.handoff-out, .handoff-out *)`)
+        ?.textContent?.replace(/\s+/g, " ")
+        .trim() ?? "";
+    const sample = () => {
+      const phase = document.getElementById("console")!.dataset.phase;
+      const stage = document.querySelector<HTMLElement>(".chip.chip--warmup")?.dataset.tone;
+      if (phase === "warmup" && stage) {
+        const seen = [
+          text(".gauge-status"),
+          text(`.chip[data-tone="${stage}"] .chip-tag`),
+          text(`.results .card[data-tone="${stage}"] .name .status`),
+        ];
+        if (seen.every(Boolean)) (words[stage] ??= []).push(seen.join("|"));
+        if (stage === "latency")
+          figures.push(text('.results .card[data-tone="latency"] .headline .num'));
+      }
+      Object.assign(window, { warmups: words, figures });
+      if (phase !== "complete") requestAnimationFrame(sample);
+    };
+    (window as any).unmeasured.messages = 0;
+    requestAnimationFrame(sample);
+  });
+  await run(page, 30_000);
+  const { words, messages, figures } = await page.evaluate(() => ({
+    words: (window as any).warmups,
+    messages: (window as any).unmeasured.messages,
+    figures: (window as any).figures as string[],
+  }));
+  expect(Object.keys(words)).toEqual(["latency", "download", "upload"]);
+  for (const seen of Object.values(words) as string[][])
+    expect([...new Set(seen)]).toEqual(["Warmup|Warmup|Warmup"]);
+  expect(messages).toBeGreaterThan(0);
+  // The latency card reads those replies, muted, before the window opens.
+  expect(figures.some((figure) => /\d/.test(figure))).toBe(true);
+});
+
 // Every page reports a policy violation as an error, so a run that trips Trusted Types fails whichever test made it.
 test("the page requires Trusted Types and refuses script it did not make", async (page) => {
   const policy = (await fetch(`${home.http}/`)).headers.get("content-security-policy");

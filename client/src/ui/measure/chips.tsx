@@ -4,7 +4,7 @@ import type { Shell } from "../shell/api";
 import { planned, STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
-import { handoff } from "../../lib/motion";
+import { handoff, reducedMotion } from "../../lib/motion";
 import { computed, effect, untrack, type Read } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../../view/format";
 import {
@@ -172,6 +172,24 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   });
 
   const fill = (<span class="chip-fill" />) as HTMLElement;
+  const lead = (<span class="chip-lead" />) as HTMLElement;
+  const bar = (
+    <span class="chip-bar" aria-hidden="true">
+      {lead}
+      {fill}
+    </span>
+  ) as HTMLElement;
+  // The warmup's share of the stage as planned; a stage without one fills the whole bar.
+  const leadShare = computed(() => {
+    const { duration } = run.plan() ?? config();
+    const warmup = duration.warmupMs;
+    return warmup > 0 ? warmup / (warmup + duration[`${stage}Ms`]) : 0;
+  });
+  effect(() => {
+    const share = leadShare();
+    bar.style.setProperty("--lead", `${share * 100}%`);
+    bar.style.setProperty("--window", share ? `calc(${share * 100}% + 2px)` : "0px");
+  });
   const full = new Figure("full");
   const short = new Figure("short");
   effect(() => {
@@ -179,7 +197,6 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     fill.dataset.tone = now === "recovering" ? "warn" : stage;
     fill.className = [
       "chip-fill",
-      now === "warmup" && "is-warmup",
       now === "failed" && "is-failed",
       now === "partial" && "is-partial",
       now === "recovering" && "is-stalled",
@@ -188,47 +205,54 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
       .filter(Boolean)
       .join(" ");
   });
-  // The bar: progress while its stage runs, the share a stopped one reached, full once settled; only a clocked bar draws every frame.
+  // The bar: its warmup's lead, then its window's progress; a stopped stage keeps the share it reached, a settled one is full.
+  const stopped = computed(() => state() === "stopped" && run.stage() === stage);
+  const warming = computed(() => look() === "warmup" || (stopped() && live.endedIn() === "warmup"));
   const clocked = computed(() => {
     const now = look();
-    return (
-      now === "active" ||
-      now === "recovering" ||
-      (state() === "stopped" && live.endedIn() === stage)
-    );
+    return now === "active" || now === "recovering" || stopped();
   });
   let progress = Number.NaN;
+  let warmed = Number.NaN;
   let tenths = Number.NaN;
   const draw = (now: number) => {
     const looks = look.peek();
     const length = live.budget.peek();
     const clock = live.phaseClock.at(now);
-    const next =
-      looks === "warmup" || looks === "failed" || looks === "complete" || looks === "partial"
+    const share = length > 0 ? Math.min(1, clock / length) : 0;
+    const settled = looks === "failed" || looks === "complete" || looks === "partial";
+    // Reduced motion draws the warmup's lead at its length, without the fill.
+    const lit = warming.peek()
+      ? reducedMotion.peek() && looks === "warmup" && length > 0
         ? 1
-        : clocked.peek() && length > 0
-          ? Math.min(1, clock / length)
-          : 0;
-    // A plain transform, not a custom property: Chrome then restyles the fill from its previous style.
+        : share
+      : settled || clocked.peek()
+        ? 1
+        : 0;
+    const next = settled ? 1 : clocked.peek() && !warming.peek() ? share : 0;
+    // Plain transforms, not custom properties: Chrome then restyles each from its previous style.
+    if (!(Math.abs(lit - warmed) < 5e-4)) lead.style.transform = `scaleX(${(warmed = lit)})`;
     if (!(Math.abs(next - progress) < 5e-4)) fill.style.transform = `scaleX(${(progress = next)})`;
     if (timed.peek() && Math.round(clock / 100) !== tenths) {
       tenths = Math.round(clock / 100);
       full.set(fmtProgress(clock, length));
       short.set(fmtDuration(clock, 1));
     }
-    return clocked.peek() && live.active(now);
+    return (clocked.peek() || looks === "warmup") && live.active(now);
   };
   const wake = painter(draw, props.away, live.beat);
   effect(() => {
     look();
     timed();
-    if (clocked()) {
+    if (clocked() || warming()) {
       live.budget();
       run.running();
     }
+    leadShare();
     tenths = Number.NaN;
     wake();
   });
+  effect(() => lead.classList.toggle("is-live", look() === "warmup"));
 
   return (
     <button
@@ -245,9 +269,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
       ref={tip(tipText)}
       onclick={() => locked() || flip(() => run.toggleStage(stage))}
     >
-      <span class="chip-bar" aria-hidden="true">
-        {fill}
-      </span>
+      {bar}
       <span class="chip-row">
         <span class="chip-ico" aria-hidden="true">
           <Icon name={STAGE[stage].icon} />

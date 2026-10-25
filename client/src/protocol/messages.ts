@@ -128,6 +128,8 @@ export type ProbeCommand =
       maxInFlight: number;
     }
   | { type: "measure" }
+  /** Reports replies before the window, for a latency warmup to show, until `measure` or `stop`. */
+  | { type: "warm" }
   | { type: "pace"; intervalMs: number | null; maxInFlight?: number }
   /** Dials again after the bus stalled; the worker redials on its own only at the server's bound. */
   | { type: "dial" }
@@ -139,6 +141,8 @@ export type ProbeCommand =
 export type ProbeReport =
   | { type: "ready" }
   | { type: "outcomes"; outcomes: ProbeOutcome[] }
+  /** Round trips of probes outside a measured window, as a warmup's live reading; no population counts them. */
+  | { type: "unmeasured"; rtts: number[] }
   | { type: "interrupted"; count: number; reason: "unresolved" | "send-failed" }
   | { type: "stalled"; detail: string }
   | { type: "resumed" }

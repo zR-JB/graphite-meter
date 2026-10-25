@@ -183,6 +183,7 @@ export class FakeBuses {
       measure: () => {
         if (this.rttMs !== null) reply(this.rttMs, true);
       },
+      warm() {},
       pace: (intervalMs) => (bus.intervalMs = intervalMs),
       stop: async () => clearTimeout(timer),
       dispose() {

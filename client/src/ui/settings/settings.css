@@ -322,7 +322,12 @@
       height: 4px;
       margin-bottom: 6px;
       border-radius: var(--r-full);
-      background: var(--tone);
+      background: linear-gradient(
+        90deg,
+        var(--phase-warmup) var(--lead),
+        transparent var(--lead) calc(var(--lead) + var(--gap)),
+        var(--tone) calc(var(--lead) + var(--gap))
+      );
       forced-color-adjust: none;
     }
     & :is(.strip-time, .strip-name) {

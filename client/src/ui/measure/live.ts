@@ -181,9 +181,11 @@ function createLive(app: App) {
   };
   const replies = computed(() => {
     const newest = pulse().at(-1);
+    // Until the window's first bucket closes, the latency warmup's own replies read.
+    const warm = !newest && run.stage() === "latency" ? run.warmupRtt()[focus() ?? ""] : undefined;
     const view = servers.views().get(servers.latencyServer() ?? "");
     return {
-      rttMs: newest?.medianRttMs ?? view?.latency.path?.rttMs ?? 0,
+      rttMs: newest?.medianRttMs ?? warm ?? view?.latency.path?.rttMs ?? 0,
       lost: !!newest && newest.pingCount > 0 && newest.medianRttMs === null,
     };
   });

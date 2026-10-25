@@ -188,6 +188,9 @@
     &.warming circle {
       fill: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
+    &.warming .ripple {
+      border-color: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
+    }
     & .ripple {
       position: absolute;
       left: calc(-1 * var(--head-r));
@@ -909,18 +912,24 @@
     &.is-stalled {
       animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
     }
-    /* A warmup scans the bar at an even pace, one pass leaving as the next enters, until the window opens. */
-    &.is-warmup {
-      width: 45%;
-      background: color-mix(in oklab, var(--tone) 55%, transparent);
-      animation: warmup-sweep 900ms linear infinite;
+  }
+  /* The warmup's share of the stage leads the bar in grey; the window fills the rest in the stage's hue. */
+  .chip-lead {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: var(--lead);
+    border-radius: inherit;
+    background: var(--phase-warmup);
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform var(--dur-graph) var(--ease-out);
+    &.is-live {
+      transition: none;
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .chip-fill.is-warmup {
-      width: 100%;
-      opacity: 0.55;
-    }
+  .chip-fill {
+    left: var(--window, 0);
   }
   .chip-row {
     display: flex;
@@ -1665,14 +1674,6 @@
 @keyframes stall-pulse {
   50% {
     opacity: 0.4;
-  }
-}
-@keyframes warmup-sweep {
-  from {
-    translate: -100%;
-  }
-  to {
-    translate: calc(100% / 0.45);
   }
 }
 @keyframes linger {

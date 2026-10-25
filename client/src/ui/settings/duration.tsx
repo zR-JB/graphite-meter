@@ -114,15 +114,16 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
             <For each={strip} by={(stage) => stage}>
               {(stage) => {
                 const time = ms(`${stage.peek()}Ms`);
+                // Each stage warms up first, so its bar leads in the warmup's grey.
+                const lead = (segment: HTMLElement) =>
+                  effect(() => {
+                    const total = time() + warmup();
+                    segment.style.setProperty("--ms", String(total));
+                    segment.style.setProperty("--lead", `${(100 * warmup()) / (total || 1)}%`);
+                    segment.style.setProperty("--gap", warmup() ? "2px" : "0px");
+                  });
                 return (
-                  <div
-                    class="strip-segment"
-                    role="listitem"
-                    data-tone={stage.peek()}
-                    ref={(segment) =>
-                      effect(() => segment.style.setProperty("--ms", String(time())))
-                    }
-                  >
+                  <div class="strip-segment" role="listitem" data-tone={stage.peek()} ref={lead}>
                     <span class="strip-bar" aria-hidden="true" />
                     <span class="strip-time">
                       <Roll text={() => fmtStageTime(time())} rank={time} />
