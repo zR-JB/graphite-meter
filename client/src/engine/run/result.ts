@@ -175,7 +175,12 @@ export function grid(result: Graded, running: Stage | null = null): Grid {
             ? { status: "complete", cause: null }
             : { status: "unreached", cause: left ?? null };
       const status = summary.stages[stage];
-      if (status !== "not-run") return { status, cause: failure ?? null };
+      // A server's own lanes decide: a schema 4 record copied the run's statuses onto every server.
+      if (status !== "not-run")
+        return {
+          status: lanes(summary, stage).every(Boolean) ? status : "failed",
+          cause: failure ?? null,
+        };
       // Charged for a stage it never ran, as a focus without a latency path is: it failed there.
       if (failure) return { status: "failed", cause: failure };
       return { status: "unreached", cause: left ?? null };

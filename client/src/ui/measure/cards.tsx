@@ -267,7 +267,7 @@ function ServerGrid(props: { view: Read<GridView> }): Node {
                 <th scope="col">{GRID.server}</th>
                 {() =>
                   props.view().stages.map((stage) => (
-                    <th scope="col" data-tone={stage}>
+                    <th scope="col">
                       {STAGE[stage].short}
                       <span class="unit">{props.view().units[stage]}</span>
                     </th>
@@ -291,11 +291,16 @@ function ServerGrid(props: { view: Read<GridView> }): Node {
                     {row.cells.map((cell) => (
                       <td
                         data-label={`${STAGE[cell.stage].short} ${props.view().units[cell.stage]}`}
-                        class={cell.word ? "short" : undefined}
+                        class={cell.measured ? undefined : "word"}
                         ref={cell.tip ? tip(() => cell.tip) : undefined}
                       >
-                        {dot(cell.word)}
-                        {cell.text}
+                        <span>
+                          {dot(cell.word)}
+                          {cell.text}
+                          {cell.measured && cell.word && (
+                            <span class="sr-only">, {cell.word.label.toLowerCase()}</span>
+                          )}
+                        </span>
                       </td>
                     ))}
                   </tr>
@@ -346,6 +351,10 @@ export function ResultSummary(props: {
     STAGES.filter((stage) => (evidence().status[stage] ?? "skipped") !== "skipped"),
   );
   const view = computed(() => gridView(props.result(), table(), props.units()));
+  const shown = computed(() => {
+    const { rows, notes } = view();
+    return rows.length > 1 || notes.length > 0;
+  });
   const card = (stage: Stage) =>
     Card({
       card: computed(() => {
@@ -357,7 +366,13 @@ export function ResultSummary(props: {
       reason: computed(() => cardLine(table(), stage, lens())),
       lens,
     }).element;
-  return <Summary stages={stages} card={card} issues={<ServerGrid view={view} />} />;
+  return (
+    <Summary
+      stages={stages}
+      card={card}
+      issues={<Show when={shown}>{() => <ServerGrid view={view} />}</Show>}
+    />
+  );
 }
 
 const RUNNING_STATES = new Set<StageState>(["warmup", "running", "recovering"]);
@@ -385,7 +400,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
   const liveEvidence = (stage: Stage, state: StageState): LiveEvidence => {
     const running = RUNNING_STATES.has(state);
     const idle = live.summaries().latency ?? null;
-    const none = { own: false, lost: false, spoken: null, held: null, idle, bytes: 0, shape: null };
+    const none = { ...NONE, idle };
     if (!running && state !== "stopped") return none;
     if (stage === "latency") {
       const replies = live.replies();

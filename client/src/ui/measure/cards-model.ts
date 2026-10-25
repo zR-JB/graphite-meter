@@ -33,7 +33,6 @@ import {
   OUTCOME,
   POPULATION,
   reasonLabel,
-  serverLabel,
   STAGE,
   STAGE_STATE,
   TIP,
@@ -457,8 +456,6 @@ export interface Issue {
   server: string;
   stages: string;
   reason: string;
-  /** Its card says so; loaded latency's causes mark none. */
-  marked: boolean;
 }
 
 /** The causes in a grid, one line per server and reason; `scope` narrows to one server. */
@@ -472,12 +469,10 @@ export function serverIssues(table: Grid, scope = ""): Issue[] {
         server: server.name,
         stages: "",
         reason: reasonLabel(cause.reason),
-        marked: false,
         places: [],
       };
       lines.set(key, line);
       line.places.push(causePlace(cause));
-      line.marked ||= !loaded(cause);
     }
   }
   return [...lines.values()].map(({ places, ...line }) => ({ ...line, stages: places.join(", ") }));
@@ -555,6 +550,7 @@ export interface GridCell {
   stage: Stage;
   /** The server's own value, or the cell's word when it has none. */
   text: string;
+  measured: boolean;
   /** Partial and Failed carry a dot of their tone; Complete and Not reached none. */
   word: Word | null;
   tip: string;
@@ -593,18 +589,24 @@ export function gridView(result: RunResult, table: Grid, units: RateUnits): Grid
   };
   const rows = table.rows.map(({ server, cells, outcome }) => ({
     id: server.id,
-    name: serverLabel(server),
+    name: server.name,
     word: outcome === "complete" ? null : OUTCOME[outcome],
     cells: stages.map((stage): GridCell => {
       const { status, cause } = cells[stage];
       const shown = status === "complete" || status === "partial";
       const word = status === "complete" ? null : STAGE_STATE[status];
-      const why = cause && [reasonLabel(cause.reason), cause.message].filter(Boolean);
+      // A server that left says where; one that failed here says why, then what the engine recorded.
+      const why = !cause
+        ? []
+        : status === "unreached"
+          ? [leftLine(cause)]
+          : [reasonLabel(cause.reason), cause.message];
       return {
         stage,
         text: shown ? value(stage, server.id) : word!.label,
+        measured: shown,
         word: status === "unreached" ? null : word,
-        tip: [word?.label, ...(why ?? [])].filter(Boolean).join("\n"),
+        tip: [word?.label, ...why].filter(Boolean).join("\n"),
       };
     }),
   }));

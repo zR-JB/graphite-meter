@@ -295,17 +295,15 @@ test("a server's issues name the stages each reason ended, a server dropped at S
       server: "Oslo",
       stages: STAGE.latency.label,
       reason: reasonLabel("connection-lost"),
-      marked: true,
     },
     {
       server: "Oslo",
       stages: `${STAGE.download.label}, ${POPULATION.upload}`,
       reason: reasonLabel("timeout"),
-      marked: true,
     },
   ]);
   expect(serverIssues(table, "b")).toEqual([
-    { server: "Bergen", stages: "Start", reason: reasonLabel("server-capacity"), marked: true },
+    { server: "Bergen", stages: "Start", reason: reasonLabel("server-capacity") },
   ]);
 });
 
@@ -455,6 +453,8 @@ test("the server grid reads each server's value or word per planned stage, then 
   } as unknown as RunResult;
   const view = gridView(result, grid(result), BITS);
   expect(view.stages).toEqual(["download", "upload"]);
+  expect(view.rows[1]!.cells.map(({ measured }) => measured)).toEqual([true, false]);
+  expect(view.rows[1]!.cells[1]!.tip).toBe("Not reached\nLeft in Download: connection lost");
   expect(view.units).toEqual({ download: "Mbit/s", upload: "Mbit/s" });
   expect(
     view.rows.map(({ name, word, cells }) => [
@@ -482,5 +482,30 @@ test("the server grid reads each server's value or word per planned stage, then 
       head: "Bergen · Start",
       text: "Server at capacity. Not reached after it: Download and Upload.",
     },
+  ]);
+
+  // A server that failed where it ran is the error; one left short is a warning.
+  const porto = { id: "p", name: "Porto", url: "" };
+  const failed = {
+    ...result,
+    multiServer: {
+      ...result.multiServer,
+      selection: [frankfurt, porto],
+      servers: [
+        result.multiServer.servers[0],
+        {
+          server: porto,
+          download: null,
+          upload: transfer(1e6),
+          stages: { ...ran, download: "failed" },
+        },
+      ],
+      failures: [failure("p", "download", "timeout")],
+    },
+  } as unknown as RunResult;
+  const failedView = gridView(failed, grid(failed), BITS);
+  expect(failedView.rows[1]!.cells[0]).toMatchObject({ text: "Failed", measured: false });
+  expect(failedView.notes).toEqual([
+    { tone: "err", head: "Porto · Download", text: "Stopped delivering data." },
   ]);
 });

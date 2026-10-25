@@ -20,7 +20,6 @@ export function ServerScope(props: {
   /** Names the choice of every server at once, which `value` reads as "". */
   aggregate?: () => string;
   disabled?: () => boolean;
-  unavailable?: () => readonly string[];
   /** A server's word after its name, such as its outcome; "" for none. */
   note?: (id: string) => string;
   /** Draws a lens over results, with a server mark and a borderless field. */
@@ -39,10 +38,7 @@ export function ServerScope(props: {
       {props.aggregate && <option value="">{props.aggregate}</option>}
       <For each={props.servers} by={(server) => server.id}>
         {(server) => (
-          <option
-            value={server().id}
-            disabled={() => props.unavailable?.().includes(server().id) ?? false}
-          >
+          <option value={server().id}>
             {() => {
               const note = props.note?.(server().id);
               return note ? `${serverLabel(server())} · ${note}` : serverLabel(server());

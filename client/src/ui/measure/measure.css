@@ -1328,6 +1328,7 @@
   .server-grid {
     display: grid;
     gap: var(--space-2);
+    overflow-x: auto;
     & table {
       width: 100%;
       border: var(--hairline) solid var(--border);
@@ -1361,7 +1362,7 @@
       font: var(--w-strong) var(--type-md) / 1.35 var(--font-sans);
     }
     & tbody th .word,
-    & td.short {
+    & td.word {
       color: var(--text-soft);
       font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
     }
