@@ -7,7 +7,7 @@ import {
 } from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { HistoryColumn } from "../../app/preferences";
-import type { Outcome, StageStatus } from "../../engine/run/result";
+import type { CellStatus, Outcome } from "../../engine/run/result";
 import {
   fmtAddedMs,
   fmtMs,
@@ -203,11 +203,13 @@ export interface RowContext {
   byDay: boolean;
 }
 
-const STATUS_WORD: Record<StageStatus, string> = {
+/** A missing value reads its column's word. */
+export const STATUS_WORD: Record<CellStatus, string> = {
   complete: MISSING,
   partial: STAGE_STATE.partial.label,
   failed: STAGE_STATE.failed.label,
-  "not-run": STAGE_STATE.skipped.label,
+  unreached: STAGE_STATE.unreached.label,
+  skipped: STAGE_STATE.skipped.label,
 };
 
 /** Under a rate, the latency its load added; under idle, its jitter; under loaded, whose load it was. */

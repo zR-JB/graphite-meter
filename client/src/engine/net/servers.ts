@@ -57,6 +57,7 @@ interface ServersEnv {
   setTransports(transports: TestConfig["transports"]): void;
   /** Checks and their timers may run: the app is booted and visible, and no run or start is pending. */
   active: Read<boolean>;
+  busy: Read<boolean>;
   hidden: Read<boolean>;
   online: Read<boolean>;
   /** The server whose latency the console pins, if any. */
@@ -90,6 +91,9 @@ export interface Servers {
   loading: Read<boolean>;
   loadError: Read<string>;
   selected: Read<readonly string[]>;
+  upcoming: Read<readonly string[]>;
+  waiting: Read<boolean>;
+  plans: Read<readonly (PlanServer | null)[]>;
   /** Saved rows whose server changed: the user must choose again. */
   unresolved: Read<readonly SavedServer[]>;
   views: Read<ReadonlyMap<string, ServerView>>;
@@ -106,7 +110,7 @@ export interface Servers {
   metadataLoading: Read<boolean>;
   load(): Promise<void>;
   retryCatalog(): Promise<void>;
-  /** False when the selection cannot change now; throws for a set that is not one to four catalog servers. */
+  /** False when it cannot change now, and waits during a test; throws for a set not one to four catalog servers. */
   apply(ids: readonly string[]): boolean;
   /** Call from the click itself: the sign-in window must open within the user's activation. */
   signIn(id: string): void;
@@ -262,6 +266,7 @@ export function createServers(env: ServersEnv): Servers {
   const loading = signal(true);
   const loadError = signal("");
   const selected = signal<readonly string[]>([]);
+  const waitingSelection = signal<readonly string[] | null>(null);
   const unresolved = signal<readonly SavedServer[]>([]);
   const connections = signal<ReadonlyMap<string, Connection>>(new Map());
   const approval = signal(IDLE);
@@ -299,6 +304,10 @@ export function createServers(env: ServersEnv): Servers {
       discovery: view.discovery,
       throughput: view.throughput.path,
     };
+
+  const plans = computed(() =>
+    selectedViews().map((view) => (view.ready ? planServer(view) : null)),
+  );
 
   const connectionEnv: ConnectionEnv = {
     page,
@@ -414,6 +423,14 @@ export function createServers(env: ServersEnv): Servers {
     if (online && !wasOnline) untrack(reloadFailed);
     wasOnline = online;
   });
+  // After the run's own waiting edits, which land in the same turn, so moving paths to the new selection comes last.
+  const stopWaiting = effect(() => {
+    const ids = waitingSelection();
+    if (ids && env.active())
+      queueMicrotask(() => {
+        if (waitingSelection.peek() === ids && env.active.peek()) apply(ids);
+      });
+  });
 
   async function retry(id?: string, role?: Role): Promise<void> {
     if (!env.active.peek()) return;
@@ -425,7 +442,7 @@ export function createServers(env: ServersEnv): Servers {
 
   function apply(ids: readonly string[]): boolean {
     const known = catalog.peek();
-    if (!known || loading.peek() || !env.active.peek()) return false;
+    if (!known || loading.peek() || !(env.active.peek() || env.busy.peek())) return false;
     if (
       ids.length < 1 ||
       ids.length > MAX_SELECTED ||
@@ -434,6 +451,13 @@ export function createServers(env: ServersEnv): Servers {
     )
       throw new Error(SELECTION_REFUSED);
     const next = inCatalogOrder(known, ids);
+    if (env.busy.peek()) {
+      const same =
+        next.length === selected.peek().length && next.every((id, i) => id === selected.peek()[i]);
+      waitingSelection.set(same ? null : next);
+      return true;
+    }
+    waitingSelection.set(null);
     const previous = selected.peek();
     batch(() => {
       if (next.length !== previous.length || next.some((id, i) => id !== previous[i]))
@@ -620,6 +644,9 @@ export function createServers(env: ServersEnv): Servers {
     loading,
     loadError,
     selected,
+    upcoming: computed(() => waitingSelection() ?? selected()),
+    waiting: computed(() => waitingSelection() !== null),
+    plans,
     unresolved,
     views,
     approval,
@@ -645,7 +672,7 @@ export function createServers(env: ServersEnv): Servers {
       ),
     ),
     streamPlanError: computed(() => {
-      const servers = selectedViews().map((view) => (view.ready ? planServer(view) : null));
+      const servers = plans();
       return servers.every((server) => server !== null) ? planError(config(), servers) : "";
     }),
     streams: computed(() => {
@@ -693,6 +720,7 @@ export function createServers(env: ServersEnv): Servers {
     },
     dispose() {
       stopOnline();
+      stopWaiting();
       removeEventListener("pagehide", leave);
       lifetime.abort();
       loadRequest?.abort();

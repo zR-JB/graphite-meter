@@ -132,13 +132,13 @@ impl Quotas {
     }
 
     /// The verbose admission line: handlers, sessions and connections with their peaks and refusals.
-    pub fn admission(&self) -> String {
+    pub fn admission(&self, budget: &Budget) -> String {
         let (handlers, sessions) = (self.operations.usage(), self.sessions.usage());
         let connections = self.connections.usage();
         format!(
             "handlers {} active / {} peak, rejected {} pool + {} client; sessions {} active / {} max, \
-             {} per client, rejected {} budget + {} client; connections {} active / {} peak, rejected {} global + {} \
-             client",
+             {} per client, rejected {} global + {} client; connections {} active / {} peak, rejected {} global + {} \
+             budget + {} client",
             handlers.active,
             handlers.peak,
             handlers.refused_total,
@@ -151,6 +151,7 @@ impl Quotas {
             connections.active,
             connections.peak,
             connections.refused_total,
+            budget.refused_floors(),
             connections.refused_client,
         )
     }

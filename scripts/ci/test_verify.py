@@ -136,7 +136,17 @@ class OCITests(unittest.TestCase):
             ("blob", '{"architecture": "arm64", "os": "linux", "config"',
              '{"architecture": "amd64", "os": "linux", "config"', "linux/arm64 image is configured for linux/amd64"),
             ("blob", '"/graphite-meter", "healthcheck"]', '"/bin/true"]', "health check is \\['CMD', '/bin/true'\\]"),
-            ("blob", '"Healthcheck"', '"Unchecked"', "Healthcheck must be a JSON object"),
+            ("blob", '"Healthcheck": {"Test": ["CMD", "/graphite-meter", "healthcheck"]}, ', "",
+             "Healthcheck must be a JSON object"),
+            ("blob", '"Entrypoint": ["/graphite-meter"]', '"Entrypoint": ["/bin/sh"]', r"Entrypoint is \['/bin/sh'\]"),
+            ("blob", '"User": "65532:65532"', '"User": "0:0"', "User is '0:0'"),
+            ("blob", '"WorkingDir": "/"', '"WorkingDir": "/etc"', "WorkingDir is '/etc'"),
+            ("blob", '"User": "65532:65532"', '"User": "65532:65532", "Cmd": ["--auth-mode", "off"]',
+             r"config sets \['Cmd'\]"),
+            ("blob", '"User": "65532:65532"', '"User": "65532:65532", "Volumes": {"/etc/ssl/certs": {}}',
+             r"config sets \['Volumes'\]"),
+            ("blob", '"Env": ["PATH=', '"Env": ["GM_TRUSTED_PROXIES=10.0.0.0/8", "PATH=', "only PATH may be set"),
+            ("blob", '"Labels": {', '"Labels": {"traefik.enable": "true", ', r"carries labels \['traefik.enable'\]"),
         ):
             def edit(data: bytes) -> bytes:
                 return data.replace(old.encode(), new.encode(), 1)

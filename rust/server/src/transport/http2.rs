@@ -69,7 +69,7 @@ impl Http2 {
         socket: TcpStream,
         peer: SocketAddr,
     ) -> impl Future<Output = ()> + Send + use<> {
-        let floor = self.app.budget().lease(FLOOR_BYTES);
+        let floor = self.app.budget().floor(FLOOR_BYTES, peer.ip());
         let _ = socket.set_nodelay(true);
         super::bound_unsent(&socket, NOTSENT_LOWAT);
         let (listener, socket) = (self.clone(), socket.into_std());

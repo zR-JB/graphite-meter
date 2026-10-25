@@ -1,5 +1,6 @@
 //! Checks the stream and datagram limits each role's QUIC transport grants its peer.
 use graphite_meter_net::quic::{client_transport, server_transport};
+use graphite_meter_proto::lane::MAX_LANE_STREAMS;
 use graphite_meter_testkit::Identity;
 use std::{
     pin::pin,
@@ -44,7 +45,7 @@ async fn each_role_grants_the_streams_and_datagrams_of_its_transport() {
         open(client.open_bi()).is_none(),
         "requests past the server's grant wait"
     );
-    for (connection, granted) in [(&server, 36), (&client, 3 + 16 + 4)] {
+    for (connection, granted) in [(&server, 36), (&client, 3 + MAX_LANE_STREAMS as u32 + 4)] {
         let mut streams = Vec::new();
         for _ in 0..granted {
             streams.push(open(connection.open_uni()).expect("a stream within the peer's grant"));

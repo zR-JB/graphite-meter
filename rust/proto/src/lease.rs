@@ -3,10 +3,13 @@
 use crate::{json, token};
 use http::HeaderName;
 use serde::{Deserialize, Serialize, de::Error as _};
+use std::time::Duration;
 
 /// Carries the token on HTTP requests; WebSocket and WebTransport URLs, which cannot carry a field, use `lease=`.
 pub const LEASE_HEADER: HeaderName = HeaderName::from_static("graphite-meter-lease");
 pub const LEASE_PARAMETER: &str = "lease";
+/// A lease with nothing live ends after this long.
+pub const UNUSED_BOUND: Duration = Duration::from_secs(30);
 /// One `POST /lease` mints at most this many upload IDs.
 pub const MAX_UPLOADS: u32 = 4;
 

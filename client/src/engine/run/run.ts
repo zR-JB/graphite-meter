@@ -9,7 +9,7 @@ import {
   type ThroughputResult,
 } from "../measure/aggregate";
 import { LatencyBuckets, type LatencyBucket } from "../measure/buckets";
-import { ServerLatency, type LatencySummary } from "../measure/latency";
+import { midpointMedian, ServerLatency, type LatencySummary } from "../measure/latency";
 import { LiveRates } from "../measure/live";
 import { combinedModel, type WireModel, type WirePath } from "../measure/overhead";
 import { EARLY_FINISH, mayFinishEarly, minCoverage, type Confidence } from "../measure/stability";
@@ -71,6 +71,8 @@ const SUMMARY_CADENCE_MS = 1_000;
 const QUIET_MS = 500;
 /** A warmup's ramp shows once it spans this long. */
 const RAMP_MS = 100;
+/** A latency warmup's replies show as one median this often, the window's bucket width. */
+const WARMUP_REPLY_MS = 200;
 /** A direction silent this long leaves, if another server moves it meanwhile. */
 const SILENCE_MS = 1_500;
 /** A receiver that sends no record at all is given longer, as its feed may lag. */
@@ -149,6 +151,8 @@ export type RunEvent =
   | { type: "progress"; elapsedMs: number; budgetMs: number }
   | { type: "live"; sample: LiveSample }
   | { type: "latency"; serverId: string; bucket: LatencyBucket }
+  /** The latency warmup's newest replies as one median; nothing counts them. */
+  | { type: "warmupReply"; serverId: string; rttMs: number }
   | { type: "summary"; serverId: string; stage: Stage; summary: LatencySummary | null }
   | { type: "failure"; failure: ServerFailure }
   /** The run as a whole stalled (every server recovering or quiet), or recovered. */
@@ -192,6 +196,8 @@ interface Seat {
   summaryAt: number;
   /** The warmup's first and latest receiver records of one upload id: its upload ramp. */
   ramp: { first: Checkpoint; last: Checkpoint } | null;
+  /** A latency warmup's round trips since its last shown median. */
+  warmupReplies: { since: number; rtts: number[] };
 }
 
 /** One entered stage. Every callback its resources make checks that it is still the run's stage and not settled. */
@@ -686,6 +692,7 @@ export class Run {
       latencyStall: null,
       summaryAt: -Infinity,
       ramp: null,
+      warmupReplies: { since: -Infinity, rtts: [] },
     } as Partial<Seat> as Seat;
     seat.resources = this.#open({
       server: server.prepared,
@@ -796,6 +803,11 @@ export class Run {
         if (!this.#stalled) this.#live.receiver(server.id, checkpoint, this.#clock.read());
         if (this.#boundary(stage)) this.#tick();
       },
+      // A latency warmup's replies move the live round trip alone, as a transfer warmup's bytes move the live rate.
+      warmupReplies: (rtts) => {
+        if (name === "latency" && stage.phase === "warmup" && live())
+          this.#warmupReplies(seat, rtts);
+      },
       probes: (outcomes) => {
         if (!counting() || server.removed) return;
         const position = this.#position();
@@ -893,6 +905,20 @@ export class Run {
         if (live()) this.#live.hint(server.id, lane, bytes, elapsedMs, this.#clock.read());
       },
     };
+  }
+
+  #warmupReplies(seat: Seat, rttsMs: readonly number[]): void {
+    const pending = seat.warmupReplies;
+    pending.rtts.push(...rttsMs);
+    const now = this.#clock.read();
+    if (now - pending.since < WARMUP_REPLY_MS || !pending.rtts.length) return;
+    const rtts = pending.rtts.sort((a, b) => a - b);
+    seat.warmupReplies = { since: now, rtts: [] };
+    this.#emit({
+      type: "warmupReply",
+      serverId: seat.server.id,
+      rttMs: midpointMedian(rtts.length, (rank) => rtts[rank]!),
+    });
   }
 
   /** A page-clock observation on the timeline, relative to the last tick rather than to its delivery. */

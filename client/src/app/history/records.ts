@@ -5,7 +5,9 @@ import type { WireModel } from "../../engine/measure/overhead";
 import { epochMs } from "../../engine/run/clock";
 import {
   graded,
+  grid,
   incoherence,
+  type CellStatus,
   type MultiServerResult,
   type Outcome,
   type RunResult,
@@ -459,7 +461,8 @@ export interface HistoryEntry {
   outcome: Outcome;
   servers: number;
   server: string;
-  stages: Record<Stage, StageStatus>;
+  /** Each stage as the result grid judges it. */
+  stages: Record<Stage, CellStatus>;
   jitterMs: number | null;
   addedLatency: AddedLatency | null;
   /** The load whose median the Loaded column shows: the highest, the first of equals. */
@@ -492,7 +495,7 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
     outcome: result.outcome,
     servers: selection.length,
     server: selection[0]?.name ?? "",
-    stages: result.stages,
+    stages: grid(result).columns,
     jitterMs: result.latency?.jitterMs ?? null,
     addedLatency: result.addedLatency,
     loadedStage,

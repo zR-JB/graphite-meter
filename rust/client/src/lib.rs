@@ -70,7 +70,7 @@ pub async fn headless(
             else => break,
         }
     }
-    controller.settled().await;
+    controller.close().await;
     // The signal's status holds only for a run it stopped.
     let stopped = matches!(
         view.latest().and_then(|run| run.outcome),

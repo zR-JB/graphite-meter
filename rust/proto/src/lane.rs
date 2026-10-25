@@ -5,6 +5,8 @@ use std::time::Duration;
 
 /// Every lane ends after this long without traffic from its peer.
 pub const IDLE_BOUND: Duration = Duration::from_secs(30);
+/// Streams a WebTransport lane carries: a download's `streams=` and the uploads read at once (`api/wire.md`).
+pub const MAX_LANE_STREAMS: usize = 16;
 
 table! {
     /// Says why a lane ended, with its name, WebSocket close code, WebTransport session code and reason text.

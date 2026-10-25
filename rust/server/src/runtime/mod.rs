@@ -150,17 +150,6 @@ impl Server {
         listening.socket.local_addr().ok()
     }
 
-    pub fn quic_endpoints(&self) -> usize {
-        let quic = self
-            .listeners
-            .iter()
-            .find_map(|listening| match &listening.socket {
-                Socket::Quic(quic) => Some(quic.listeners.len()),
-                _ => None,
-            });
-        quic.unwrap_or(0)
-    }
-
     pub fn app(&self) -> Arc<App> {
         self.app.clone()
     }
@@ -378,7 +367,7 @@ async fn log_verbose(app: &App) {
                 }
                 last = now;
             }
-            _ = admission.tick() => log!(Info, "admission", "{}", app.quotas().admission()),
+            _ = admission.tick() => log!(Info, "admission", "{}", app.quotas().admission(app.budget())),
         }
     }
 }

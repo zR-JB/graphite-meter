@@ -85,7 +85,7 @@ async fn relayed() -> (Server, Link) {
         .trim_start_matches("http://")
         .parse()
         .unwrap();
-    (server, Link::tcp(address, Duration::ZERO).await.unwrap())
+    (server, Link::tcp(address).await.unwrap())
 }
 
 fn results(events: &[Event]) -> Vec<&StageResult> {
@@ -236,4 +236,36 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
     let announced =
         |event: &Event| matches!(event, Event::ServerFailed(failure) if failure.server == relayed);
     assert!(events.iter().any(announced));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stop_while_an_upload_finishes_cuts_the_wait_and_keeps_the_measured_result() {
+    let (_relayed, link) = relayed().await;
+    let url = Origin::parse(&format!("http://{}", link.address)).unwrap();
+    let config = config(&url, &["-stages", "upload", "-upload-duration", "2s"]);
+    let prepared = prepare(&config, Client::new(false, pinned()))
+        .await
+        .unwrap();
+    let (events, mut received) = Events::channel();
+    let token = CancellationToken::new();
+    let running = coordinator::run(&prepared, &config, &events, token.clone());
+    let stopping = async {
+        while let Some(event) = received.recv().await {
+            if matches!(event, Event::Measuring(_)) {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+        link.stall();
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        token.cancel();
+        tokio::time::Instant::now()
+    };
+    let (outcome, stopped) = tokio::join!(running, stopping);
+    assert_eq!(outcome, Outcome::Complete, "the window had closed");
+    assert!(
+        stopped.elapsed() < Duration::from_secs(3),
+        "the run ended {:?} after the stop",
+        stopped.elapsed()
+    );
 }

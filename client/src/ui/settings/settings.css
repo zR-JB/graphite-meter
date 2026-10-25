@@ -205,9 +205,13 @@
       color: var(--text-soft);
       font: var(--role-caption);
       @media (hover: hover) {
-        &:hover {
+        &:hover:not(:disabled) {
           color: var(--text);
         }
+      }
+      /* Before the server answers there is nothing to open. */
+      &:disabled {
+        opacity: 0.5;
       }
     }
     /* The line keeps a control's height with or without a key, so a re-check never moves the rows below. */
@@ -318,7 +322,12 @@
       height: 4px;
       margin-bottom: 6px;
       border-radius: var(--r-full);
-      background: var(--tone);
+      background: linear-gradient(
+        90deg,
+        var(--phase-warmup) var(--lead),
+        transparent var(--lead) calc(var(--lead) + var(--gap)),
+        var(--tone) calc(var(--lead) + var(--gap))
+      );
       forced-color-adjust: none;
     }
     & :is(.strip-time, .strip-name) {

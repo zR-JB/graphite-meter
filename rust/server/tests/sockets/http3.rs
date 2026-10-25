@@ -9,7 +9,7 @@ use rustls::pki_types::ServerName;
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
 
-/// The HTTP/3 listener's address, which must differ from the HTTP/1 listener's.
+/// The HTTP/3 listener's address, apart from the HTTP/1 listener's.
 pub(super) const ADDRESS: &str = "127.0.0.7:0";
 /// The client's keep-alive, which keeps a connection from idling out while tests move the clock in steps of `STEP`.
 const KEEP_ALIVE: Duration = Duration::from_secs(2);
@@ -257,6 +257,47 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
         "a stalled reply ends at the idle bound"
     );
     assert_eq!(h3.server.active().await, 0);
+}
+
+#[tokio::test]
+async fn a_connection_its_peer_keeps_open_without_requests_closes_after_a_minute() {
+    let h3 = H3::start(&[]).await;
+    let connection = h3.connect(transport(None)).await;
+    for _ in 0..2 {
+        assert_eq!(connection.send("GET", "/probe", b"").await.0.status(), 200);
+        pass(Duration::from_secs(55)).await;
+        assert_eq!(
+            connection.closed_within(Duration::from_millis(10)).await,
+            None,
+            "a request restarts the bound"
+        );
+    }
+    pass(Duration::from_millis(4500)).await;
+    assert_eq!(
+        connection.closed_within(Duration::from_millis(10)).await,
+        None,
+        "not before a minute"
+    );
+    pass(Duration::from_millis(10500)).await;
+    assert_eq!(
+        connection.closed_within(Duration::from_secs(1)).await,
+        Some(Code::H3_NO_ERROR)
+    );
+}
+
+#[tokio::test]
+async fn a_quiet_idle_connection_times_out_without_a_close() {
+    let h3 = H3::start(&[]).await;
+    let mut quiet = transport(None);
+    quiet.keep_alive_interval(None);
+    let connection = h3.connect(quiet).await;
+    assert_eq!(connection.send("GET", "/probe", b"").await.0.status(), 200);
+    pass(Duration::from_secs(65)).await;
+    let ended = tokio::time::timeout(Duration::from_secs(1), connection.quic.closed()).await;
+    assert!(
+        matches!(ended, Ok(noq::ConnectionError::TimedOut)),
+        "{ended:?}"
+    );
 }
 
 #[tokio::test]
