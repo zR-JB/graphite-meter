@@ -123,6 +123,7 @@ test("every stage's warmup reads Warmup on the dial, its chip and its card, and 
   await ready(page);
   await page.evaluate(() => {
     const words: Record<string, string[]> = {};
+    const figures: string[] = [];
     // A word leaving through its handoff is not the word shown.
     const text = (selector: string) =>
       document
@@ -139,22 +140,27 @@ test("every stage's warmup reads Warmup on the dial, its chip and its card, and 
           text(`.results .card[data-tone="${stage}"] .name .status`),
         ];
         if (seen.every(Boolean)) (words[stage] ??= []).push(seen.join("|"));
+        if (stage === "latency")
+          figures.push(text('.results .card[data-tone="latency"] .headline .num'));
       }
-      Object.assign(window, { warmups: words });
+      Object.assign(window, { warmups: words, figures });
       if (phase !== "complete") requestAnimationFrame(sample);
     };
     (window as any).unmeasured.messages = 0;
     requestAnimationFrame(sample);
   });
   await run(page, 30_000);
-  const { words, messages } = await page.evaluate(() => ({
+  const { words, messages, figures } = await page.evaluate(() => ({
     words: (window as any).warmups,
     messages: (window as any).unmeasured.messages,
+    figures: (window as any).figures as string[],
   }));
   expect(Object.keys(words)).toEqual(["latency", "download", "upload"]);
   for (const seen of Object.values(words) as string[][])
     expect([...new Set(seen)]).toEqual(["Warmup|Warmup|Warmup"]);
   expect(messages).toBeGreaterThan(0);
+  // The latency card reads those replies, muted, before the window opens.
+  expect(figures.some((figure) => /\d/.test(figure))).toBe(true);
 });
 
 // Every page reports a policy violation as an error, so a run that trips Trusted Types fails whichever test made it.

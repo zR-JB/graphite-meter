@@ -446,8 +446,11 @@ test("frames keep their pace through each stage's warmup and window, and nothing
     // Layout shift is Chrome's to report; another browser reports none.
     if (PerformanceObserver.supportedEntryTypes.includes("layout-shift"))
       new PerformanceObserver((list) => {
-        for (const entry of list.getEntries() as (PerformanceEntry & { value: number })[])
-          shifts.push(entry.value);
+        for (const entry of list.getEntries() as (PerformanceEntry & {
+          value: number;
+          hadRecentInput: boolean;
+        })[])
+          if (!entry.hadRecentInput) shifts.push(entry.value);
       }).observe({ type: "layout-shift" });
     Object.assign(window, { pacing: { frames, shifts } });
   });
