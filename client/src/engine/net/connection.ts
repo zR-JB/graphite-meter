@@ -15,6 +15,7 @@ import {
   identityOf,
   ROLES,
   type Discovery,
+  type FailureReason,
   type LatencyPath,
   type Link,
   type OpenProbeChannel,
@@ -42,8 +43,8 @@ import type { Limiter } from "./limiter";
 import type { PageConfig, PageSession } from "./page";
 import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
 
-/** Start runs on evidence at most this old when it judged it. A reselected server keeps discovery this old. */
-export const FRESH_MS = 120_000;
+/** A resume re-checks evidence older than this, and a reselected server keeps discovery and paths this old. */
+const FRESH_MS = 120_000;
 /** A selected server re-reads its discovery this often, also after a failed read; the shown one's bus proves more. */
 const LIVENESS_MS = 60_000;
 const HIDDEN_MS = 30_000;
@@ -59,6 +60,9 @@ interface RoleView<P> {
   state: "unchecked" | "checking" | "verified" | "failed";
   path: P | null;
   message: string | null;
+  /** A start does not check its failure again: only the user, Retry or a changed server clears it. */
+  waits?: boolean;
+  reason?: FailureReason;
 }
 
 export interface ServerView {
@@ -86,6 +90,8 @@ interface CheckOptions {
   role?: Role;
   /** Start and resume re-read discovery and re-check what failed or was verified before this page-ms instant. */
   since?: number;
+  /** Start proves its paths as its run will use them, opening no session only to prove one. */
+  start?: boolean;
   signal?: AbortSignal;
 }
 
@@ -118,7 +124,6 @@ export interface Connection {
   prepared(since: number): PreparedServer | null;
   /** Verified roles become unchecked, e.g. after a run failed on them, which a `deferred` check proves again only at the next start. */
   invalidate(roles: readonly Role[], deferred?: boolean): void;
-  proved(roles: readonly Role[]): void;
   requireSignIn(message?: string): void;
   /** The network or the page came back, so retryable failures fall due and stale evidence is checked again. */
   resume(): void;
@@ -389,14 +394,14 @@ function connect(
     );
   }
 
-  function probe(role: Role, owner?: AbortSignal): Promise<void> {
+  function probe(role: Role, owner?: AbortSignal, start = false): Promise<void> {
     const running = roles[role].task.peek();
     if (running) return running.promise;
     const known = discovery.peek()!;
     const selection = env.selections[role].peek();
     return role === "throughput"
       ? verify(throughput, known, selection, owner, (signal) =>
-          checkThroughput(context, known, selection, signal),
+          checkThroughput(context, known, selection, signal, start),
         )
       : verify(latency, known, selection, owner, (signal) =>
           checkLatency(context, known, selection, signal),
@@ -406,6 +411,7 @@ function connect(
   async function check({
     force = false,
     since,
+    start = false,
     role,
     signal: owner,
   }: CheckOptions = {}): Promise<void> {
@@ -447,7 +453,7 @@ function connect(
         );
       }),
     );
-    await Promise.all(due.map((each) => probe(each, owner)));
+    await Promise.all(due.map((each) => probe(each, owner, start)));
   }
 
   function invalidate(which: readonly Role[], deferred = false): void {
@@ -462,22 +468,12 @@ function connect(
     );
   }
 
-  function proved(which: readonly Role[]): void {
-    const at = now();
-    batch(() =>
-      eachRole((check, role) => {
-        const outcome = check.outcome.peek();
-        if (which.includes(role) && outcome.state === "verified")
-          check.outcome.set({ state: "verified", path: { ...outcome.path, verifiedAt: at } });
-      }),
-    );
-  }
-
   function requireSignIn(message?: string): void {
     const failure: Failure = {
       message: message ?? `Sign in to ${name.peek()}`,
       retry: "needs-user",
       signIn: true,
+      reason: "sign-in-required",
     };
     if (auth.kind === "session") env.session.end("expired");
     batch(() => {
@@ -640,13 +636,31 @@ function connect(
       const selection = selectionText(env.selections[role]());
       const needed = required(role);
       if (needed && loud()) return { selection, state: "checking", path: null, message: null };
-      if (needed && standing) return { selection, state: "failed", path: null, message: standing };
+      if (needed && standing)
+        return {
+          selection,
+          state: "failed",
+          path: null,
+          message: standing,
+          waits: failed!.failure.retry !== "retryable",
+          reason: failed!.failure.reason,
+        };
       if (needed && busy[role]())
         return { selection, state: "checking", path: null, message: null };
       if (path) return { selection, state: "verified", path, message: null };
       const failure = needed ? failureHere(role) : null;
-      if (failure)
-        return { selection, state: "failed", path: null, message: words(failure.failure) };
+      if (failure) {
+        const { retry, reason } = failure.failure;
+        const message = words(failure.failure);
+        return {
+          selection,
+          state: "failed",
+          path: null,
+          message,
+          waits: retry !== "retryable",
+          reason,
+        };
+      }
       return { selection, state: "unchecked", path: null, message: null };
     };
     const throughputView = shown("throughput", valid.throughput());
@@ -698,7 +712,6 @@ function connect(
         );
       }),
     invalidate,
-    proved,
     requireSignIn,
     resume,
   };

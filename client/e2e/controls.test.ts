@@ -156,7 +156,8 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   });
   await ready(page);
   await runButton(page, "Start test").click();
-  await expect(runButton(page, "Stop test")).toBeVisible();
+  // Escape cancels a start still proving its paths, so the panels open once the run is under way.
+  await expect(phase(page, "idle")).toHaveCount(0);
   const settings = await openSettings(page);
   const details = page.locator('dialog[aria-label="Details"]');
   await page.getByRole("button", { name: "Details", exact: true }).click();
@@ -174,8 +175,6 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await closed(details);
   await page.press("Escape");
   await expect(runButton(page, "Stop test")).toBeVisible();
-  // A stop before the run is under way cancels the start; one after it aborts the run.
-  await expect(phase(page, "idle")).toHaveCount(0);
   await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
