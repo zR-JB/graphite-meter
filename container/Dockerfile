@@ -157,4 +157,5 @@ COPY --from=rust-amd64 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-cert
 EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
 # Distroless "nonroot"; mounted keys and secrets must be readable by it.
 USER 65532:65532
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --start-interval=1s CMD ["/graphite-meter", "healthcheck"]
 ENTRYPOINT ["/graphite-meter"]

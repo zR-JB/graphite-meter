@@ -207,6 +207,33 @@ fn transfers(message: &str) -> usize {
 
 #[cfg(unix)]
 #[test]
+fn healthcheck_passes_while_the_clear_listener_answers() {
+    let (child, address, _) = listening(&[]);
+    let check = || server(&["healthcheck"], &[("GM_H1_ADDR", address.as_str())], b"");
+    let healthy = check();
+    assert!(healthy.status.success(), "{}", text(&healthy.stderr));
+    assert!(healthy.stdout.is_empty() && healthy.stderr.is_empty());
+    terminate(child);
+    let down = check();
+    assert_eq!(down.status.code(), Some(1));
+    let line = text(&down.stderr).strip_suffix('\n').unwrap();
+    let message = format!("could not ask {address} for /probe: connection refused");
+    assert_eq!(logged(line), ("ERROR", "health:", message.as_str()));
+}
+
+#[test]
+fn healthcheck_fails_a_listener_that_never_answers() {
+    let hung = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = hung.local_addr().unwrap().to_string();
+    let output = server(&["healthcheck"], &[("GM_H1_ADDR", address.as_str())], b"");
+    assert_eq!(output.status.code(), Some(1));
+    let line = text(&output.stderr).strip_suffix('\n').unwrap();
+    let message = format!("{address} did not answer /probe within 2s");
+    assert_eq!(logged(line), ("ERROR", "health:", message.as_str()));
+}
+
+#[cfg(unix)]
+#[test]
 fn a_verbose_server_logs_requests_and_throughput_and_sigterm_ends_its_running_download() {
     use std::io::Read;
     let (child, address, next) = listening(&[("GM_VERBOSE", "true")]);

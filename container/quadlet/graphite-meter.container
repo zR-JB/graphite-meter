@@ -81,6 +81,8 @@ Environment=GM_SERVER_NAME=graphite-meter
 # The server writes nothing and binds unprivileged ports.
 ReadOnly=true
 DropCapability=ALL
+HealthCmd=["/graphite-meter","healthcheck"]
+HealthInterval=30s
 NoNewPrivileges=true
 
 [Service]

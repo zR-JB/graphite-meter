@@ -155,6 +155,29 @@ by it:
 - Quadlet needs nothing. Podman secrets are world-readable inside the container. Your user owns the TLS and
   Tailscale keys, and those units map it to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
 
+### Health check
+
+`healthcheck` asks the clear listener for `/probe` and exits 1 when it gets no answer within 2 s, so a stopped or
+hung server turns unhealthy. It reads the `GM_*` environment, not flags, because the image's check runs without the
+container's arguments. Docker runs it from the image every 30 s, and once a second while the server starts, so another
+Compose service can wait with `depends_on: graphite-meter: condition: service_healthy`. To change its timing:
+
+```yaml
+services:
+  graphite-meter:
+    healthcheck:
+      interval: 60s
+```
+
+Podman applies no health check of an OCI image, so a Quadlet unit names it, as the shipped units do. The command must
+be a JSON array, since the image has no shell to run a plain one:
+
+```ini
+[Container]
+HealthCmd=["/graphite-meter","healthcheck"]
+HealthInterval=30s
+```
+
 ## Native listeners
 
 Each listener has its own address and advertised origin, so a client picks a protocol by picking an address. The
