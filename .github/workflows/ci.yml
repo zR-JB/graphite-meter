@@ -396,14 +396,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {browser: firefox, group: network, diag: loss}
-          - {browser: chrome, group: network, diag: loss}
-          - {browser: chrome, group: rest-1}
-          - {browser: chrome, group: rest-2}
-          - {browser: firefox, group: rest-1}
-          - {browser: firefox, group: rest-2}
-          - {browser: chrome, group: faults}
-          - {browser: firefox, group: faults}
+          - {browser: chrome, group: sheet}
+          - {browser: firefox, group: sheet}
+          - {browser: chrome, group: sheet-load}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -492,6 +487,10 @@ jobs:
             rest-[12])
               bun run e2e bun test ./e2e --parallel=3 --no-orphans --timeout=60000 '--path-ignore-patterns=**/performance.test.ts' \
                 '--path-ignore-patterns=**/network/**' "--shard=${GROUP#rest-}/2" --timings=e2e/timings.json --rerun-each=4 ;;
+            sheet)
+              bun run e2e bun test ./e2e/sheet-diag.test.ts --no-orphans --timeout=60000 --rerun-each=10 ;;
+            sheet-load)
+              bun run e2e bun test ./e2e/sheet-diag.test.ts ./e2e/controls.test.ts ./e2e/app.test.ts --parallel=3 --no-orphans --timeout=60000 --rerun-each=6 ;;
             faults)
               bun run e2e bun test ./e2e/faults.test.ts ./e2e/access.test.ts ./e2e/controls.test.ts --parallel=3 --no-orphans --timeout=60000 --rerun-each=6 ;;
           esac
