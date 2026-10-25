@@ -5,6 +5,7 @@ use crate::limits::{Budget, Lease};
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::time::Instant;
+use tokio_util::sync::{CancellationToken, DropGuard};
 
 /// The block is this large, as is the largest chunk a source hands out.
 pub const BLOCK_BYTES: usize = 256 << 10;
@@ -40,6 +41,7 @@ impl Block {
             remaining: bytes,
             transfer,
             until: None,
+            _ended: None,
         }
     }
 
@@ -55,6 +57,7 @@ pub struct DownloadSource {
     remaining: u64,
     transfer: Option<Arc<Transfer>>,
     until: Option<Instant>,
+    _ended: Option<Arc<DropGuard>>,
 }
 
 impl DownloadSource {
@@ -62,6 +65,14 @@ impl DownloadSource {
     pub fn ending_at(self, until: Instant) -> Self {
         Self {
             until: Some(until),
+            ..self
+        }
+    }
+
+    /// Cancels `ended` once the download and every clone of it are over, however they end.
+    pub fn signalling(self, ended: CancellationToken) -> Self {
+        Self {
+            _ended: Some(Arc::new(ended.drop_guard())),
             ..self
         }
     }

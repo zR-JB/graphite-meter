@@ -24,8 +24,8 @@ below.
   `python3 -m scripts.legal.check_rust_reviews --format` rewrites the file in its layout.
 - `rust-provenance.json` and `manual/rust/`: legal texts, with their SHA-256 and review notes, for crates that do not
   package their own.
-- `reviewed-components.json` and `provenance.json`: npm packages the browser bundle includes (none today), the fonts
-  it ships and the image's CA roots.
+- `reviewed-components.json` and `provenance.json`: npm packages the browser bundle includes (none: it has no
+  runtime dependencies), the fonts it ships and the image's CA roots.
 - `rust-platform-debian-trixie.json`: one reviewed record per shipped target for what the toolchain and builder link
   beyond Cargo's packages: native inputs, system-library imports, the notice texts that cover them, and
   `noticesSha256`, their fingerprint.

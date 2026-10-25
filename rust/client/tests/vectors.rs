@@ -241,6 +241,7 @@ fn formatting() {
     for (kind, cases) in vectors.as_object().unwrap() {
         for case in cases.as_array().unwrap() {
             let value = || case["in"].as_f64().unwrap();
+            let ms = |field: &str| Duration::from_secs_f64(case[field].as_f64().unwrap() / 1e3);
             let actual = match kind.as_str() {
                 "ms" => format::ms(value()),
                 "latency" => format::latency(value()),
@@ -248,6 +249,13 @@ fn formatting() {
                 "speed" => format::speed(value()),
                 "rate" => format::rate(case["bytesPerSec"].as_f64().unwrap()),
                 "bytes" => format::bytes(case["in"].as_u64().unwrap()),
+                "duration" => format::duration(ms("ms")),
+                "stageTime" => format::stage_time(ms("ms")),
+                "progress" => format::progress(ms("elapsedMs"), ms("totalMs")),
+                "latencyRange" => format::latency_range(ms("fastestMs"), ms("slowestMs")),
+                "percent" => format::percent(case["ratio"].as_f64().unwrap()),
+                "count" => format::count(case["in"].as_u64().unwrap() as usize),
+                "tick" => format::tick(value()),
                 _ => panic!("unknown format {kind}"),
             };
             assert_eq!(actual, case["out"].as_str().unwrap(), "{kind}: {case}");

@@ -9,11 +9,10 @@ use crate::{
     events::{Point, Running, Series},
     format::{self, MISSING, round_trip},
     measure::{latency::Summary, wire},
-    model::{Outcome, ServerFailure, Stage, StageResult, StageStatus},
+    model::{Outcome, Stage, StageResult, StageStatus},
     style::mix,
     text::{self, Line, Profile, Style},
 };
-use graphite_meter_proto::reason::FailureReason;
 use ratatui_core::layout::Rect;
 use std::{borrow::Cow, time::Duration};
 
@@ -23,6 +22,7 @@ const WIDE: (u16, u16) = (110, 32);
 const CHART_STEPS: [f64; 10] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0];
 pub(super) const LADDER: [f64; 3] = [1.0, 2.0, 4.0];
 const CONTROLS: u16 = 64;
+pub(super) const CANNOT_START: &str = "Test cannot start";
 /// The browser's dial transfer curve (`client/src/ui/measure/dial-model.ts`): equal sweeps for each knot.
 const KNOTS: [f64; 9] = [0.0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
 
@@ -273,6 +273,10 @@ impl App {
             );
         }
         canvas.hit(area, Target::Key);
+    }
+
+    pub(super) fn cannot_start(&self) -> bool {
+        self.config.url.is_some() && self.blocked().is_some()
     }
 
     pub(super) fn blocked(&self) -> Option<String> {
@@ -854,7 +858,7 @@ impl App {
             {
                 quiet = Line::styled("Wire ", palette.muted)
                     .and(format!("{} {}", unit.figure(wire), unit.name), palette.text);
-                let overhead = format!("  +{:.1}%", (wire / mean - 1.0) * 100.0);
+                let overhead = format!("  +{}", format::percent(wire / mean - 1.0));
                 if quiet.width() + overhead.len() <= usize::from(width) {
                     quiet = quiet.and(overhead, palette.muted);
                 }
@@ -863,7 +867,7 @@ impl App {
         quiet = match state {
             State::Ended(status @ (StageStatus::Failed | StageStatus::Partial)) => {
                 let (fallback, style) = self.ended(status);
-                Line::styled(self.failure(stage).unwrap_or(fallback), style)
+                Line::styled(self.failure(stage).unwrap_or(fallback.into()), style)
             }
             State::Warmup => Line::styled(self.spinner(), palette.accent)
                 .and(" Warming up, not counted", palette.muted),
@@ -872,18 +876,29 @@ impl App {
         [value, quiet]
     }
 
-    /// Why the stage failed: the latency server's first failure, else any server's.
-    fn failure(&self, stage: Stage) -> Option<&'static str> {
+    fn failure(&self, stage: Stage) -> Option<String> {
         let run = self.view.run.as_ref()?;
         let result = run.results.iter().rfind(|result| result.stage == stage)?;
-        let counted = |failure: &&ServerFailure| {
-            failure.failure.reason != FailureReason::InsufficientEvidence
-        };
-        let mut failures = result.failures.iter().filter(counted);
-        let own = failures
-            .clone()
-            .find(|failure| Some(&failure.server) == self.latency_server());
-        Some(own.or_else(|| failures.next())?.failure.reason.label())
+        let mut lines: Vec<String> = Vec::new();
+        let own = result
+            .failures
+            .iter()
+            .filter(|failure| result.owns(failure.scope));
+        for failure in own {
+            let reason = failure.failure.reason.label();
+            let line = match self.several() {
+                true => format!(
+                    "{}: {}",
+                    self.name(Some(&failure.server)),
+                    text::lowered(reason)
+                ),
+                false => reason.to_owned(),
+            };
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+        (!lines.is_empty()).then(|| lines.join(", "))
     }
 
     fn facts(
@@ -1055,11 +1070,15 @@ impl App {
             note,
         };
         let Some(run) = run else {
-            let note = match self.config.url {
-                None => "Add a server to measure your connection",
-                Some(_) => "Ready to measure your connection",
+            let warn = |text: String| Line::styled(text, palette.warn);
+            let note = match () {
+                _ if self.config.url.is_none() => muted("Add a server to measure your connection"),
+                _ if self.cannot_start() => warn(CANNOT_START.into()),
+                _ => self
+                    .start_failure()
+                    .map_or_else(|| muted("Ready to measure your connection"), warn),
             };
-            return at_rest(rate_ticks, muted(note));
+            return at_rest(rate_ticks, note);
         };
         if self.running() {
             let Some(running) = &run.stage else {
@@ -1170,6 +1189,9 @@ impl App {
     fn outcome_note(&self) -> Line {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
+        if self.cannot_start() {
+            return Line::styled(CANNOT_START, palette.warn);
+        }
         match run.and_then(|run| run.outcome) {
             Some(Outcome::Stopped) => {
                 Line::styled(format::outcome_label(Outcome::Stopped), palette.muted)

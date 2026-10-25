@@ -120,7 +120,8 @@ systemctl --user daemon-reload
 systemctl --user start graphite-meter-tailnet-tailscale.service
 ```
 
-Starting the sidecar starts Graphite Meter after the certificate check. `podman port graphite-meter-tailnet` must print
-nothing. From another tailnet device, `curl -v https://HOST/preflight`, `curl -v --http2 https://HOST:8443/probe` and
-`curl -v --http3-only https://HOST:8444/probe` exercise the three listeners. Results include the tunnel's path and
-overhead, so they are not a physical link's capacity ([measurement definitions](../../docs/MEASUREMENTS.md)).
+Starting the sidecar starts Graphite Meter after the certificate check. `podman port graphite-meter-tailnet` must
+print nothing. From another tailnet device, `curl -v https://HOST/preflight`,
+`curl -v --http2 https://HOST:8443/probe` and `curl -v --http3-only https://HOST:8444/probe` exercise the three TLS
+listeners. Results include the tunnel's path and overhead, so they are not a physical link's capacity
+([measurement definitions](../../docs/MEASUREMENTS.md)).

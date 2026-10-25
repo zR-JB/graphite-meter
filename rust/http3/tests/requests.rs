@@ -296,6 +296,33 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
 }
 
 #[tokio::test]
+async fn a_retired_connection_serves_what_the_peer_still_sends_and_shuts_down_as_before()
+-> Result<(), TestError> {
+    let Served {
+        peers,
+        stop,
+        retire,
+        ..
+    } = pair(PLAIN).await?.serve(respond);
+    let (_driver, requests) = client(&peers);
+    retire.notify_one();
+    while !requests.going_away() {
+        yields().await;
+    }
+    // A raw request stream passes the client's own going-away check.
+    peers.get().await?;
+    jump(Duration::from_secs(60)).await;
+    yields().await;
+    assert!(
+        peers.client.close_reason().is_none(),
+        "a retired connection gets no close"
+    );
+    stop.notify_one();
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+    Ok(())
+}
+
+#[tokio::test]
 async fn stale_heads_end_and_idle_connections_get_no_close() -> Result<(), TestError> {
     let Served { peers, serving, .. } = pair(PLAIN).await?.serve(|_, _| async {});
     let (driver, _requests) = client(&peers);
@@ -380,5 +407,31 @@ async fn a_cancelled_download_without_reliable_reset_leaves_the_connection_usabl
     assert!(peers.client.close_reason().is_none());
     drop((send, recv));
     settled(&peers.budget).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_read_past_an_abort_repeats_it_without_reserving_the_declared_length()
+-> Result<(), TestError> {
+    let bytes = [
+        request_head(&[(":method", "POST")]),
+        varint(0x01),
+        varint(1 << 61),
+        vec![0; 64],
+    ]
+    .concat();
+    let (reads, mut read) = tokio::sync::mpsc::unbounded_channel();
+    let Served { peers, .. } = pair(PLAIN).await?.serve(move |_, stream| {
+        let reads = reads.clone();
+        async move {
+            let mut recv = stream.split().1;
+            let first = recv.data().await;
+            let _ = reads.send((first, recv.data().await));
+        }
+    });
+    let (_send, _recv) = peers.bi(&bytes).await?;
+    let (first, second) = read.recv().await.ok_or("no reads")?;
+    assert_eq!(first, Err(Error::Protocol(Code::H3_EXCESSIVE_LOAD)));
+    assert_eq!(second, first);
     Ok(())
 }

@@ -32,6 +32,7 @@ async fn the_close_code_table_reaches_the_peer() -> Result<(), TestError> {
             serving,
             stop,
             mut outcomes,
+            ..
         } = pair(DRAFT02)
             .await?
             .sessions(move |session| async move { session.close(code, reason).await });

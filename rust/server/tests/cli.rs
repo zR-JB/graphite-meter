@@ -178,6 +178,22 @@ fn configuration_errors_log_an_error_line_and_exit_one() {
 }
 
 #[test]
+fn a_listener_that_cannot_bind_names_its_setting() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = taken.local_addr().unwrap().to_string();
+    let env = [
+        ("GM_H1_ADDR", address.as_str()),
+        ("TOKIO_WORKER_THREADS", "2"),
+    ];
+    let output = server(&[], &env, b"");
+    assert_eq!(output.status.code(), Some(1));
+    let failed = text(&output.stderr).lines().last().map(logged).unwrap();
+    let message = format!("could not listen on {address}/tcp (GM_H1_ADDR): ");
+    assert_eq!(failed.0, "ERROR");
+    assert!(failed.2.starts_with(&message), "{failed:?}");
+}
+
+#[test]
 fn help_prints_the_usage_and_exits_zero() {
     let output = server(&["-h"], &[], b"");
     assert!(output.status.success());

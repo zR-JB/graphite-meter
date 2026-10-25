@@ -8,7 +8,7 @@ throughput at the receiver. It has an interactive console and a report mode for 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/terminal-dark.png">
-  <img src="assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under load">
+  <img src="assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under download load and 2.8 ms under upload load">
 </picture>
 
 </div>
@@ -24,6 +24,9 @@ executable and its license notices (`--legal` prints them too). The Linux builds
 | Linux, arm64   | `graphite-meter-client_X.Y.Z_linux_arm64.tar.gz` |
 | Windows, amd64 | `graphite-meter-client_X.Y.Z_windows_amd64.zip`  |
 | Windows, arm64 | `graphite-meter-client_X.Y.Z_windows_arm64.zip`  |
+
+To check that a download is the one the release published, run
+`gh release verify-asset vX.Y.Z FILE -R zR-JB/graphite-meter` ([details](DEPLOYMENT.md#without-docker)).
 
 ```sh
 tar -xzf graphite-meter-client_X.Y.Z_linux_amd64.tar.gz
@@ -77,7 +80,7 @@ Durations take units such as `800ms`, `4s` or `1m30s`. Boolean flags accept `tru
 | ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `--url <origin>`                                 | the remembered server     | The Graphite Meter server. Required in report mode unless a server is remembered.         |
 | `--server <id>`                                  | the catalog's default     | A test server ID from the server catalog; repeat for up to 4.                             |
-| `--stages <list>`                                | `latency,download,upload` | `latency` (`ping`), `download` (`down`), `upload` (`up`), `bidirectional` (`bidi`).       |
+| `--stages <list>`                                | `latency,download,upload` | `latency` (`ping`), `download` (`down`), `upload` (`up`), `bidirectional` (`bidi`); they run in this order. |
 | `--latency-duration`                             | `4s`                      | Measured time of the latency stage, 1 s to 24 h and within every test server's limit.     |
 | `--download-/--upload-/--bidirectional-duration` | `10s`                     | The same for each transfer stage.                                                         |
 | `--warmup`                                       | `800ms`                   | Before each stage, 0 to 4 s; stretched to at least 10 idle round trips, at most 4 s.      |
@@ -144,11 +147,12 @@ columns when stdout is a file or pipe.
 | 1      | The test ended Partial, Incomplete, Stopped or Failed, or an error such as "Sign-in required" occurred. |
 | 2      | The flags or arguments were invalid, or report mode had no server address.      |
 | 130    | SIGINT (ctrl+c) stopped the test.                                               |
-| 141    | The report was written into a closed pipe.                                      |
-| 143    | SIGTERM stopped the test.                                                       |
+| 141    | On Unix, the report was written into a closed pipe.                             |
+| 143    | SIGTERM, or closing the Windows console, stopped the test.                      |
 
-A signal stops the test, and the report still prints. A second signal exits at once with its own status, and a
-signal after the test finished does not change the status.
+A signal stops the test, and the report still prints; before the test started, stderr says "Test stopped before it
+started." instead. A second signal exits at once with its own status, and a signal after the test finished does not
+change the status.
 
 ## Environment
 
@@ -159,7 +163,7 @@ signal after the test finished does not change the status.
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | On Linux, `SSL_CERT_FILE` replaces the system CA bundle and `SSL_CERT_DIR`, a list separated like `PATH`, the system certificate directories; each one unset keeps the system's. On Windows, either one replaces the system's certificates. |
 | `NO_COLOR`                      | No color, though a terminal still gets bold text.                                                                      |
 | `CLICOLOR_FORCE`, `FORCE_COLOR` | Color even when stdout is not a terminal or `TERM=dumb`.                                                               |
-| `COLORTERM`, `TERM`             | The color depth. `COLORTERM=truecolor` or `24bit`, a `TERM` ending in `direct` or naming a 24-bit terminal such as `kitty`, `foot` or `wezterm`, and Windows Terminal give 24-bit color. `screen`, `tmux` and a `TERM` with `256color` give 256 colors, and anything else gives 16. A Windows console without `TERM` gets 24-bit color. |
+| `COLORTERM`, `TERM`             | The color depth. `COLORTERM=truecolor` or `24bit`, a `TERM` ending in `direct` or naming a 24-bit terminal such as `kitty`, `foot` or `wezterm`, and Windows Terminal give 24-bit color. `screen` and `tmux` give 256 colors even with `COLORTERM` set, any other `TERM` with `256color` gives 256 colors, and anything else gives 16. A Windows console without `TERM` gets 24-bit color. |
 
 If the client cannot use a proxy variable, every request that would go through that proxy fails and names the
 variable. HTTP/3 and WebTransport connect directly over UDP, without the proxy.

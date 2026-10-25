@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import http.client
 import json
 import platform
 import re
@@ -133,13 +134,20 @@ def verify_rust_toolchain(root: Path = ROOT) -> None:
 
 
 def download(url: str, limit: int = 16 * 1024 * 1024, timeout: float = 30, retries: int = 2) -> bytes:
-    # Public CDNs sometimes drop a TLS connection mid-read.
+    # Public CDNs sometimes drop a TLS connection mid-read, which read() reports only as a short body.
     try:
         with urllib.request.urlopen(url, timeout=timeout) as reply:
-            return reply.read(limit)
-    except OSError as error:
-        if not retries or isinstance(error, urllib.error.HTTPError) and error.code < 500:
+            data = reply.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError(f"{url} is larger than {limit} bytes")
+            if reply.length:
+                raise http.client.IncompleteRead(data, reply.length)
+            return data
+    except (OSError, http.client.HTTPException) as error:
+        if isinstance(error, urllib.error.HTTPError) and error.code < 500:
             raise
+        if not retries:
+            raise ConnectionError(f"could not download {url}: {error!r}") from error
         time.sleep(2)
         return download(url, limit, timeout, retries - 1)
 

@@ -96,16 +96,34 @@ const full: HistoryRecord = {
   },
 };
 
+const latencyStages = {
+  latency: "complete",
+  download: "not-run",
+  upload: "not-run",
+  bidirectional: "not-run",
+} as const;
 const latencyOnly: RunResult = {
   ...full.result,
-  download: null,
-  upload: null,
-  bidirectional: null,
+  ...none,
+  latency: measured.latency,
   latencyByStage: { ...none, latency: population(12) },
   addedLatency: null,
-  multiServer: { ...full.result.multiServer, servers: [], failures: [] },
+  multiServer: {
+    ...full.result.multiServer,
+    servers: [
+      {
+        ...full.result.multiServer.servers[0]!,
+        ...none,
+        latency: measured.latency,
+        latencyByStage: { ...none, latency: population(12) },
+        addedLatency: null,
+        stages: latencyStages,
+      },
+    ],
+    failures: [],
+  },
   outcome: "complete",
-  stages: { latency: "complete", download: "not-run", upload: "not-run", bidirectional: "not-run" },
+  stages: latencyStages,
 };
 const off = { planned: false, durationMs: 10_000, early: false };
 const plans: StagePlans = {
@@ -275,6 +293,70 @@ const v5 = {
   engine: engineVersion,
   result: { ...full.result, multiServer: { ...full.result.multiServer, servers: [unversioned] } },
 };
+
+/** Frankfurt measured every stage; Oslo, as older builds saved it, lost in Download and absent after it, or dropped at Start. */
+function twoServers(oslo: "left" | "dropped", schemaVersion: 5 | 6): unknown {
+  const { engineVersion: _, ...frankfurt } = {
+    ...full.result.multiServer.servers[0]!,
+    stages: { ...stages, bidirectional: "complete" },
+  };
+  const osloId = { id: "b", name: "Oslo", url: "https://b.example" };
+  const left = {
+    ...frankfurt,
+    server: osloId,
+    upload: null,
+    bidirectional: null,
+    stages: {
+      ...frankfurt.stages,
+      download: "failed",
+      upload: "not-run",
+      bidirectional: "not-run",
+    },
+  };
+  const failure = { ...full.result.multiServer.failures[0]!, serverId: "b", stage: "download" };
+  const servers = oslo === "left" ? [frankfurt, left] : [frankfurt];
+  return {
+    ...full,
+    ...(schemaVersion === 5 && { schemaVersion, engine: "1.2.3" }),
+    result: {
+      ...full.result,
+      stages: { ...stages, download: "partial", bidirectional: "complete" },
+      outcome: "partial",
+      multiServer: {
+        ...full.result.multiServer,
+        selection: [identity, osloId],
+        servers:
+          schemaVersion === 5
+            ? servers
+            : servers.map((each) => ({ ...each, engineVersion: "1.2.3" })),
+        failures: [failure],
+      },
+    },
+  };
+}
+
+test("an older record's stage measured without a selected server reads partial, and a Start drop makes every stage so", () => {
+  const read = (row: unknown) => {
+    const { stages, outcome } = readHistoryRecord(upgradeRecord(row) ?? row)!.result;
+    return { ...stages, outcome };
+  };
+  for (const schema of [6, 5] as const) {
+    expect(read(twoServers("left", schema)), `schema ${schema}`).toEqual({
+      latency: "complete",
+      download: "partial",
+      upload: "partial",
+      bidirectional: "partial",
+      outcome: "partial",
+    });
+    expect(read(twoServers("dropped", schema)), `schema ${schema}`).toEqual({
+      latency: "partial",
+      download: "partial",
+      upload: "partial",
+      bidirectional: "partial",
+      outcome: "partial",
+    });
+  }
+});
 
 test("an older build's row upgrades to this build's form, and the row itself stays as stored", () => {
   const server = "result.multiServer.servers.0";

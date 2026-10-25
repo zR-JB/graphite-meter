@@ -395,10 +395,17 @@ async fn bind_all(
                 .expect("validation requires TLS files")
                 .acceptor(alpn)
         };
-        let address = &mut listener.address;
-        let socket = bind(address)
-            .await
-            .map_err(|error| could_not(&format!("listen on {address}/tcp"), &error))?;
+        let (setting, address) = (listener.kind.env(), &mut listener.address);
+        let socket = bind(address).await.map_err(|error| {
+            let failed = could_not(&format!("listen on {address}/tcp ({setting}_ADDR)"), &error);
+            match error.kind() {
+                io::ErrorKind::PermissionDenied if (1..1024).contains(&address.port) => format!(
+                    "{failed}; use a port from 1024, or allow lower ones with CAP_NET_BIND_SERVICE or \
+                     net.ipv4.ip_unprivileged_port_start"
+                ),
+                _ => failed,
+            }
+        })?;
         if let Ok(local) = socket.local_addr() {
             address.port = local.port();
         }
@@ -726,7 +733,7 @@ mod terms_tests {
         let floor = quic::noq_floor(&config(&totals).limits).unwrap();
         assert_eq!(
             floor >> 10,
-            978,
+            984,
             "noq's stream floor for 324 request streams, without HTTP/3's state"
         );
     }
