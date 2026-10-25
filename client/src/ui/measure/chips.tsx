@@ -8,11 +8,12 @@ import { handoff } from "../../lib/motion";
 import { computed, effect, untrack, type Read } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../../view/format";
 import {
-  NEXT_RUN,
+  chipTag,
   PHASE,
   reasonLabel,
   STAGE,
   STAGE_STATE,
+  TAGGED,
   type StageState,
   type Tone,
 } from "../../view/words";
@@ -98,19 +99,12 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   // A stage the next run includes but the shown run did not run waits for the next run.
   const nextRun = computed(() => selected() && state() === "skipped" && run.plan() !== null);
   const look = computed<Look>(() => (selected() ? LOOK[state()] : "off"));
-  const tag = computed(() => {
-    if (!selected()) return STAGE_STATE.skipped.label;
-    if (nextRun()) return NEXT_RUN.label;
-    return look() === "partial" || look() === "failed"
-      ? STAGE_STATE[look() as "partial" | "failed"].label
-      : null;
-  });
+  const tag = computed(() => chipTag(state(), selected(), nextRun()));
   // Why a locked chip cannot change; a settled one says nothing more than its check or tag.
   const reason = computed(() => {
     if (tag() !== null) return tag();
     if (!locked() || look() === "complete") return null;
-    if (run.stage() === stage && RUNNING_LOOKS.has(look()))
-      return look() === "recovering" ? STAGE_STATE.recovering.label : STAGE_STATE.running.label;
+    if (run.stage() === stage && RUNNING_LOOKS.has(look())) return STAGE_STATE[state()].label;
     return STAGE_STATE.upcoming.label;
   });
   const timed = computed(() => look() === "active" && live.budget() > 0);
@@ -127,7 +121,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
         return { key: `${now}:check`, check: true, text: "", time: false, tone: null };
       if (timed()) return { key: `${now}:live`, check: false, text: "", time: true, tone: null };
       // A new length rolls in place; only another kind of tag hands off.
-      if (waiting())
+      if (waiting() && !TAGGED.has(state()))
         return { key: `${now}:length`, check: false, text: length(), time: true, tone: null };
       const tone: Tone | null =
         now === "partial" || now === "recovering" ? "warn" : now === "failed" ? "err" : null;

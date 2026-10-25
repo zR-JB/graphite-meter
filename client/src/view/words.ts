@@ -132,6 +132,21 @@ export const STAGE_STATE = {
 /** A stage the next run includes but the shown run did not run, as its chip names it. */
 export const NEXT_RUN = { label: "Next test", tone: null } as const satisfies Word;
 
+/** States a chip's tag names in place of its time. */
+export const TAGGED: ReadonlySet<StageState> = new Set([
+  "partial",
+  "failed",
+  "stopped",
+  "unreached",
+]);
+
+/** The word on a chip's tag: off, queued for the next test, or how its stage fared; null leaves its time or check. */
+export function chipTag(state: StageState, selected: boolean, nextRun: boolean): string | null {
+  if (!selected) return STAGE_STATE.skipped.label;
+  if (nextRun) return NEXT_RUN.label;
+  return TAGGED.has(state) ? STAGE_STATE[state].label : null;
+}
+
 /** What the runner has said about one stage of the shown run. */
 export interface StageFacts {
   planned: boolean;

@@ -1,8 +1,12 @@
 import { expect, test } from "bun:test";
 import { FAILURE_REASONS } from "../protocol/reasons";
 import { DEFAULT_CONFIG } from "../app/preferences";
+import { STATUS_WORD } from "../ui/history/model";
+import { liveCard } from "../ui/measure/cards-model";
 import {
   allServersLabel,
+  chipTag,
+  STAGE_STATE,
   listed,
   reasonLabel,
   serverLabel,
@@ -86,4 +90,30 @@ test("the stage limit names the server and each planned stage past it", () => {
   );
   expect(stageLimitError(DEFAULT_CONFIG, { ms: 300_000, server: "Oslo" })).toBe("");
   expect(stageLimitError(DEFAULT_CONFIG, { ms: 86_400_000, server: null })).toBe("");
+});
+
+test("every stage state reads one word, the same on a chip, a card and a History row", () => {
+  const unseen = {
+    own: false,
+    lost: false,
+    spoken: null,
+    held: null,
+    idle: null,
+    bytes: 0,
+    shape: null,
+  };
+  const units = { base: "base10", kind: "bits", tier: 2 } as const;
+  for (const state of Object.keys(STAGE_STATE) as StageState[]) {
+    const { label } = STAGE_STATE[state];
+    const card = liveCard("upload", state, unseen, units).word?.label;
+    expect(card, state).toBe(state === "upcoming" || state === "complete" ? undefined : label);
+    const tag = chipTag(state, true, false);
+    if (tag !== null) expect(tag, state).toBe(label);
+  }
+  for (const state of ["partial", "failed", "stopped", "unreached"] as const)
+    expect(chipTag(state, true, false), state).toBe(STAGE_STATE[state].label);
+  expect(chipTag("upcoming", false, false)).toBe(STAGE_STATE.skipped.label);
+  // History names the stages a result never measured as the console does.
+  for (const status of ["partial", "failed", "unreached", "skipped"] as const)
+    expect(STATUS_WORD[status], status).toBe(STAGE_STATE[status].label);
 });
