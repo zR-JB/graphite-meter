@@ -1,6 +1,6 @@
 //! Lane groups: which connection or session a stage's lanes share, and the one loop every lane runs.
 use super::{
-    Attempt, Client, Request, Retry,
+    Attempt, CONTROL_TIMEOUT, Client, Incoming, Request, Retry,
     conn::Session,
     conn::{Conn, Payload, ReadBuffer, TRANSFER_BYTES},
     fault::Fault,
@@ -25,7 +25,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::{runtime::Handle, sync::watch, task::JoinSet};
+use tokio::{runtime::Handle, sync::watch, task::JoinSet, time::timeout};
 use tokio_util::sync::CancellationToken;
 
 const STREAM_BYTES: u64 = 64 << 20;
@@ -320,35 +320,52 @@ impl Group {
             },
             client,
         ) = (&self.plan.path, &self.client);
-        let conn = match self.plan.carrier {
-            Carrier::Session => {
-                let (dial, usable) = (self.dial_session(tally), |session: &Arc<Session>| {
-                    session.usable()
-                });
-                let session = self
-                    .session
-                    .get(dial, usable, |session| Some(session.clone()))
-                    .await?;
-                return match &self.work {
-                    Work::Download => receive(&session, lane, tally).await,
-                    Work::Upload(_) => send(&session, &self.block, lane, tally).await,
-                };
+        if let Carrier::Session = self.plan.carrier {
+            let (dial, usable) = (self.dial_session(tally), |session: &Arc<Session>| {
+                session.usable()
+            });
+            let session = self
+                .session
+                .get(dial, usable, |session| Some(session.clone()))
+                .await?;
+            return match &self.work {
+                Work::Download => receive(&session, lane, tally).await,
+                Work::Upload(_) => send(&session, &self.block, lane, tally).await,
+            };
+        }
+        let conn = async {
+            match self.plan.carrier {
+                Carrier::Dialed => {
+                    let down = self.plan.direction == Direction::Down;
+                    let buffer = if down {
+                        ReadBuffer::Fixed
+                    } else {
+                        ReadBuffer::Adaptive
+                    };
+                    let dial = client.dial(origin, *protocol, buffer);
+                    self.conn.get(dial, Conn::usable, Conn::share).await
+                }
+                _ => client.connections.shared(client, origin, *protocol).await,
             }
-            Carrier::Dialed => {
-                let down = self.plan.direction == Direction::Down;
-                let buffer = if down {
-                    ReadBuffer::Fixed
-                } else {
-                    ReadBuffer::Adaptive
-                };
-                let dial = client.dial(origin, *protocol, buffer);
-                self.conn.get(dial, Conn::usable, Conn::share).await?
-            }
-            Carrier::Path => client.connections.shared(client, origin, *protocol).await?,
         };
         match &self.work {
-            Work::Download => self.download(conn, lane, tally).await,
-            Work::Upload(id) => self.upload(conn, id, lane, tally).await,
+            Work::Download => {
+                let opened = async {
+                    let query = vec![
+                        ("bytes", TRANSFER_BYTES.to_string()),
+                        ("cb", cache_buster()),
+                        ("lane", lane.number.to_string()),
+                    ];
+                    let request = self.request(Method::GET, Route::Download, query);
+                    let mut conn = conn.await?;
+                    let body = conn.open(client, &request, Payload::empty()).await?;
+                    Ok((conn, body))
+                };
+                let opened = timeout(CONTROL_TIMEOUT, opened).await;
+                let (_conn, body) = opened.unwrap_or(Err(Fault::TimedOut("download answer")))?;
+                self.download(body, lane, tally).await
+            }
+            Work::Upload(id) => self.upload(conn.await?, id, lane, tally).await,
         }
     }
 
@@ -382,14 +399,12 @@ impl Group {
         }
     }
 
-    async fn download(&self, mut conn: Conn, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
-        let query = vec![
-            ("bytes", TRANSFER_BYTES.to_string()),
-            ("cb", cache_buster()),
-            ("lane", lane.number.to_string()),
-        ];
-        let request = self.request(Method::GET, Route::Download, query);
-        let mut body = conn.open(&self.client, &request, Payload::empty()).await?;
+    async fn download(
+        &self,
+        mut body: Incoming,
+        lane: &mut Lane,
+        tally: &Tally,
+    ) -> Result<(), Fault> {
         lane.announce(tally);
         while let Some(chunk) = body.chunk().await? {
             tally.bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);

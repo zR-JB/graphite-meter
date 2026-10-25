@@ -141,6 +141,7 @@ enum Probing {
     Up,
     Failed,
     Drained,
+    Cut,
 }
 
 #[derive(Debug)]
@@ -249,6 +250,14 @@ impl Engine {
     }
 
     pub fn stop(&mut self, now: Instant) {
+        if matches!(self.phase, Phase::Draining { .. }) {
+            for seat in &mut self.seats {
+                if matches!(seat.probing, Probing::Waiting | Probing::Up) {
+                    seat.probing = Probing::Cut;
+                }
+            }
+            return self.finish(now, &mut Vec::new());
+        }
         let measured = self.take_measured(now);
         self.phase = Phase::Done {
             measured,
@@ -268,7 +277,9 @@ impl Engine {
             throughput: self.throughput(Some(&seat.server)),
             latency: (seat.probing != Probing::Off).then(|| Population {
                 summary: seat.latency.summary(),
-                complete: seat.present && seat.probing != Probing::Failed && !self.stopped(),
+                complete: seat.present
+                    && !matches!(seat.probing, Probing::Failed | Probing::Cut)
+                    && !self.stopped(),
             }),
         });
         StageResult {

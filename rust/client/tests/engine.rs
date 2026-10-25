@@ -410,6 +410,28 @@ fn a_stop_mid_window_keeps_what_was_measured() {
     assert_eq!(script.log.len(), decisions);
 }
 
+#[test]
+fn a_stop_while_probes_drain_keeps_the_stage_complete() {
+    let mut script = Script::new(plan(Stage::Download, &["a"], true));
+    let up = [(id("a"), ProberEvent::Up)];
+    script.step(Duration::ZERO, &[down("a", 0)], &up);
+    script.run_until(STAGE + ms(500), |at| vec![down("a", moved(at, STAGE))]);
+    assert_eq!(script.at(&Decision::CloseWindow), Some(STAGE));
+    assert_eq!(
+        script.at(&Decision::Finish),
+        None,
+        "the prober still drains"
+    );
+    script.engine.stop(script.base + STAGE + ms(600));
+    let result = script.engine.result();
+    assert_eq!((result.measured, result.stopped), (STAGE, false));
+    assert_eq!(result.status(None), StageStatus::Complete);
+    assert!(
+        !result.servers[0].latency.unwrap().complete,
+        "its probes still out are never told"
+    );
+}
+
 /// Runs a latency stage where each server sends its replies, then a download stage where its bytes stop at its time.
 fn run(servers: &[(&str, usize, Duration)]) -> Vec<StageResult> {
     let names: Vec<_> = servers.iter().map(|(name, ..)| *name).collect();
