@@ -2,7 +2,7 @@
 use super::{
     Attempt, CONTROL_TIMEOUT, Client, Incoming, Request, Retry,
     conn::Session,
-    conn::{Conn, Payload, ReadBuffer, TRANSFER_BYTES},
+    conn::{Conn, Failed, Payload, ReadBuffer, TRANSFER_BYTES},
     fault::Fault,
     lock,
 };
@@ -333,7 +333,7 @@ impl Group {
                 Work::Upload(_) => send(&session, &self.block, lane, tally).await,
             };
         }
-        let conn = async {
+        let conn = || async {
             match self.plan.carrier {
                 Carrier::Dialed => {
                     let down = self.plan.direction == Direction::Down;
@@ -357,15 +357,13 @@ impl Group {
                         ("lane", lane.number.to_string()),
                     ];
                     let request = self.request(Method::GET, Route::Download, query);
-                    let mut conn = conn.await?;
-                    let body = conn.open(client, &request, Payload::empty()).await?;
-                    Ok((conn, body))
+                    open(conn, client, &request, Payload::empty).await
                 };
                 let opened = timeout(CONTROL_TIMEOUT, opened).await;
                 let (_conn, body) = opened.unwrap_or(Err(Fault::TimedOut("download answer")))?;
                 self.download(body, lane, tally).await
             }
-            Work::Upload(id) => self.upload(conn.await?, id, lane, tally).await,
+            Work::Upload(id) => self.upload(conn, id, lane, tally).await,
         }
     }
 
@@ -413,9 +411,9 @@ impl Group {
         Ok(())
     }
 
-    async fn upload(
+    async fn upload<F: Future<Output = Result<Conn, Fault>>>(
         &self,
-        mut conn: Conn,
+        conn: impl Fn() -> F,
         id: &str,
         lane: &mut Lane,
         tally: &Tally,
@@ -427,10 +425,27 @@ impl Group {
         ];
         let request = self.request(Method::POST, Route::Upload, query);
         lane.announce(tally);
-        let payload = Payload::repeat(self.block.clone(), lane.sent.clone());
-        let mut answer = conn.open(&self.client, &request, payload).await?;
+        let payload = || Payload::repeat(self.block.clone(), lane.sent.clone());
+        let (_conn, mut answer) = open(conn, &self.client, &request, payload).await?;
         while answer.chunk().await?.is_some() {}
         Ok(())
+    }
+}
+
+async fn open<F: Future<Output = Result<Conn, Fault>>>(
+    conn: impl Fn() -> F,
+    client: &Client,
+    request: &Request,
+    payload: impl Fn() -> Payload,
+) -> Result<(Conn, Incoming), Fault> {
+    let mut first = conn().await?;
+    match first.open(client, request, payload()).await {
+        Err(Failed { unsent: true, .. }) => {
+            let mut fresh = conn().await?;
+            let answer = fresh.open(client, request, payload()).await;
+            Ok((fresh, answer.map_err(|failed| failed.fault)?))
+        }
+        answer => Ok((first, answer.map_err(|failed| failed.fault)?)),
     }
 }
 
@@ -491,6 +506,7 @@ fn cache_buster() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphite_meter_http3::server;
 
     #[tokio::test]
     async fn a_lane_that_panics_fails_as_the_client_s_own_bug() {
@@ -511,5 +527,60 @@ mod tests {
             }
         });
         assert_eq!(failed.await.unwrap(), Fault::Internal.failure());
+    }
+
+    #[tokio::test]
+    async fn a_request_a_goaway_left_unsent_opens_once_more_on_a_fresh_connection() {
+        let identity = graphite_meter_testkit::Identity::generate().unwrap();
+        let address = "127.0.0.1:0".parse().unwrap();
+        let endpoint = noq::Endpoint::server(identity.quic_server(), address).unwrap();
+        let port = endpoint.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut first = true;
+            while let Some(incoming) = endpoint.accept().await {
+                let mut connection = server::Connection::new(incoming.await.unwrap(), None);
+                if std::mem::take(&mut first) {
+                    connection.retire();
+                }
+                tokio::spawn(async move {
+                    while let Ok(Some(request)) = connection.next().await {
+                        tokio::spawn(async move {
+                            let Ok((_, stream)) = request.resolve().await else {
+                                return;
+                            };
+                            let mut send = stream.split().0;
+                            let _ = send.send_response(http::Response::new(())).await;
+                            let _ = send.finish().await;
+                        });
+                    }
+                });
+            }
+        });
+        let (client, origin) = (
+            Client::new(true, Arc::new(graphite_meter_net::Pool::inline())),
+            Origin::parse(&format!("https://127.0.0.1:{port}")).unwrap(),
+        );
+        let dial = || client.dial(&origin, Protocol::Http3, ReadBuffer::Fixed);
+        let retired = dial().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while retired.usable() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the GOAWAY");
+        let handed = Mutex::new(Some(retired));
+        let conn = || async {
+            let handed = lock(&handed).take();
+            match handed {
+                Some(conn) => Ok(conn),
+                None => dial().await,
+            }
+        };
+        let request = Request::new(Method::GET, &origin, Route::Probe);
+        let (conn, _) = open(conn, &client, &request, Payload::empty)
+            .await
+            .expect("the fresh connection's answer");
+        assert!(conn.usable());
     }
 }
