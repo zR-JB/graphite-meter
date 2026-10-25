@@ -169,7 +169,7 @@ async fn all_proxy_is_not_read() {
         Origin::parse("http://meter.invalid").unwrap(),
     );
     let through = |names: &'static [&'static str]| {
-        let proxy = Proxy::from_lookup(|name| names.contains(&name).then(|| proxy.clone()));
+        let proxy = Proxy::from_lookup(|name| names.contains(&name).then(|| proxy.clone().into()));
         Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()))
     };
     let probed = probe(

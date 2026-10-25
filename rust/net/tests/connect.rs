@@ -14,7 +14,7 @@ use tokio_rustls::{TlsAcceptor, server::TlsStream};
 fn connector(variable: &str, proxy: &str, verify: Verify) -> Connector {
     let (variable, proxy) = (variable.to_owned(), proxy.to_owned());
     Connector::new(
-        Proxy::from_lookup(move |name| (name == variable).then(|| proxy.clone())),
+        Proxy::from_lookup(move |name| (name == variable).then(|| proxy.clone().into())),
         verify,
     )
 }
@@ -194,7 +194,7 @@ async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentia
         (None, &RequestForm::Absolute { authorization })
     );
     let proxy_variable =
-        |name: &str| (name == "HTTP_PROXY").then(|| format!("user:secret@{address}"));
+        |name: &str| (name == "HTTP_PROXY").then(|| format!("user:secret@{address}").into());
     let printed = format!(
         "{:?} {:?}",
         connection.form,

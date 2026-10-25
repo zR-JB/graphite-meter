@@ -93,9 +93,8 @@ pub struct Outbound {
 
 impl Outbound {
     fn from_lookup(env: &impl Fn(&str) -> Option<OsString>) -> Self {
-        let proxy = Proxy::from_lookup(|name| env(name).and_then(|value| value.into_string().ok()));
         Self {
-            proxy,
+            proxy: Proxy::from_lookup(env),
             verify: Verify::Trusted(Arc::new(Trust::from_lookup(env))),
         }
     }
