@@ -375,7 +375,7 @@ export function createShell(app: App, layout: Layout) {
       panels: panels.peek(),
       focused: holding(target),
       flyout: flyout.peek(),
-      pending: app.run.preparing.peek(),
+      pending: app.run.preparing.peek() || app.run.queued.peek(),
       running: app.run.running.peek(),
       modified: event.metaKey || event.ctrlKey || event.altKey || event.shiftKey,
     });
@@ -433,7 +433,11 @@ export function createShell(app: App, layout: Layout) {
     startOver: () => untrack(startOver),
     toggleRun: () => untrack(toggleRun),
     runWord: computed(() =>
-      runAction(lingering(), app.run.running() || app.run.preparing(), app.run.phase()),
+      runAction(
+        lingering() || app.run.queued(),
+        app.run.running() || app.run.preparing(),
+        app.run.phase(),
+      ),
     ),
   };
 

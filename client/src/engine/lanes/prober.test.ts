@@ -19,7 +19,7 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
     {
       origin: 0,
       now: () => clock.now,
-      arm: (ms) => (clock.due = clock.now + ms),
+      arm: (ms) => (clock.due = clock.now + Math.trunc(ms)),
       disarm: () => (clock.due = null),
     },
     {
@@ -154,6 +154,15 @@ test("a reply-driven chain steps on its latest probe, its backup covers a late r
     { rttMs: 250, timedOut: true, observedAt: 260, inWindow: true },
     { rttMs: 250, timedOut: true, observedAt: 290, inWindow: true },
   ]);
+});
+
+test("a reply-driven chain below a 1 ms RTT steps on the first whole millisecond past 1 ms, and every reply resolves", () => {
+  const b = opened(bus(null, 4, () => 0.1));
+  b.run(10);
+  expect(b.sent.map((at) => Math.round(at * 10) / 10)).toEqual([
+    0, 1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9,
+  ]);
+  expect(b.outcomes().every(({ rttMs, timedOut }) => rttMs === 0.1 && !timedOut)).toBe(true);
 });
 
 test("deadlines are fixed at send; a late reply stays a timeout yet teaches the estimator; handling pairs only when possible", () => {

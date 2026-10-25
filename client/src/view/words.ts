@@ -52,6 +52,7 @@ export const STAGE = {
 /** What the run is doing, as the status bar and the dial say it; a finished run reads its outcome. */
 export const PHASE = {
   idle: "Not started",
+  waiting: "Waiting for another tab",
   authenticating: "Checking sign-in",
   connecting: "Checking paths",
   blocked: "Test cannot start",
@@ -95,6 +96,7 @@ export function statusLabel(
 ): string {
   if (preparation === "blocked") return PHASE.blocked;
   if (preparation === "failed") return PHASE["start-failed"];
+  if (preparation === "waiting") return PHASE.waiting;
   if (preparation === "authenticating") return PHASE.authenticating;
   if (preparation === "checking" || preparation === "launching") return PHASE.connecting;
   if (phase === "complete") return OUTCOME[outcome ?? "complete"].label;
@@ -388,7 +390,7 @@ export const TIP = {
   gaugeAuto: "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
   gaugeMax: "Maximum\nFixes the chart ceiling\nThe gauge rounds up to a 1, 2, 5 step",
   saveResults: `Save results\nKeeps the newest ${HISTORY_LIMIT.toLocaleString("en-US")} results in this browser\nNothing is uploaded`,
-  idleCadence: `Idle probe interval\nReply: the next probe leaves on each reply\n${SPACINGS}`,
+  idleCadence: `Idle probe interval\nReply: the next probe leaves on each reply, 1 ms apart at least\n${SPACINGS}`,
   loadedCadence: `Loaded probe interval\nProbes during transfers, start to start\n${SPACINGS}`,
   skipLoadedLatency: "Skip loaded latency\nWith the Latency stage off, transfers send no probes",
   forcedStreams:

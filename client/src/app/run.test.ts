@@ -8,7 +8,12 @@ import { createRun } from "./run";
 
 function setup(
   config: Partial<TestConfig> = {},
-  options: { authorize?: Promise<void>; servers?: Peer[]; fits?: (ms: number) => boolean } = {},
+  options: {
+    authorize?: Promise<void>;
+    servers?: Peer[];
+    fits?: (ms: number) => boolean;
+    lock?: RunLock;
+  } = {},
 ) {
   const clock = new FakeClock();
   const preferences = createPreferences(null, new EventTarget());
@@ -29,6 +34,7 @@ function setup(
       focus: "self",
       release: () => leases.released++,
     }),
+    lock: options.lock ?? (async () => () => {}),
     fits: (ms) => options.fits?.(ms) ?? true,
     recheck: () => {},
     finished: (finished) => offers.push(finished ? "offer" : "withdraw"),
@@ -59,6 +65,8 @@ const only = (
   stages: { latency: false, download: false, upload: false, bidirectional: false, ...stages },
   duration: { ...DEFAULT_CONFIG.duration, warmupMs: 0, ...duration },
 });
+
+type RunLock = (signal: AbortSignal, queued: () => void) => Promise<() => void>;
 
 test("a Start never looks idle on its way to running", async () => {
   const h = setup(only({ download: true }, { downloadMs: 1_000 }));
@@ -207,4 +215,29 @@ test("the first stage's switch locks once its warmup begins, as a later stage's 
   h.run.toggle();
   await h.clock.advance(300);
   expect(seen.at(-1)).toEqual(["warmup", true]);
+});
+
+test("a start waits while another tab holds the run, runs once it frees, and lets it go as it ends", async () => {
+  const { promise: freed, resolve: free } = Promise.withResolvers<void>();
+  let held = 0;
+  const h = setup(only({ download: true }, { downloadMs: 1_000 }), {
+    lock: async (_, queued) => {
+      queued();
+      await freed;
+      held++;
+      return () => held--;
+    },
+  });
+  h.run.toggle();
+  await h.clock.advance(100);
+  expect([h.run.preparation(), h.run.preparing(), h.run.phase()]).toEqual([
+    "waiting",
+    false,
+    "idle",
+  ]);
+  free();
+  await h.clock.advance(100);
+  expect(held).toBe(1);
+  await h.clock.advance(3_000);
+  expect([h.run.phase(), held]).toEqual(["complete", 0]);
 });

@@ -608,26 +608,17 @@ type TestOptions = {
   monitorDisplay?: boolean;
   timeout?: number;
   chrome?: boolean;
-  /** Why today's code fails it, naming the step that fixes it, and the error it must fail with until then. */
-  failing?: { until: string; error: RegExp };
 };
 function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) {
-  const { failing } = options;
   const register = options.chrome && browser !== "chrome" ? bunTest.skip : bunTest;
   register(
-    failing ? `${name} [fails ${failing.until}]` : name,
+    name,
     async () => {
       const page = new Page(options);
       try {
-        try {
-          await fn(page);
-          await page.evaluate("window.__gmCheckDisplay?.()").catch(() => undefined);
-          if (page.errors.length) throw new Error(page.errors.join("\n"));
-        } catch (error) {
-          if (failing && error instanceof Error && failing.error.test(error.message)) return;
-          throw error;
-        }
-        if (failing) throw new Error(`it passes; drop its mark "fails ${failing.until}"`);
+        await fn(page);
+        await page.evaluate("window.__gmCheckDisplay?.()").catch(() => undefined);
+        if (page.errors.length) throw new Error(page.errors.join("\n"));
       } catch (error) {
         // Parallel runs drop a test's own output, so its failure carries the page state.
         const summary = await within("summarizing the page", page.summary(), 5_000).catch(String);

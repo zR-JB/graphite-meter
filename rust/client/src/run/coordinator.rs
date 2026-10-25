@@ -183,7 +183,7 @@ fn refusal(
             select::fit(plan, servers).err().map(refused)
         }
         Some(first) => Some(first.failure.clone()),
-        None => Some(refused("no test server was prepared".into())),
+        None => Some(refused("No test server was prepared".into())),
     }
 }
 

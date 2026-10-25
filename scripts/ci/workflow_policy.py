@@ -58,7 +58,9 @@ ORDERED = {
         "run: scripts/ci/publish.sh aliases",
     ),
     "actions/setup-project/action.yml": ("rustup toolchain install", "python3 scripts/ci/toolchains.py verify-rust"),
-    "workflows/advisories.yml": ("run: cargo deny --locked check advisories\n",),
+    "workflows/advisories.yml": (
+        "run: mise run rust-deny-fetch\n", "run: cargo deny --locked --offline check advisories\n",
+    ),
 }
 # Identity that release.py trusts comes from the run context, never from dispatch inputs.
 CONTEXT = {

@@ -13,6 +13,7 @@ export const PHASE_HINT: Partial<
 
 export const DIAL = {
   restart: "Press Run again to restart",
+  otherTab: "A test is running in another tab. This one starts when it ends.",
   retry: "Press Run again to retry",
   unknownError: "Something went wrong",
   noData: (time: string) => `No data for ${time}`,

@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 const GRACE: Duration = Duration::from_secs(5);
 /// Why a run without the interface does not sign in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
-const REJECTED: &str = "the server refused the approved sign-in; check its sign-in configuration";
+const REJECTED: &str = "The server refused the approved sign-in; check its sign-in configuration.";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Check(Config),

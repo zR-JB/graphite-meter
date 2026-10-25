@@ -32,7 +32,7 @@ pub fn servers<'a>(
         .find(|rejected| chosen(&rejected.id))
     {
         return Err(format!(
-            "test server {} is unusable: {}",
+            "Test server {} is unusable: {}",
             quote(&left.id),
             left.error
         ));
@@ -46,15 +46,15 @@ pub fn servers<'a>(
         let known = |id: &ServerId| catalog.servers.iter().any(|entry| entry.id == *id);
         let unknown = ids.iter().find(|id| !known(id));
         unknown.map_or_else(
-            || error.to_string(),
-            |id| format!("unknown or repeated test server {}", quote(id.as_str())),
+            || crate::text::capitalized(&error.to_string()),
+            |id| format!("Unknown or repeated test server {}", quote(id.as_str())),
         )
     })?;
     let explicit =
         config.paths.throughput_origin.is_some() || config.paths.latency_origin.is_some();
     if explicit && ids.len() > 1 {
         return Err(
-            "explicit origins need a single test server; use automatic origins for several".into(),
+            "Explicit origins need a single test server; use automatic origins for several".into(),
         );
     }
     Ok(catalog
@@ -74,7 +74,7 @@ pub fn candidates(
 ) -> Result<Candidates, String> {
     if !entry.approves(served, preflight) {
         return Err(format!(
-            "test server {} offered an unapproved origin",
+            "Test server {} offered an unapproved origin",
             quote(entry.id.as_str())
         ));
     }
@@ -182,10 +182,14 @@ fn pick<'a, T>(
     }
     match (wanted, others.as_slice()) {
         (None, [only]) => Ok(only),
-        (None, [_, _, ..]) => Err(format!("several {kind} origins are offered; select one")),
+        (None, [_, _, ..]) => Err(format!("Several {kind} origins are offered; select one")),
         _ => {
             let wanted = wanted.map_or_else(|| "auto".into(), Origin::to_string);
-            Err(format!("{kind} origin {} is not offered", quote(&wanted)))
+            Err(format!(
+                "{} origin {} is not offered",
+                crate::text::capitalized(kind),
+                quote(&wanted)
+            ))
         }
     }
 }
@@ -208,7 +212,7 @@ fn throughput_path(
                 format::protocol(Some(forced)),
             );
             return Err(format!(
-                "the origin is fixed to {fixed} and cannot use {forced}"
+                "The origin is fixed to {fixed} and cannot use {forced}"
             ));
         }
         forced => forced.unwrap_or(target.protocol),
@@ -266,12 +270,12 @@ mod tests {
             selected("-server b -server a -server self").unwrap(),
             ["self", "a", "b"]
         );
-        let unknown = "unknown or repeated test server \"nowhere\"";
+        let unknown = "Unknown or repeated test server \"nowhere\"";
         assert_eq!(selected("-server a -server nowhere").unwrap_err(), unknown);
-        let left = "test server \"broken\" is unusable: invalid catalog origin";
+        let left = "Test server \"broken\" is unusable: invalid catalog origin";
         assert_eq!(selected("-server broken").unwrap_err(), left);
         let explicit =
-            "explicit origins need a single test server; use automatic origins for several";
+            "Explicit origins need a single test server; use automatic origins for several";
         assert_eq!(
             selected("-server a -server b -latency-origin https://a.example").unwrap_err(),
             explicit
@@ -372,9 +376,9 @@ mod tests {
         #[rustfmt::skip]
         let refusals = [
             ("-throughput-origin https://meter.example:7249 -throughput-protocol http2",
-                "the origin is fixed to HTTP/3 and cannot use HTTP/2"),
-            ("-throughput-origin https://other.example", "throughput origin \"https://other.example\" is not offered"),
-            ("-latency-origin https://other.example", "latency origin \"https://other.example\" is not offered"),
+                "The origin is fixed to HTTP/3 and cannot use HTTP/2"),
+            ("-throughput-origin https://other.example", "Throughput origin \"https://other.example\" is not offered"),
+            ("-latency-origin https://other.example", "Latency origin \"https://other.example\" is not offered"),
         ];
         for (args, refusal) in refusals {
             assert_eq!(
@@ -388,7 +392,7 @@ mod tests {
             elsewhere("-stages down").unwrap(),
             "webtransport http3 7249"
         );
-        let several = "several throughput origins are offered; select one";
+        let several = "Several throughput origins are offered; select one";
         assert_eq!(
             elsewhere("-throughput-transport fetch-stream").unwrap_err(),
             several

@@ -30,7 +30,7 @@ use tokio::time::{self, timeout};
 
 /// Why a server is refused whose lease holds less than its run would.
 const TOO_MANY: &str =
-    "the test needs more measurements at once than this server admits for one client";
+    "The test needs more measurements at once than this server admits for one client";
 /// How long a path check may take, the catalog and every server included.
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long a run may take its check's paths and leases, so one presented a control timeout later still holds.
@@ -168,7 +168,7 @@ async fn check(
         .map_err(refused)?;
     if config.uploads() && !preflight.capabilities.upload_checkpoint {
         return Err(refused(
-            "this test server lacks receiver checkpoints; upgrade it",
+            "This test server lacks receiver checkpoints; upgrade it",
         ));
     }
     let bases = preflight.base_urls();
@@ -315,7 +315,7 @@ fn unproven(fault: Fault) -> Failure {
 
 fn late() -> Failure {
     let text = format!(
-        "the path check did not finish within {}",
+        "The path check did not finish within {}",
         format::stage_time(PREPARATION_TIMEOUT)
     );
     refused(text)

@@ -94,7 +94,8 @@ server moved no bytes in a direction for 500 ms, the run stalled, a server left 
 before every stage, including latency. It lasts the configured 0 to 4 s, stretched to ten idle RTTs but at most 4 s.
 Stage readiness is bounded per client. Hidden browser pages keep measuring. Workers time bytes and probes, the
 browser's run clock ticks from a worker so a page hidden for hours keeps its pace, and the schedule never skips past
-the current segment.
+the current segment. On an HTTPS page, one test runs per site in a browser profile at a time: another tab's Start says
+it waits, and runs once the first test ends.
 
 Stages, durations and early finish change the running test, and while it starts they shape the run it begins. Servers,
 paths, streams and probe settings changed while a test starts or runs show "Applies to the next test" and apply once
@@ -109,19 +110,22 @@ after three replies and timeouts.
 | Behavior         | Rule                                                                                                             |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Cadence          | The idle default is reply-driven and the loaded default is Medium. Fast 80 ms, Medium 250 ms and Slow 600 ms are start-to-start. |
-| Reply-driven     | The latest probe's reply sends the next at once, a late one never; a backup timer covers a missing reply.        |
+| Reply-driven     | The latest probe's reply sends the next, at least 1 ms after the last send; a late reply never; a backup timer covers a missing reply. |
 | In-flight window | 16 probes idle at a fixed cadence, 4 reply-driven and 2 under load. A full window skips the send, never a timeout. |
 | Deadline         | Fixed at send: `SRTT + 4 × max(RTTVAR, 1 ms)` (RFC 6298), clamped to 250 ms to 10 s; 250 ms before the first reply. |
 | Stage end        | Measuring stops; in-window probes drain to their deadlines, at most 10 s. The terminal stops sending; the browser's latency bus keeps probing, but those replies no longer count. |
 | Interruptions    | Disconnects, and in the browser freezes over 1.5 s, leave pending probes unfinished, never timed out; send failures are counted separately. |
 
-Cadence is a scheduling policy, not an observed sampling rate. Reply-driven density follows RTT alone and reaches
-tens of thousands of probes a second on loopback, and no coverage is inferred from cadence and elapsed time. The idle
-headline is the full stage median and the base of added latency. It never falls back to loaded RTTs or preflight
-hints. A failed stage keeps its measured population, marked incomplete. Every selected server is probed. The run's
-latency belongs to the server shown when the run starts, or to a survivor once that server leaves. The shown server
-is the first selected unless the browser was switched to another. Switching the shown server never retargets probes
-or changes saved statistics.
+Cadence is a scheduling policy, not an observed sampling rate. Reply-driven density follows RTT down to 1 ms, and no
+coverage is inferred from cadence and elapsed time. Every probe wakes the client's prober and the server's bus, so
+below a 1 ms RTT a denser chain adds wakeups and server CPU. The wait is a timer's: browsers and the terminal client
+on Linux step every 1 to 2 ms, a few thousand replies in a 4 s stage; on Windows the system timer's tick, 15.6 ms by
+default, sets the terminal client's step, about 250 replies. Spaced probes let both ends sleep between them, so a
+sub-millisecond RTT includes their wakeup, as a ping's does. The idle headline is the full stage median and the base
+of added latency. It never falls back to loaded RTTs or preflight hints. A failed stage keeps its measured population,
+marked incomplete. Every selected server is probed. The run's latency belongs to the server shown when the run starts,
+or to a survivor once that server leaves. The shown server is the first selected unless the browser was switched to
+another. Switching the shown server never retargets probes or changes saved statistics.
 
 The terminal client probes from threads of its own, apart from the threads that carry transfers, which run five nice
 steps lower on Linux.

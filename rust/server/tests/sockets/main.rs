@@ -64,6 +64,7 @@ struct Running {
     h2: Option<SocketAddr>,
     quic: Option<SocketAddr>,
     companion: Option<SocketAddr>,
+    endpoints: usize,
     budget: Budget,
     app: Arc<App>,
     stop: oneshot::Sender<()>,
@@ -74,7 +75,7 @@ struct Running {
 async fn bind(env: &[(&str, &str)]) -> Server {
     for _ in 0..8 {
         match Server::bind(config(env), pool()).await {
-            Err(error) if error.ends_with("/udp: address already in use") => continue,
+            Err(error) if error.ends_with("/udp (GM_H3_ADDR): address already in use") => continue,
             bound => return bound.unwrap(),
         }
     }
@@ -95,7 +96,7 @@ async fn start(env: &[(&str, &str)]) -> Running {
         server.local_addr(Endpoint::H3Companion),
         server.app().budget().clone(),
     );
-    let app = server.app();
+    let (endpoints, app) = (server.quic_endpoints(), server.app());
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {
         let _ = stopped.await;
@@ -106,6 +107,7 @@ async fn start(env: &[(&str, &str)]) -> Running {
         h2,
         quic,
         companion,
+        endpoints,
         budget,
         app,
         stop,

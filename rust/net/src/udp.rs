@@ -8,8 +8,24 @@ const BUFFER_BYTES: usize = 7 << 20;
 /// The least each of several sockets on one address keeps: a single fast connection's headroom.
 const SHARED_BUFFER_FLOOR: usize = 2 << 20;
 
-/// Binds one of `sockets` on `address` via `SO_REUSEPORT` (Linux only), with any buffer shortfall the host forced.
+/// Binds the first of `sockets` on `address`, refused while any socket holds it; `join_udp` binds the rest beside it.
 pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, Option<String>)> {
+    let (socket, shortfall) = udp(address, sockets)?;
+    socket.bind(&address.into())?;
+    if sockets > 1 {
+        share(&socket)?;
+    }
+    Ok((socket.into(), shortfall))
+}
+
+pub fn join_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, Option<String>)> {
+    let (socket, shortfall) = udp(address, sockets)?;
+    share(&socket)?;
+    socket.bind(&address.into())?;
+    Ok((socket.into(), shortfall))
+}
+
+fn udp(address: SocketAddr, sockets: usize) -> io::Result<(socket2::Socket, Option<String>)> {
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(address),
         socket2::Type::DGRAM,
@@ -21,18 +37,17 @@ pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, O
     let bytes = buffer_bytes(sockets);
     let receive = grow(&socket, Buffer::Receive, bytes);
     let send = grow(&socket, Buffer::Send, bytes);
-    let shortfall = receive.and(send).err();
-    if sockets > 1 {
-        #[cfg(target_os = "linux")]
-        socket.set_reuse_port(true)?;
-        #[cfg(not(target_os = "linux"))]
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "SO_REUSEPORT balances UDP only on Linux",
-        ));
+    Ok((socket, receive.and(send).err()))
+}
+
+fn share(socket: &socket2::Socket) -> io::Result<()> {
+    cfg_select! {
+        target_os = "linux" => socket.set_reuse_port(true),
+        _ => {
+            let _ = socket;
+            Err(io::Error::new(io::ErrorKind::Unsupported, "SO_REUSEPORT balances UDP only on Linux"))
+        }
     }
-    socket.bind(&address.into())?;
-    Ok((socket.into(), shortfall))
 }
 
 fn buffer_bytes(sockets: usize) -> usize {
