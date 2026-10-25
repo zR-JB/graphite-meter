@@ -30,20 +30,20 @@ const INK: Tone = tone((0x20242a, 235, 0), (0xe6e8eb, 254, 15));
 const TEXT: Tone = tone((0x171b20, 234, 0), (0xeef0f3, 255, 15));
 const SOFT: Tone = tone((0x5f646a, 241, 8), (0x8e9299, 246, 7));
 const GOOD: Tone = tone((0x2e734b, 29, 2), (0x88d1a2, 115, 10));
-const CAUTION: Tone = tone((0x85671f, 94, 1), (0xe8cf83, 186, 11));
+const CAUTION: Tone = tone((0x85671f, 94, 1), (0xf0dd8f, 186, 11));
 const BAD: Tone = tone((0xab413e, 131, 1), (0xed8b88, 210, 9));
 /// The canvas when the terminal does not name its background.
 const CANVAS: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
 const PLATE_OFF: Tone = tone((0xdcdde0, 253, 7), (0x2a2d31, 236, 8));
 const BORDER: Tone = tone((0xcacbcf, 252, 15), (0x3e4348, 238, 8));
 const STAGES: [Tone; Stage::ALL.len()] = [
-    tone((0x1d7a73, 30, 6), (0x70dbc4, 80, 14)),
+    tone((0x1d7a73, 30, 6), (0x74e7e5, 87, 14)),
     tone((0x254ea3, 25, 4), (0x71a3ff, 75, 12)),
     tone((0xa35d1d, 130, 1), (0xfeb66a, 215, 9)),
     tone((0x7f2456, 89, 1), (0xe472ac, 169, 9)),
 ];
 const TRACES: [Tone; Stage::ALL.len()] = [
-    tone((0x0f9485, 30, 6), (0x70dbc4, 80, 14)),
+    tone((0x0f9485, 30, 6), (0x74e7e5, 87, 14)),
     tone((0x275ac8, 26, 4), (0x71a3ff, 75, 12)),
     tone((0xca6e03, 166, 1), (0xfeb66a, 215, 9)),
     tone((0x9b2065, 125, 1), (0xe472ac, 169, 9)),
