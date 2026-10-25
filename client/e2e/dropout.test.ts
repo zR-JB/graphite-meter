@@ -153,3 +153,49 @@ test("a run that measured nothing reads Failed with its cause and is kept in His
     lisbon.kill();
   }
 });
+
+test("a server that fails between its check and Start is named at once and reads Left at Start", async (page) => {
+  const bergen = await spawnPeer("Bergen");
+  const servers = [frankfurt, bergen.server];
+  const porto = await spawnPeer("Porto", catalog(...servers));
+  try {
+    await open(page, porto.server.url, {
+      servers: [{ id: "self", url: porto.server.url }, ...servers],
+      config: long,
+    });
+    await ready(page);
+    bergen.kill("SIGKILL");
+    await bergen.exited;
+    await page.evaluate(() => {
+      const toast = document.querySelector(".phase-toast")!;
+      const seen: { text: string; phase: string; ended: number }[] = ((window as any).toasts = []);
+      new MutationObserver(() => {
+        if (!toast.classList.contains("visible")) return;
+        seen.push({
+          text: toast.textContent!.replace(/\s+/g, " ").trim(),
+          phase: document.getElementById("console")!.dataset.phase!,
+          ended: document.querySelectorAll(".chip.chip--complete, .chip.chip--partial").length,
+        });
+      }).observe(toast, { attributes: true, childList: true, subtree: true, characterData: true });
+    });
+    const startedAt = Date.now();
+    await runButton(page, "Start test").click();
+    const saved = await savedResult(page, startedAt, 30_000);
+    const [first] = await page.evaluate(() => (window as any).toasts);
+    expect(first.text).toContain("Issue on Bergen");
+    expect(first.text).toContain("Start:");
+    expect(first.ended).toBe(0);
+    expect(saved.result.outcome).toBe("partial");
+    const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
+    await lens.evaluate((select: HTMLSelectElement) => {
+      select.value = "bergen";
+      select.dispatchEvent(new Event("change"));
+    });
+    await expect(page.locator('.results .card[data-tone="download"] .line .reason')).toContainText(
+      "Left at Start: ",
+    );
+  } finally {
+    bergen.kill();
+    porto.kill();
+  }
+});

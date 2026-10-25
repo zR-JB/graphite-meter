@@ -255,35 +255,56 @@ test("a running card follows its own stage only, says when replies stop, and a s
   ]);
 });
 
-test("a server's issues name the stages each reason ended", () => {
+test("a server's issues name the stages each reason ended, a server dropped at Start by Start", () => {
   const failure = (stage: string, scope: string, reason: string, serverId = "a") => ({
     serverId,
     stage,
     scope,
     reason,
   });
-  const details = {
-    selection: [{ id: "a", name: "Oslo" }],
-    failures: [
-      failure("download", "throughput", "timeout"),
-      failure("upload", "latency", "timeout"),
-      failure("latency", "latency", "connection-lost"),
-      failure("upload", "throughput", "timeout", "b"),
-    ],
-  } as unknown as MultiServerResult;
-  expect(serverIssues(details, "a")).toEqual([
-    {
-      server: "Oslo",
-      stages: `${STAGE.download.label}, ${POPULATION.upload}`,
-      reason: reasonLabel("timeout"),
-      throughput: ["download"],
+  const ran = {
+    latency: "partial",
+    download: "partial",
+    upload: "complete",
+    bidirectional: "not-run",
+  };
+  const table = grid({
+    latency: null,
+    download: null,
+    upload: null,
+    bidirectional: null,
+    stages: ran,
+    multiServer: {
+      selection: [
+        { id: "a", name: "Oslo" },
+        { id: "b", name: "Bergen" },
+      ],
+      servers: [{ server: { id: "a" }, latencyTarget: {}, stages: ran }],
+      failures: [
+        failure("download", "throughput", "timeout"),
+        failure("upload", "latency", "timeout"),
+        failure("latency", "latency", "connection-lost"),
+        // Charged to the first transfer stage, as every release saves a Start drop.
+        failure("download", "throughput", "server-capacity", "b"),
+      ],
     },
+  } as unknown as RunResult);
+  expect(serverIssues(table, "a")).toEqual([
     {
       server: "Oslo",
       stages: STAGE.latency.label,
       reason: reasonLabel("connection-lost"),
-      throughput: [],
+      marked: true,
     },
+    {
+      server: "Oslo",
+      stages: `${STAGE.download.label}, ${POPULATION.upload}`,
+      reason: reasonLabel("timeout"),
+      marked: true,
+    },
+  ]);
+  expect(serverIssues(table, "b")).toEqual([
+    { server: "Bergen", stages: "Start", reason: reasonLabel("server-capacity"), marked: true },
   ]);
 });
 

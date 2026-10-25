@@ -455,34 +455,30 @@ export interface Issue {
   server: string;
   stages: string;
   reason: string;
-  throughput: Stage[];
+  /** Its card says so; loaded latency's causes mark none. */
+  marked: boolean;
 }
 
-/** Lists failed server stages, one line per server and reason; only throughput failures mark a card, and `scope` narrows to one server. */
-export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
-  const lines = new Map<
-    string,
-    { server: string; stages: string[]; reason: string; throughput: Stage[] }
-  >();
-  for (const failure of details.failures) {
-    if (scope && failure.serverId !== scope) continue;
-    const key = `${failure.serverId} ${failure.reason}`;
-    let line = lines.get(key);
-    if (!line) {
-      const server =
-        details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server";
-      line = { server, stages: [], reason: reasonLabel(failure.reason), throughput: [] };
+/** The causes in a grid, one line per server and reason; `scope` narrows to one server. */
+export function serverIssues(table: Grid, scope = ""): Issue[] {
+  const lines = new Map<string, Issue & { places: string[] }>();
+  for (const { server, causes } of table.rows) {
+    if (scope && server.id !== scope) continue;
+    for (const cause of causes) {
+      const key = `${server.id} ${cause.reason}`;
+      const line = lines.get(key) ?? {
+        server: server.name,
+        stages: "",
+        reason: reasonLabel(cause.reason),
+        marked: false,
+        places: [],
+      };
       lines.set(key, line);
+      line.places.push(causePlace(cause));
+      line.marked ||= !loaded(cause);
     }
-    const latency = failure.scope === "latency";
-    line.stages.push(
-      latency && failure.stage !== "latency"
-        ? POPULATION[failure.stage]
-        : STAGE[failure.stage].label,
-    );
-    if (!latency) line.throughput.push(failure.stage);
   }
-  return [...lines.values()].map(({ stages, ...line }) => ({ ...line, stages: stages.join(", ") }));
+  return [...lines.values()].map(({ places, ...line }) => ({ ...line, stages: places.join(", ") }));
 }
 
 export const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);

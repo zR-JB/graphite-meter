@@ -137,8 +137,8 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     tone: CONNECTIVITY.recovering.tone as Tone,
   }));
   const issues = computed(() => {
-    const details = run.details();
-    return details ? serverIssues(details) : [];
+    const table = run.table();
+    return table ? serverIssues(table) : [];
   });
   const issue = computed(() => {
     const all = issues();

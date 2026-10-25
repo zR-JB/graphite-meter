@@ -99,9 +99,9 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     prepared() ? (facts()[role]?.target ?? null) : shownTarget(view(), role, app.page);
   const runConfig = computed(() => ({ ...app.preferences.config(), ...run.plan() }));
   const issues = computed(() => {
-    const measured = run.details();
+    const table = run.table();
     const id = shownId();
-    return measured && id !== null ? serverIssues(measured, id) : [];
+    return table && id !== null ? serverIssues(table, id) : [];
   });
   // A failed server's missing facts will not arrive.
   const unreachable = computed(() => !issues().length && view()?.readiness === "failed");

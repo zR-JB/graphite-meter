@@ -586,6 +586,11 @@ test("a server dropped at Start reads not reached in every stage, so each stage 
   expect(grid(result).rows[2]!.cells.latency.cause?.message).toBe("Bergen is at capacity");
   expect(result.stages).toMatchObject({ latency: "partial", download: "partial" });
   expect(stageEnds(h.events)).toEqual({ latency: "partial", download: "partial" });
+  // Bergen is named as the timeline starts, before any stage ends.
+  const named = h.events.findIndex((event) => event.type === "failure");
+  expect(h.events[named]).toMatchObject({ failure: { serverId: "c", reason: "server-capacity" } });
+  expect(named).toBeLessThan(h.events.findIndex((event) => event.type === "stageEnd"));
+  expect(named).toBeLessThan(h.events.findIndex((event) => event.type === "progress"));
   expect(result.outcome).toBe("partial");
   near(result.download?.reportedBytesPerSec, 4_000);
 });

@@ -356,11 +356,16 @@ export class Run {
       t: 0,
       step: "preparing",
     });
-    // A server that failed its start check counts against the first stage that moves bytes.
+    // A server that failed its start check is named at once; saved, it counts against the first stage that moves
+    // bytes, as every release reads it, and the grid knows it left at Start.
     const charged = (this.#segments.find(({ activity }) => activity.transfer.length) ?? first)
       .activity.stage;
-    for (const { server, reason, message } of this.#dropped)
-      this.#record(server.id, "throughput", reason, message, charged);
+    for (const { server, reason, message } of this.#dropped) {
+      const failure = this.#record(server.id, "throughput", reason, message, charged);
+      if (failure) this.#emit({ type: "failure", failure });
+    }
+    // A handler may have stopped the run.
+    if (this.#state !== "running") return;
     this.#mintedAt = Date.now();
     for (const server of this.#servers)
       for (const stage of UPLOADS)

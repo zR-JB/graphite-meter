@@ -263,9 +263,9 @@ export function ResultSummary(props: {
   );
   const table = computed(() => grid(props.result()));
   const stages = computed(() => STAGES.filter((stage) => settled(evidence().status[stage])));
-  const issues = computed(() => serverIssues(props.result().multiServer, lens()));
   const attributed = computed(() => props.result().multiServer.selection.length > 1 && !lens());
-  const listed = computed(() => issues().filter((issue) => !issue.throughput.length));
+  // Loaded latency's causes mark no card, so they are listed under the cards.
+  const listed = computed(() => serverIssues(table(), lens()).filter((issue) => !issue.marked));
   const card = (stage: Stage) =>
     Card({
       card: computed(() => {
