@@ -1,0 +1,18 @@
+{
+  "defaultSelection": ["self", "fra"],
+  "servers": [
+    {
+      "id": "self",
+      "url": ".",
+      "name": "graphite-meter",
+      "additionalOrigins": ["http://speed.example:7246"]
+    },
+    {
+      "id": "fra",
+      "url": "https://fra.example.net",
+      "name": "Frankfurt",
+      "location": "fra",
+      "additionalOrigins": ["https://transfer.example.net:8443"]
+    }
+  ]
+}

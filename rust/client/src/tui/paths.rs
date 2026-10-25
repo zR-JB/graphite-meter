@@ -4,7 +4,9 @@ use crate::{
     config::{LATENCY_TRANSPORTS, PathChoice, THROUGHPUT_TRANSPORTS},
     events::Check,
     format,
+    net::UNREACHABLE,
     run::prepare::{Paths, ServerPath},
+    text,
 };
 use graphite_meter_proto::{
     catalog::ServerId,
@@ -60,6 +62,51 @@ impl App {
         let failed = matches!(self.view.check, Check::Failed(_))
             || self.view.check == Check::Ready && self.ready().is_empty();
         failed && !self.checking()
+    }
+
+    pub(super) fn start_failure(&self) -> Option<String> {
+        let host = self.config.url.as_ref().map(format::authority);
+        match &self.view.check {
+            Check::Failed(failure) if failure.text == UNREACHABLE => {
+                Some(format!("Could not reach {}", host.unwrap_or_default()))
+            }
+            Check::Failed(failure) => {
+                Some(format!("{}: {}", host.unwrap_or_default(), failure.text))
+            }
+            _ if self.could_not_start() => {
+                let failed: Vec<_> = self
+                    .view
+                    .servers
+                    .iter()
+                    .filter_map(|server| Some((&server.name, server.path.as_ref().err()?)))
+                    .collect();
+                let Some(((name, failure), rest)) = failed.split_first() else {
+                    return Some("No test server answered".into());
+                };
+                let first = match failure.text == UNREACHABLE {
+                    true => format!("Could not reach {name}"),
+                    false => format!("{name}: {}", text::lowered(failure.reason.label())),
+                };
+                Some(match rest.len() {
+                    0 => first,
+                    more => format!("{first} and {more} more"),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn address_failed(&self) -> bool {
+        let unreachable = |server: &ServerPath| {
+            server
+                .path
+                .as_ref()
+                .is_err_and(|failure| failure.text == UNREACHABLE)
+        };
+        match &self.view.check {
+            Check::Failed(failure) => failure.text == UNREACHABLE,
+            _ => !self.view.servers.is_empty() && self.view.servers.iter().all(unreachable),
+        }
     }
 
     fn single(&self) -> Option<(&ServerPath, &Capabilities)> {

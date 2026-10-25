@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -7,7 +8,7 @@ import unittest
 import zlib
 from contextlib import suppress
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from typing import Any
 from unittest.mock import patch
 
@@ -22,7 +23,7 @@ from scripts.legal.rust_inventory import compiled, components, selected
 from scripts.legal.rust_platform import SYSROOT
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
-NOQ = "git+https://github.com/zR-JB/noq?rev=54b63742f3fe286d97f98386db823bd8ed2eb6be#54b63742f3fe286d97f98386db823bd8ed2eb6be"
+NOQ = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
 
 
 class Scratch(unittest.TestCase):
@@ -69,7 +70,7 @@ class InventoryTests(Scratch):
         found, inventory, failures = components(metadata, builds, reviews, [])
         self.assertEqual(failures, {})
         self.assertEqual([(item.name, item.modified) for item in found], [("noq", True), ("ring", False)])
-        self.assertEqual(inventory[0]["upstreamRevision"], "54b63742f3fe286d97f98386db823bd8ed2eb6be")
+        self.assertEqual(inventory[0]["upstreamRevision"], "b868d09b61b261b6fb932351bb42dadb220b7984")
         _, _, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
                                                        self.review("noq", "1.2.0", NOQ, True)], [])
         self.assertEqual(list(failures), [("noq", "1.3.0", NOQ)])
@@ -163,24 +164,24 @@ class CollectorTests(Scratch):
         self.assertEqual(path.read_bytes(), b"changed")
 
     def test_arguments_select_a_shipped_build_inside_the_checkout(self) -> None:
-        out = str(ROOT / "rust/target/notices")
+        out, temporary = str(ROOT / "rust/target/notices"), Path(gettempdir())
         build, template = parse(["--package", "graphite-meter-client", "--target", "x86_64-pc-windows-gnu",
                                  "--out", out, "--version", "1.2.3"])
         self.assertEqual((build.target, build.profile, build.development, template),
                          ("x86_64-pc-windows-gnu", "release", False, False))
         build, _ = parse(["--package", "graphite-meter-server", "--development", "--profile", "ci", "--out", out,
-                          "--browser-assets", str(ROOT / "client/dist"), "--browser-scan", "/tmp/modules.json"])
+                          "--browser-assets", str(ROOT / "client/dist"), "--browser-scan", str(temporary / "modules.json")])
         self.assertTrue(build.development)
         for arguments in (
             ["--package", "graphite-meter-server", "--target", "x86_64-pc-windows-gnu", "--out", out,
-             "--browser-assets", "client/dist", "--browser-scan", "/tmp/scan.json"],
+             "--browser-assets", "client/dist", "--browser-scan", str(temporary / "scan.json")],
             ["--package", "graphite-meter-client", "--target", "x86_64-unknown-linux-musl", "--development",
              "--out", out],
             ["--package", "graphite-meter-client", "--development", "--out", out, "--version", "1.0 beta"],
             ["--package", "graphite-meter-server", "--development", "--out", out],
             ["--package", "graphite-meter-client", "--development", "--out", out, "--browser-assets", "client/dist",
-             "--browser-scan", "/tmp/scan.json"],
-            ["--package", "graphite-meter-client", "--development", "--out", "/tmp/notices"],
+             "--browser-scan", str(temporary / "scan.json")],
+            ["--package", "graphite-meter-client", "--development", "--out", str(temporary / "notices")],
             ["--package", "graphite-meter-client", "--development", "--devel", "--out", out],
         ):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit), \
@@ -261,9 +262,13 @@ class BuildVerifyTests(Scratch):
             use = f"-Cprofile-use={profiles / 'x86_64.profdata'}"
             # Windows amd64 shares amd64's profile, Windows arm64 never takes arm64's; a development build takes none.
             self.assertIn(use, flags("x86_64-unknown-linux-musl"))
+            self.assertEqual(self.cargo_environment.get("GM_PGO_SHA256"), hashlib.sha256(b"profile").hexdigest())
             self.assertIn(use, flags("x86_64-pc-windows-gnu"))
             self.assertNotIn(use, flags("aarch64-unknown-linux-musl"))
             self.assertNotIn(use, flags(None))
+            with patch.dict(os.environ, {"GM_PGO_SHA256": "0" * 64}):
+                flags("aarch64-unknown-linux-musl")
+            self.assertNotIn("GM_PGO_SHA256", self.cargo_environment)
             self.write("pgo/aarch64.profdata", b"profile")
             self.assertFalse([flag for flag in flags("aarch64-pc-windows-gnullvm") if "profile-use" in flag])
 
@@ -293,7 +298,8 @@ class BuildVerifyTests(Scratch):
         self.write("notices/inventory.json", "{}\n")
         self.write("notices/old_third-party-source.tar.gz", "stale")
         build = Build("graphite-meter-client", "x86_64-pc-windows-gnu", "release", "1.2.3", self.out)
-        with patch("scripts.legal.rust.subprocess.run", vendor):
+        self.write("pgo/x86_64.profdata", b"profile")
+        with patch("scripts.legal.rust.subprocess.run", vendor), patch("scripts.legal.rust.PGO", self.root / "pgo"):
             source_offer(build, self.state, self.state.components)
         self.assertEqual(sorted(path.name for path in self.out.glob("*_third-party-source.tar.gz")),
                          ["graphite-meter-client_windows_amd64_third-party-source.tar.gz"])
@@ -301,7 +307,8 @@ class BuildVerifyTests(Scratch):
             self.assertEqual(sorted(archive.getnames()), [
                 f"graphite-meter_1.2.3_third-party-source/{name}" for name in (
                 "builds/graphite-meter-client_windows_amd64/LEGAL.txt",
-                "builds/graphite-meter-client_windows_amd64/inventory.json", "legal/rust-forks.json",
+                "builds/graphite-meter-client_windows_amd64/inventory.json",
+                "builds/graphite-meter-client_windows_amd64/pgo.profdata", "legal/rust-forks.json",
                 "third_party/cargo/dependency-1.0.0/lib.rs")])
         self.assertEqual((self.out / "SOURCE.txt").read_text().splitlines(), [
             "Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v1.2.3", "Matching release: v1.2.3",
@@ -436,13 +443,13 @@ class PlatformTests(Scratch):
             with self.subTest(changed=changed), self.assertRaisesRegex(LegalError, message):
                 platform.fetch_notices(self.root, entry)
         self.write("legal/rust-notice-sources.json", json.dumps(sources))
-        with patch("urllib.request.urlopen", return_value=io.BytesIO(b"changed")), \
+        with patch("scripts.legal.rust_platform.download", return_value=b"changed"), \
                 self.assertRaisesRegex(LegalError, "bytes differ"):
             platform.fetch_notices(self.root, entry)
         self.assertFalse((self.root / relative).exists())
-        with patch("urllib.request.urlopen", return_value=io.BytesIO(b"reviewed")):
+        with patch("scripts.legal.rust_platform.download", return_value=b"reviewed"):
             platform.fetch_notices(self.root, entry)
-        with patch("urllib.request.urlopen", side_effect=AssertionError("the cache works offline")):
+        with patch("scripts.legal.rust_platform.download", side_effect=AssertionError("the cache works offline")):
             platform.fetch_notices(self.root, entry)
         self.write(relative, "tampered")
         with self.assertRaisesRegex(LegalError, "bytes differ"):

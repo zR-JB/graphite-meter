@@ -4,7 +4,10 @@ import type { AddedLatency, LatencyResult, LatencySummary } from "../../engine/m
 import type { WireModel } from "../../engine/measure/overhead";
 import { epochMs } from "../../engine/run/clock";
 import {
+  graded,
+  grid,
   incoherence,
+  type CellStatus,
   type MultiServerResult,
   type Outcome,
   type RunResult,
@@ -167,10 +170,11 @@ function recordShape(upgraded: boolean): Check {
 const readable = recordShape(true);
 const stored = recordShape(false);
 
+/** A readable record, its stages judged again: older builds read a stage by its sum alone, not by who was missing. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  return isRecord(value) && plain(value) && readable(value)
-    ? (value as unknown as HistoryRecord)
-    : null;
+  if (!isRecord(value) || !plain(value) || !readable(value)) return null;
+  const record = value as unknown as HistoryRecord;
+  return { ...record, result: graded(record.result) };
 }
 
 /** A schema 4 or 5 row in this build's form; null when its own release could not read it either. */
@@ -178,7 +182,10 @@ export function upgradeRecord(value: unknown): HistoryRecord | null {
   if (!isRecord(value) || !plain(value)) return null;
   try {
     const saved = value.schemaVersion === 4 && liftable(value) ? lift(value) : value;
-    return stored(saved) ? readHistoryRecord(current(saved as Schema5)) : null;
+    if (!stored(saved)) return null;
+    // Stored as its release saved it; reading judges it again.
+    const record = current(saved as Schema5);
+    return plain(record) && readable(record) ? record : null;
   } catch {
     return null;
   }
@@ -454,7 +461,8 @@ export interface HistoryEntry {
   outcome: Outcome;
   servers: number;
   server: string;
-  stages: Record<Stage, StageStatus>;
+  /** Each stage as the result grid judges it. */
+  stages: Record<Stage, CellStatus>;
   jitterMs: number | null;
   addedLatency: AddedLatency | null;
   /** The load whose median the Loaded column shows: the highest, the first of equals. */
@@ -487,7 +495,7 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
     outcome: result.outcome,
     servers: selection.length,
     server: selection[0]?.name ?? "",
-    stages: result.stages,
+    stages: grid(result).columns,
     jitterMs: result.latency?.jitterMs ?? null,
     addedLatency: result.addedLatency,
     loadedStage,

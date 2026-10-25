@@ -370,7 +370,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     </span>
   ) as HTMLElement;
   graph.append(readout);
-  // Its width comes from the observer, never read on a move; it hides until known.
+  // Its width is measured, never read on a move; it hides until known.
   const plate = measure({ readout }).readout;
   let placed = false;
   effect(() => {

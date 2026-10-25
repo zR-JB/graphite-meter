@@ -2,7 +2,7 @@
 use super::{
     App, Overlay, SMALLEST, Target,
     chrome::{Chrome, Link},
-    console::icon,
+    console::{CANNOT_START, icon},
     keys::{self, Action},
     paint::Canvas,
     paths::Readiness,
@@ -230,6 +230,14 @@ impl App {
         while caps.len() > 1 && caps_width(&caps) > room {
             caps.remove(caps.len() - 2);
         }
+        if let Some(toast) = &self.toast {
+            let room = room.saturating_sub(toast.text.width() as u16 + 5);
+            if caps_width(&caps[..1]) <= room {
+                while caps_width(&caps) > room {
+                    caps.pop();
+                }
+            }
+        }
         let total: u16 = caps.iter().map(|(cap, _)| cap.width() as u16 + 2).sum();
         let mut x = area.right().saturating_sub(total + 1);
         // A notice takes the bar's middle while it lasts, the build otherwise.
@@ -310,6 +318,7 @@ impl App {
         match run.map(|run| (run.outcome, &run.stage)) {
             _ if self.view.starting && self.stopping => ("Stopping", palette.muted),
             _ if self.view.starting => ("Checking paths", palette.muted),
+            _ if self.cannot_start() => (CANNOT_START, palette.warn),
             Some((Some(outcome), _)) => (format::outcome_label(outcome), palette.outcome(outcome)),
             Some((None, _)) if self.stopping => ("Stopping", palette.muted),
             Some((None, Some(Running::Measuring { plan, .. }))) => {
@@ -342,7 +351,7 @@ impl App {
         let width = if area.width < 96 {
             area.width
         } else {
-            (area.width * 2 / 5).clamp(56, 80)
+            (area.width * 2 / 5).clamp(60, 80)
         };
         let sheet = Rect::new(area.right() - width, area.y, width, area.height);
         canvas.clear(sheet);
@@ -523,20 +532,7 @@ impl App {
             .as_ref()
             .map(format::authority)
             .unwrap_or_default();
-        let failure = match &self.view.check {
-            Check::Failed(failure) => Some(failure.text.clone()),
-            _ if self.could_not_start() => {
-                let failure = self
-                    .view
-                    .servers
-                    .iter()
-                    .find_map(|server| server.path.as_ref().err());
-                Some(failure.map_or("No test server answered".into(), |failure| {
-                    failure.text.clone()
-                }))
-            }
-            _ => None,
-        };
+        let failure = self.start_failure();
         let warn = |text: String| Line::styled(text, palette.warn);
         let [said, next] = match (
             self.editor().and_then(|editor| editor.error.clone()),
@@ -558,17 +554,11 @@ impl App {
                 Line::default(),
             ],
             (None, Some(text)) => {
-                let said = match text == crate::net::UNREACHABLE {
-                    true => warn(format!("Could not reach {host}")),
-                    false => warn(format!("{host}: {text}")),
+                let next = match self.address_failed() {
+                    true => "Check the address and that the server is running; Enter tries again.",
+                    false => "Enter tries again.",
                 };
-                [
-                    said,
-                    Line::styled(
-                        "Check the address and that the server is running; Enter tries again.",
-                        palette.muted,
-                    ),
-                ]
+                [warn(text), Line::styled(next, palette.muted)]
             }
             (None, None) => [Line::default(), Line::default()],
         };
@@ -699,6 +689,12 @@ impl App {
         let mut entries = Vec::new();
         for (title, table) in groups {
             entries.push(Entry::Heading(title.into()));
+            if title == "Console" {
+                entries.push(Entry::Text(Line::styled(
+                    "Space and r also start a test or stop it.",
+                    self.palette.muted,
+                )));
+            }
             for binding in table.iter().filter(|binding| binding.help.is_some()) {
                 let (key, does) = binding.help.unwrap_or_default();
                 let label = Line::styled(text::capitalized(does), self.palette.text);
@@ -788,10 +784,10 @@ impl App {
         if self.view.servers.is_empty() {
             entries.push(Entry::Heading("Server".into()));
             entries.push(item("Server address", address));
-            entries.push(Entry::Text(Line::styled(
-                "Its test servers show here once it answers.",
-                palette.muted,
-            )));
+            entries.push(Entry::Text(match &self.view.check {
+                Check::Failed(failure) => Line::styled(&failure.text, palette.warn),
+                _ => Line::styled("Its test servers show here once it answers.", palette.muted),
+            }));
         }
         if let Some(run) = self.view.run.as_ref().filter(|run| !run.issues.is_empty()) {
             entries.push(Entry::Heading("Issues".into()));
@@ -800,7 +796,8 @@ impl App {
                     .at
                     .saturating_duration_since(run.at.unwrap_or(issue.at));
                 let name = self.name(Some(&issue.server));
-                let label = format!("{} at {}", format::label(*stage), format::duration(at));
+                let place = format::place(*stage, issue.scope);
+                let label = format!("{place} at {}", format::duration(at));
                 entries.push(item(
                     &label,
                     format!("{name}: {}", issue.failure.reason.label()),

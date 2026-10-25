@@ -1,6 +1,6 @@
 name: Advisories
 
-# Live advisory databases change without a commit, so they run on a schedule instead of gating pull requests.
+# Advisory databases change without a commit, so main is checked daily; a new advisory also fails every code PR.
 on:
   schedule:
     - cron: '43 5 * * *'

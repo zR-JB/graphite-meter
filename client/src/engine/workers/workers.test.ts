@@ -168,7 +168,7 @@ test("a download counts bytes into the epoch they were read in, from the time it
 });
 
 test("a download's bodies end on the server's clock at the lane's latest end; a stop waits only for one ending soon", async () => {
-  const bodies = [source(), source(), source(), source(), source(), source()];
+  const bodies = Array.from({ length: 7 }, source);
   const asked: string[] = [];
   const bootLane = () =>
     boot<LaneCommand>("./lane.ts", {
@@ -204,8 +204,8 @@ test("a download's bodies end on the server's clock at the lane's latest end; a 
   await elapse(0);
   expect([asked, lane.types()]).toEqual([
     [
-      "https://peer.example/download?bytes=1&ms=5000",
-      "https://peer.example/download?bytes=1&ms=1400",
+      "https://peer.example/download?bytes=1&ms=5000&last=",
+      "https://peer.example/download?bytes=1&ms=1400&last=",
     ],
     ["stopped"],
   ]);
@@ -246,6 +246,11 @@ test("a download's bodies end on the server's clock at the lane's latest end; a 
   waited.send({ type: "stop" });
   await elapse(0);
   expect(waited.types()).toEqual(["stopped"]);
+  // Past the stage's end a short body is not the one that ends it.
+  const late = await bootLane();
+  late.send(download(-100));
+  await elapse(0);
+  expect(asked.at(-1)).toBe("https://peer.example/download?bytes=1&ms=250");
 });
 
 test("a flush reports the bytes counted so far before it answers", async () => {

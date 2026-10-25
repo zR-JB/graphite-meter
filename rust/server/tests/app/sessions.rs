@@ -4,8 +4,8 @@ use super::{
     auth::{BROWSER, PUBLIC, auth_app, bearer, login, public, signed, store, tls},
     *,
 };
+use graphite_meter_proto::lease::UNUSED_BOUND;
 use graphite_meter_server::{
-    admission::UNUSED_BOUND,
     auth::{COUNTERS, NewLogin, Principal},
     transport::websocket::Socket,
 };

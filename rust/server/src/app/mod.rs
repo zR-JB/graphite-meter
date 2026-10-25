@@ -95,6 +95,7 @@ pub struct Connection {
     pub endpoint: Endpoint,
     pub peer: IpAddr,
     pub work: Work,
+    pub retire: CancellationToken,
 }
 
 impl Connection {
@@ -103,6 +104,7 @@ impl Connection {
             endpoint,
             peer,
             work: Work::default(),
+            retire: CancellationToken::new(),
         }
     }
 }
@@ -126,7 +128,8 @@ impl App {
         let budget = Budget::new(config.max_buffer_bytes);
         let block = Block::new(&budget, Meter::new(config.verbose))?;
         let alt_svc = config.listener(ListenerKind::H3).map(|listener| {
-            let port = listener.address.port;
+            let public = listener.public_origin.as_ref();
+            let port = public.map_or(listener.address.port, |origin| origin.port);
             HeaderValue::from_str(&format!("h3=\":{port}\"")).expect("a port is a header value")
         });
         let password = config
@@ -397,7 +400,7 @@ impl App {
         let plan = match route {
             WtRoute::Download => Plan::Download {
                 source: self.block.source(query::transfer_bytes(query)),
-                form: if query::datagrams(query) {
+                form: if query::flag(query, "datagrams") {
                     Form::Datagrams
                 } else {
                     Form::Streams(query::streams(query))
@@ -407,7 +410,7 @@ impl App {
                 uploads: self.uploads.clone(),
                 id: query::get(query, "id").unwrap_or_default(),
                 owner: peer.owner(),
-                datagrams: query::datagrams(query),
+                datagrams: query::flag(query, "datagrams"),
             }),
             WtRoute::Ping => Plan::Ping,
         };
@@ -452,8 +455,8 @@ impl App {
         Ok(Outcome::WebSocket(accepted, socket))
     }
 
-    /// `bytes=` payload bytes, ending at `ms=` on the server's clock without a length; HEAD and an empty download drop
-    /// their lane at once.
+    /// `bytes=` payload bytes, ending at `ms=` on the server's clock without a length; one marked `last=` retires an
+    /// HTTP/3 connection as it ends. HEAD and an empty download drop their lane at once.
     fn download<B>(
         &self,
         request: &Request<B>,
@@ -472,6 +475,10 @@ impl App {
                 let source = match until {
                     Some(until) => source.ending_at(until),
                     None => source,
+                };
+                let source = match query::flag(query, "last") {
+                    true => source.signalling(connection.retire.clone()),
+                    false => source,
                 };
                 Body::download(source).with_lane(lane)
             }

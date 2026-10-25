@@ -29,6 +29,7 @@ export interface PlanServer {
   discovery: {
     origin: string;
     protocol: string | null;
+    maxMeasurements: number;
     latency: ReadonlyMap<string, OriginTargets<Pick<LatencyTarget, "transport">>>;
   };
   throughput: {
@@ -37,10 +38,10 @@ export interface PlanServer {
   };
 }
 
-/** One direction's lanes: how many open, and how many must deliver before the stage is ready. */
+/** One direction's lanes: how many open, and what held them below the count asked for. */
 export interface Lanes {
   planned: number;
-  gating: number;
+  capped?: "pool" | "lease";
 }
 type StreamPlan = Map<string, Record<Direction, Lanes>>;
 
@@ -86,7 +87,7 @@ function deal(available: number, ceilings: readonly number[]): number[] {
   return dealt;
 }
 
-/** Deals each HTTP/1.1 origin's pool among its lanes, refusing a stage that leaves one none; only lanes the pool runs gate readiness. */
+/** Deals each HTTP/1.1 origin's pool among its lanes, refusing a stage that leaves one none, within each lease. */
 export function planStreams(
   servers: readonly PlanServer[],
   activity: Activity,
@@ -103,23 +104,29 @@ export function planStreams(
   };
   for (const { server, discovery, throughput } of servers) {
     const lanes: Record<Direction, Lanes> = {
-      down: { planned: 0, gating: 0 },
-      up: { planned: 0, gating: 0 },
+      down: { planned: 0 },
+      up: { planned: 0 },
     };
     plan.set(server.id, lanes);
     const session = throughput.target.transport !== "fetch-stream";
     const multiplexed = session ? undefined : MULTIPLEXED[throughput.fetch.protocol];
     const http1 = session || multiplexed ? null : pool(throughput.fetch.origin);
+    const uploads = activity.transfer.includes("up");
+    // The lease admits the lanes beside an upload's feed and finalize.
+    const share = Math.max(
+      1,
+      Math.floor((discovery.maxMeasurements - (uploads ? 2 : 0)) / activity.transfer.length),
+    );
     for (const direction of activity.transfer) {
-      const planned = session
+      const asked = session
         ? Math.min(SESSION_MAX_LANES, forced ? count : 1)
         : forced
           ? count
           : (multiplexed?.[direction] ?? count);
-      lanes[direction] = { planned, gating: planned };
+      const planned = session ? asked : Math.min(asked, share);
+      lanes[direction] = { planned, ...(planned < asked && { capped: "lease" }) };
       http1?.lanes.push({ name: server.name, lanes: lanes[direction] });
     }
-    const uploads = activity.transfer.includes("up");
     const control = pool(discovery.origin);
     if (needsPings(activity) || uploads) control.control = true;
     if (!session && uploads && !controlMultiplexed(discovery) && !feedSocket(discovery))
@@ -136,12 +143,48 @@ export function planStreams(
       available,
       lanes.map((each) => each.lanes.planned),
     );
-    lanes.forEach((each, i) => {
-      each.lanes.gating = dealt[i]!;
-      if (!forced) each.lanes.planned = dealt[i]!;
+    lanes.forEach(({ lanes }, i) => {
+      if (dealt[i]! < lanes.planned) lanes.capped = "pool";
+      lanes.planned = dealt[i]!;
     });
   }
   return plan;
+}
+
+export function streamNotes(config: TestConfig, servers: readonly PlanServer[]): string[] {
+  if (config.transferStreams.mode !== "forced") return [];
+  const tightest = new Map<
+    string,
+    { server: PlanServer; capped: "pool" | "lease"; lanes: number }
+  >();
+  for (const activity of activities(config)) {
+    if (!activity.transfer.length) continue;
+    let plan: StreamPlan;
+    try {
+      plan = planStreams(servers, activity, config.transferStreams);
+    } catch {
+      continue;
+    }
+    for (const server of servers) {
+      const planned = plan.get(server.server.id)!;
+      const held = activity.transfer.map((direction) => planned[direction]);
+      for (const capped of ["pool", "lease"] as const) {
+        if (!held.some((lanes) => lanes.capped === capped)) continue;
+        const lanes =
+          capped === "pool"
+            ? held.reduce((sum, { planned }) => sum + planned, 0)
+            : Math.min(...held.map(({ planned }) => planned));
+        const key = `${server.server.id} ${capped}`;
+        if (lanes < (tightest.get(key)?.lanes ?? Infinity))
+          tightest.set(key, { server, capped, lanes });
+      }
+    }
+  }
+  return [...tightest.values()].map(({ server: { server, discovery }, capped, lanes }) =>
+    capped === "pool"
+      ? `HTTP/1.1 allows at most ${lanes} measurement connections to ${server.name} in this browser; ${lanes} will be used.`
+      : `${server.name} admits ${discovery.maxMeasurements} measurements at once for this address or sign-in; as few as ${lanes} streams per direction will be used.`,
+  );
 }
 
 export function planError(config: TestConfig, servers: readonly PlanServer[]): string {
@@ -162,6 +205,7 @@ const ASSUMED: PlanServer = {
   discovery: {
     origin: "",
     protocol: null,
+    maxMeasurements: Infinity,
     latency: new Map([["", { blocked: null, targets: [{ transport: "websocket" }] }]]),
   },
   throughput: {
@@ -180,24 +224,44 @@ export function describeStreams(
   const transport = server?.throughput.target.transport;
   if (transport === "webtransport-datagram")
     return { value: "Datagram flood", aside: "no streams" };
-  if (policy.mode === "forced")
+  const alone = server ?? ASSUMED;
+  let most = 0;
+  let least = Infinity;
+  let capped: Lanes["capped"];
+  for (const activity of activities) {
+    const lanes = planStreams([alone], activity, policy).get(alone.server.id)!;
+    for (const direction of activity.transfer) {
+      const { planned } = lanes[direction];
+      most = Math.max(most, planned);
+      if (!lanes[direction].capped) continue;
+      capped ??= lanes[direction].capped;
+      least = Math.min(least, planned);
+    }
+  }
+  if (policy.mode === "forced") {
+    if (transport === "webtransport" && count > SESSION_MAX_LANES)
+      return {
+        value: "Exact",
+        aside: `${SESSION_MAX_LANES} per direction (capped from ${count} by the session)`,
+      };
+    const by = !server
+      ? null
+      : capped === "pool"
+        ? "the browser"
+        : capped === "lease"
+          ? "the server"
+          : null;
     return {
       value: "Exact",
-      aside:
-        transport === "webtransport" && count > SESSION_MAX_LANES
-          ? `${SESSION_MAX_LANES} per direction (capped from ${count} by the session)`
-          : `${count} per direction`,
+      aside: by
+        ? `${least < most ? `${least} to ${most}` : most} per direction (capped from ${count} by ${by})`
+        : `${count} per direction`,
     };
+  }
   if (transport === "webtransport")
     return { value: "Automatic", aside: "1 continuous stream per direction" };
   const multiplexed = server && MULTIPLEXED[server.throughput.fetch.protocol];
   if (multiplexed)
     return { value: "Automatic", aside: `${multiplexed.down} download / ${multiplexed.up} upload` };
-  const alone = server ?? ASSUMED;
-  let most = 0;
-  for (const activity of activities) {
-    const lanes = planStreams([alone], activity, policy).get(alone.server.id)!;
-    for (const direction of activity.transfer) most = Math.max(most, lanes[direction].planned);
-  }
   return { value: "Automatic", aside: `up to ${most || count} per direction` };
 }

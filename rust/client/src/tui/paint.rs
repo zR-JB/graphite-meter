@@ -98,6 +98,14 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn center(&mut self, x: u16, y: u16, width: u16, line: &Line) {
+        let fitted;
+        let line = match line.width() > usize::from(width) {
+            true => {
+                fitted = line.clone().fit(usize::from(width));
+                &fitted
+            }
+            false => line,
+        };
         let shown = u16::try_from(line.width()).unwrap_or(u16::MAX).min(width);
         self.line(x + (width - shown) / 2, y, shown, line);
     }

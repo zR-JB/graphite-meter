@@ -370,8 +370,9 @@ impl Uploads {
         Ok(aggregate)
     }
 
-    /// A share of the capacity; at the limit an empty aggregate makes room.
+    /// A share of the capacity, charged to a lease's creator; at the limit an empty aggregate makes room.
     fn capacity(&self, entries: &mut Entries, keys: &ClientKeys) -> Result<Hold, Refusal> {
+        let keys = keys.charged();
         match self.0.capacity.acquire(keys, 1) {
             Err(Full::Total) if entries.displace(Instant::now()) => {
                 self.0.capacity.acquire(keys, 1).map_err(Refusal::from)

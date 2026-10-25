@@ -3,7 +3,7 @@ use graphite_meter_proto::origin::Host;
 use std::{io, net::SocketAddr, pin::pin, time::Duration};
 use tokio::{net::TcpStream, time::Instant};
 
-/// A whole TCP or QUIC dial, lookup included, under the client's control deadline so it ends with its own error first.
+/// A whole QUIC dial or TCP connect, lookup, proxy and TLS included, under the client's control deadline to end first.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(9);
 /// RFC 8305's recommended wait before the other address family joins.
 const FALLBACK_DELAY: Duration = Duration::from_millis(300);

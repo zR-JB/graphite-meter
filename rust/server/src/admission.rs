@@ -7,7 +7,7 @@ use crate::{
     peer::ClientKeys,
 };
 use graphite_meter_proto::{
-    lease::{LEASE_HEADER, LEASE_PARAMETER},
+    lease::{LEASE_HEADER, LEASE_PARAMETER, UNUSED_BOUND},
     refusal::Refusal,
 };
 use http::{HeaderValue, Request};
@@ -18,16 +18,12 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 use tokio::{
     sync::Notify,
     time::{Instant, sleep_until},
 };
 use tokio_util::sync::CancellationToken;
-
-/// A lease with nothing live ends after this long.
-pub const UNUSED_BOUND: Duration = Duration::from_secs(30);
 
 /// What a lease holds: measurements, of them WebTransport transfer sessions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -56,7 +52,7 @@ struct State {
     grant: Grant,
     /// Used of the grant: its slots taken.
     used: Grant,
-    /// Holds of the grant's measurements that are not sessions, then its sessions, each with its measurement.
+    /// Holds of the grant's measurements, then of its sessions apart from their measurements.
     measurements: Vec<Hold>,
     sessions: Vec<Hold>,
     /// Work presenting the lease, past its grant too.
@@ -187,7 +183,7 @@ impl Lease {
         let (measurements, sessions) = state.wanted(grant);
         let mut raised = Vec::new();
         for _ in state.sessions.len()..sessions {
-            raised.push(quotas.session(&self.keys)?);
+            raised.push(quotas.session_beside_handler(&self.keys)?);
         }
         let mut more = Vec::new();
         for _ in state.measurements.len()..measurements {
@@ -251,11 +247,12 @@ impl Lease {
 }
 
 impl State {
-    /// The holds that keep the grant and the slots in use: measurements apart from sessions, and sessions.
+    /// The holds that keep the grant and the slots in use: measurements, and sessions.
     fn wanted(&self, grant: Grant) -> (usize, usize) {
-        let sessions = grant.sessions.max(self.used.sessions);
-        let measurements = grant.measurements.max(self.used.measurements);
-        (measurements.saturating_sub(sessions), sessions)
+        (
+            grant.measurements.max(self.used.measurements),
+            grant.sessions.max(self.used.sessions),
+        )
     }
 
     /// Releases holds no longer wanted, as after the grant was lowered or a slot ended.

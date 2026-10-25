@@ -66,7 +66,12 @@ impl App {
             }
             Action::Select => self.select_entry(),
             Action::Apply => {
-                self.config.servers = std::mem::take(&mut chooser.draft);
+                let checked = match &self.view.servers[..] {
+                    [server] => Some(&server.id),
+                    _ => None,
+                };
+                self.config
+                    .select(std::mem::take(&mut chooser.draft), checked);
                 self.overlay = Overlay::SETTINGS;
                 self.recheck_soon();
             }
@@ -160,6 +165,7 @@ impl App {
             Action::Cancel => {
                 self.overlay = Overlay::None;
                 self.notify(Line::styled("Sign-in canceled", self.palette.muted));
+                self.stopping = self.running();
                 Effect::command(Command::Stop)
             }
             _ => Vec::new(),

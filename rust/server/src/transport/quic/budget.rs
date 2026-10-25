@@ -121,8 +121,7 @@ impl ConnectionBudget {
         lock(&self.held).credit.is_some()
     }
 
-    /// An admitted upload began or stopped reading; whether the last to stop returned the credit, the bytes it still
-    /// covers moving to the budget. Under pressure the connection keeps it.
+    /// An admitted upload began or stopped reading; whether the last to stop returned the credit, keeping what it drew.
     fn reading(&self, reading: bool) -> bool {
         let mut held = lock(&self.held);
         if reading {
@@ -130,12 +129,16 @@ impl ConnectionBudget {
             return false;
         }
         held.readers -= 1;
-        let drawn = CONNECTION_CREDIT - held.undrawn;
-        if held.readers > 0 || held.credit.is_none() || !self.shared.try_charge(drawn) {
+        if held.readers > 0 {
             return false;
         }
+        let Some((credit, _share)) = held.credit.take() else {
+            return false;
+        };
+        let drawn = CONNECTION_CREDIT - held.undrawn;
+        credit.keep(drawn);
         held.overdraft += drawn;
-        (held.undrawn, held.credit) = (0, None);
+        held.undrawn = 0;
         true
     }
 }
@@ -284,11 +287,18 @@ impl SendWindow {
     }
 
     fn grow(&mut self, quic: &noq::Connection, target: u64, budget: &Budget) {
-        let granted = target.min(MAX_SEND_WINDOW).saturating_sub(self.limit);
-        if granted >= SEND_WINDOW_STEP && budget.pressure() != Pressure::HoldBack {
-            self.limit += granted;
+        if self.widen(target, budget) {
             quic.set_send_window(self.limit);
         }
+    }
+
+    fn widen(&mut self, target: u64, budget: &Budget) -> bool {
+        let granted = target.min(MAX_SEND_WINDOW).saturating_sub(self.limit);
+        let widened = granted >= SEND_WINDOW_STEP && budget.pressure() != Pressure::HoldBack;
+        if widened {
+            self.limit += granted;
+        }
+        widened
     }
 
     fn release(&mut self, quic: &noq::Connection) {
@@ -324,5 +334,18 @@ mod tests {
             MIN_SEND_WINDOW,
             "no time observed"
         );
+    }
+
+    #[test]
+    fn the_send_window_grows_only_below_three_quarters_of_the_budget() {
+        let budget = Budget::new(64 << 20);
+        let pressure = budget.lease(48 << 20).unwrap();
+        let mut window = SendWindow::default();
+        assert!(!window.widen(MAX_SEND_WINDOW, &budget));
+        assert_eq!(window.limit, MIN_SEND_WINDOW);
+        drop(pressure);
+        assert!(!window.widen(MIN_SEND_WINDOW + SEND_WINDOW_STEP - 1, &budget));
+        assert!(window.widen(MAX_SEND_WINDOW, &budget));
+        assert_eq!(window.limit, MAX_SEND_WINDOW);
     }
 }

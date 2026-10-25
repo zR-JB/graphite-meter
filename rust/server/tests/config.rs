@@ -51,6 +51,12 @@ fn flag_errors_print_their_message_then_the_usage() {
             &["-advertised-native-endpoints", "h4"],
             "invalid value \"h4\" for --advertised-native-endpoints: unknown endpoint \"h4\"",
         ),
+        (&["help"], "unexpected argument \"help\""),
+        (
+            &["--verbose", "hash-password"],
+            "unexpected argument \"hash-password\"",
+        ),
+        (&["--", "serve"], "unexpected argument \"serve\""),
     ] {
         let (loaded, usage) = load(&[], args);
         assert_eq!(loaded.unwrap_err(), message);
@@ -211,6 +217,12 @@ fn listeners_need_distinct_addresses_and_tls_files() {
     assert_eq!(
         error(&with_tls(&[("GM_H3_ADDR", ":7246")]), &[]),
         "GM_H1_ADDR and GM_H3_ADDR must differ"
+    );
+    let ephemeral = with_tls(&[("GM_H1_ADDR", "127.0.0.1:0"), ("GM_H2_ADDR", "127.0.0.1:0")]);
+    assert_matches!(
+        load(&ephemeral, &[]).0,
+        Ok(Loaded::Config(_)),
+        "each :0 binds its own port"
     );
     for address in ["7246", "::1:7246", ":+80", "localhost:65536"] {
         assert_eq!(

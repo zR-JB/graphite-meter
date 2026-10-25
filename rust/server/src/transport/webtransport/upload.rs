@@ -1,8 +1,7 @@
-//! `/wt/upload` (`api/upload.md`): up to 16 client streams and optional datagrams into one aggregate with a feed.
+//! `/wt/upload` (`api/upload.md`): a lane's client streams and optional datagrams into one aggregate with a feed.
 
 use super::drain;
 use crate::{
-    app::query::MAX_LANE_STREAMS,
     engine::{ProgressFeed, UploadSink, Uploads},
     lane::Lane,
     peer::ClientKeys,
@@ -15,7 +14,11 @@ use futures_util::{
     stream::FuturesUnordered,
 };
 use graphite_meter_http3::webtransport::{RecvStream, Session};
-use graphite_meter_proto::{lane::IDLE_BOUND, refusal::Refusal, upload::Record};
+use graphite_meter_proto::{
+    lane::{IDLE_BOUND, MAX_LANE_STREAMS},
+    refusal::Refusal,
+    upload::Record,
+};
 use std::{mem, pin::pin, time::Duration};
 use tokio::time::{sleep, timeout};
 

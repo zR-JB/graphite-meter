@@ -9,18 +9,20 @@ real commands.
 
 ```sh
 mise run workflow-check    # jactionlint, zizmor, workflow_policy.py with the tool pins
-mise run pipeline-test     # ty type check, control-plane and legal tests
+mise run pipeline-test     # ty type check, control-plane, API schema and legal tests
 ```
 
 ## CI
 
-`Gate` is the only required status. A pull request that changes only documentation (`.github/ci-paths.yml`) runs the
-checks job alone; every other change, every push to main and the daily run on main run every job:
+`Gate` is the only required status check. A pull request that changes only documentation (`.github/ci-paths.yml`)
+runs the checks job alone. A draft also runs Rust checks if it changes code, and no more; its Gate fails until it is
+marked ready for review, which runs the rest. Every other pull request, every merge queue group, every push to main
+and the daily run on main run every job:
 
 | Job | Runs |
 |---|---|
 | Checks | workflow policy, tooling tests, Gitleaks, the browser client's checks |
-| Rust checks | `rust-check` |
+| Rust checks | `rust-check`, then release PGO training's transfers with its debug builds (`pgo.py --check`) |
 | Delayed-link download gate | `delayed-downloads` |
 | Rust target checks | `check_git_sources --verify`, `rust-check-targets` |
 | Rust checks on Windows | the client, net and legal crates' tests |
@@ -29,16 +31,48 @@ checks job alone; every other change, every push to main and the daily run on ma
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
 | Run client on Windows arm64 | the Windows arm64 client out of its archive, on GitHub's arm64 Windows runner |
 | Release staging | `assets.py stage`, which joins the two OCI archives into the image, and `assets.py check` on the image, the server archives and the client archives, as a release does |
-| Browser E2E | Chrome in seven shards and Firefox in six against the E2E server: `performance.test.ts` in one, with its surface reversals in another in Chrome only, the other files in two, and the network scenarios in three, dealt longest first by `client/e2e/timings.json`; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
+| Browser E2E | Chrome in seven jobs and Firefox in six against the E2E server: the suite in four Chrome and three Firefox shards, and the network group, which shapes the runner's loopback, in three shards each, its files dealt longest first by `client/e2e/timings.json`; on the Chrome heavy shard, Chromium's HTTP/3, WebTransport and session close-code check (`rust/interop/browser.py`) |
 
-`mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
-toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the same toolchain; only CI
-writes caches. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with
-`--no-self-update`, and refuses it unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins
-as `rust_manifest_sha256`. `advisories.yml` checks the locked crates and client packages against the live advisory
-databases daily, so a new advisory never fails an unrelated pull request. Pull requests and pushes test the browsers
+`mise run ci` runs CI's check, secret-scan, target, delayed-download and browser gates locally, but not the image,
+archive, Windows or release-staging jobs; the policy fails if one of its steps has no CI job. A new push to a pull
+request cancels its run in progress; a push to main lets it finish and replaces only an older pending one, so main runs
+at most two at a time; re-run only main's head, since a re-run older run takes the newest one's pending place. Cargo
+caches are keyed by job, toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the
+same toolchain; only CI writes caches.
+The target checks' Ubuntu cross compilers and the Firefox network jobs' `certutil` install
+from `.deb`s cached per runner image (`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold
+cache. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
+unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.
+`rust-check` checks the locked crates and the Cargo forks' advisory verdicts against the RustSec database it
+fetches, and CI checks the client packages against the registry's advisories, so a new advisory fails every pull
+request that runs the code checks; `advisories.yml` repeats all three daily. Pull requests and pushes test the browsers
 `mise.toml` pins; the daily CI run tests the latest stable Chrome for Testing and Firefox, without caches, and
 `mise run browser-bump` moves the pins to them.
+
+### Merge queue
+
+Pull requests merge through GitHub's merge queue. It squashes each queued pull request onto main and the entries
+ahead of it, runs CI on that `merge_group` commit with every job, and moves main to it once Gate passes. Moving main
+is a push, so main's head always gets the push run that `release.py` requires before a release; when several entries
+merge at once, main moves to the last of them in one push, and only that commit gets one. The owner adds a
+`merge_queue` rule to the `main` ruleset (Settings, Rules), which no workflow can change:
+
+| Setting (API parameter) | Value | Why |
+|---|---|---|
+| Merge method (`merge_method`) | Squash | main takes only squashes and stays linear |
+| Build concurrency (`max_entries_to_build`) | 2 | each entry's run takes about 28 jobs of the account's concurrent runners |
+| Minimum group size (`min_entries_to_merge`) | 1 | a passing entry merges at once; the wait time then never applies |
+| Maximum group size (`max_entries_to_merge`) | 5 | entries that passed merge together, in one push to main |
+| Require all queue entries to pass required checks (`grouping_strategy`) | on (`ALLGREEN`) | every entry's own run must pass Gate |
+| Status check timeout (`check_response_timeout_minutes`) | 120 | a run takes about 9 minutes, but over an hour when runners queue |
+
+Keep `Gate` from GitHub Actions as the required status check, and "Require branches to be up to date before merging"
+off: the queue tests each entry on top of main. Code scanning merge protection does not apply to merge groups, so the
+queue never waits for CodeQL; a pull request still needs it to join the queue.
+
+The squashed commit's message comes from the repository's squash setting (Settings, General, "Allow squash merging"),
+currently "Default message", which titles a one-commit pull request after its commit. "Default to pull request title"
+gives `<title> (#N)` alone, and "Default to pull request title and description" adds the pull request's whole body.
 
 ## Releases
 
@@ -48,10 +82,11 @@ gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 
 A stable release publishes the image as `X.Y.Z`, moves `X.Y` and `latest`, and creates a GitHub Release with eight
 assets: the server archives for Linux amd64 and arm64, the client archives for Linux and Windows amd64 and arm64, one
-third-party source archive for every shipped build, and `checksums.txt`. Each archive holds the executable,
-`LICENSE`, `COPYRIGHT`, its build's `THIRD_PARTY_NOTICES.txt` and the `SOURCE.txt` that names the source archive. A
-prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or `-f pr=N -f sha=<PR head>` to build an
-open same-repository PR; it publishes only the image of that version, such as `X.Y.Z-rc.N`, which no alias follows.
+third-party source archive for every shipped build, and `checksums.txt`. Each archive holds the executable, `LICENSE`,
+`COPYRIGHT`, its build's `THIRD_PARTY_NOTICES.txt` and the `SOURCE.txt` that names the source archive. The Release's
+notes open with the source notice and the image's `X.Y.Z@sha256:` reference. A prerelease takes a
+`vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or `-f pr=N -f sha=<PR head>` to build an open same-repository
+PR; it publishes only the image of that version, such as `X.Y.Z-rc.N`, which no alias follows.
 `mode=validate` stops before any write. Approve the `ghcr-release` deployment when the Release run asks.
 
 A PR that changes the wire protocol, the API, configuration or saved data incompatibly carries the `breaking change`
@@ -59,20 +94,20 @@ label. The release notes list those PRs under their own heading (`.github/releas
 refused unless it raises the minor version (the major from 1.0) over the latest release when one was merged since.
 
 1. Untrusted build. `release-request.yml` runs from main with `contents: read`, no secrets and no caches; dispatched
-   from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees the
-   inputs, which GitHub also renders into the run title (`v1.2.3 · publish · main`), and the token, with which it
-   requires a PR prerelease's commit to be the head of an open PR of this repository. Then, in parallel, one *Build
-   server image* job per server platform runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit
-   fetches without a token, and one *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a
+   from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees
+   the inputs, which GitHub also renders into the run title (`v1.2.3 · publish · main`), and the token, with which,
+   for a stable request, it lists the PRs labelled `breaking change` since the latest release and requires a PR
+   prerelease's commit to be the head of an open PR of this repository. Then, in parallel, one *Build server image*
+   job per server platform runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit fetches
+   without a token, and one *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a
    prerelease's client jobs skip their builds. Each job's builder starts empty. Before its reviewed builds a builder
    trains a PGO profile for the architecture it builds on loopback transfers, amd64 natively and arm64 under QEMU's
    user mode (`scripts/pgo.py`); Windows amd64 uses amd64's and Windows arm64 none. *Assemble request* runs
    `assets.py stage`, which joins the two images' OCI archives into the one archive a multi-platform build exports,
    packages each architecture's server out of it, so no second build makes it, copies the client archives and merges
-   every build's part of the source offer into one archive.
-   Only a stable release, built from main, exports file trees; every job uploads only the regular files
-   `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs past
-   a failure.
+   every build's part of the source offer into one archive. Only a stable release, built from main, exports file
+   trees; every job uploads only the regular files `assets.py upload` named and moved into one directory, so no link
+   a build wrote reaches an upload. No job runs past a failure.
 2. Trusted verification. `release.yml` runs main's tooling on `workflow_run` for main dispatches only and never executes
    the requested source; its run is named after the request's run number. It binds `request.json` to the run title, the
    owner, the first attempt, exactly the jobs `release.py` names, each once and successful, and the one bounded artifact
@@ -95,11 +130,12 @@ Dockerfile may not select a custom frontend, pins its base images by digest and 
 from one snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal to `mise.toml`'s. Verification
 requires one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose
 source is the release commit and whose Dockerfile and target are `container/Dockerfile` and `server`; each image's
-server and notices must be the reviewed build its source offer names, its server must have the SHA-256 of the
-executable in that architecture's server archive, and nothing may carry `UNREVIEWED DEVELOPMENT BUILD`. Verification
-reads the archive as data and checks every blob the index reaches against its descriptor's size and digest; Skopeo
-runs only to publish. The untrusted build writes the provenance, so it shows which source was built but
-does not authenticate it. Build arguments carry no secrets because max provenance records them.
+server and notices must be the reviewed build its source offer names, its server must have the SHA-256 of the executable
+in that architecture's server archive, its config may hold only the exposed ports, the release labels, the health check
+and running `/graphite-meter` from `/` as `65532:65532` with only `PATH` set, and nothing may carry `UNREVIEWED
+DEVELOPMENT BUILD`. Verification reads the archive as data and checks every blob the index reaches against its
+descriptor's size and digest; Skopeo runs only to publish. The untrusted build writes the provenance, so it shows which
+source was built but does not authenticate it. Build arguments carry no secrets because max provenance records them.
 
 ### Owner setup
 
@@ -126,16 +162,16 @@ credentials and no dangerous triggers other than the reviewed `workflow_run`. `w
 own trust rules, and `test_workflow_policy.py` breaks a copy of the repository once per rule: pinned runner images,
 secrets only in the approved publish job, release identity only from the run context, no development build anywhere
 CI or a release reaches (`--development` or `scripts.build`), a code owner for every dependency manifest, lockfile,
-toolchain pin, Cargo configuration and build script, and a Dependabot entry for every lockfile.
+toolchain pin, Cargo configuration and build script, and a Dependabot entry for every `Cargo.lock` and `bun.lock`.
 
 When adding an external action, review it and its composite dependencies, allow it in repository settings, pin the SHA
 with a version comment for Dependabot and run the checks above.
 
 ## Pre-commit
 
-The hook refuses commits to `main` and whitespace errors, and scans the index with the pinned Gitleaks. `precommit.py`
-selects the mise checks for the staged paths, counting both sides of a rename: `api/`, `mise.toml` and `mise.lock`
-select the full `check`; workflows, `.githooks/`, scripts, the container files and `legal/` select `workflow-check`
-and `pipeline-test`; `client/` and the sign-in assets it generates (`rust/server/src/auth/assets/`) select
-`client-ci`. CI runs the Rust checks. The checks run on the exact staged tree in a disposable worktree, which installs
-the client's frozen dependencies only for the client's checks.
+The hook refuses commits to `main` and whitespace errors, and scans the index with the pinned Gitleaks.
+`precommit.py` selects the mise checks for the staged paths, counting both sides of a rename: `api/`, `mise.toml`
+and `mise.lock` select the full `check`; `.github/`, `.githooks/`, `scripts/`, `container/` and `legal/` select
+`workflow-check` and `pipeline-test`; `client/` and the sign-in assets it generates (`rust/server/src/auth/assets/`)
+select `client-ci`. CI runs the Rust checks. The checks run on the exact staged tree in a disposable worktree, which
+installs the client's frozen dependencies only for the client's checks.

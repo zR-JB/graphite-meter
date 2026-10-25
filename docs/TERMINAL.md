@@ -8,7 +8,7 @@ throughput at the receiver. It has an interactive console and a report mode for 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/terminal-dark.png">
-  <img src="assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under load">
+  <img src="assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under download load and 2.8 ms under upload load">
 </picture>
 
 </div>
@@ -24,6 +24,9 @@ executable and its license notices (`--legal` prints them too). The Linux builds
 | Linux, arm64   | `graphite-meter-client_X.Y.Z_linux_arm64.tar.gz` |
 | Windows, amd64 | `graphite-meter-client_X.Y.Z_windows_amd64.zip`  |
 | Windows, arm64 | `graphite-meter-client_X.Y.Z_windows_arm64.zip`  |
+
+To check that a download is the one the release published, run
+`gh release verify-asset vX.Y.Z FILE -R zR-JB/graphite-meter` ([details](DEPLOYMENT.md#without-docker)).
 
 ```sh
 tar -xzf graphite-meter-client_X.Y.Z_linux_amd64.tar.gz
@@ -71,13 +74,13 @@ against a protected server it ends with "Sign-in required" and status 1.
 ## Flags
 
 Durations take units such as `800ms`, `4s` or `1m30s`. Boolean flags accept `true`, `false`, `1` or `0`
-(`--loaded-latency=false`).
+(`--skip-loaded-latency=false`).
 
 | Flag                                             | Default                   | Meaning                                                                                   |
 | ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `--url <origin>`                                 | the remembered server     | The Graphite Meter server. Required in report mode unless a server is remembered.         |
 | `--server <id>`                                  | the catalog's default     | A test server ID from the server catalog; repeat for up to 4.                             |
-| `--stages <list>`                                | `latency,download,upload` | `latency` (`ping`), `download` (`down`), `upload` (`up`), `bidirectional` (`bidi`).       |
+| `--stages <list>`                                | `latency,download,upload` | `latency` (`ping`), `download` (`down`), `upload` (`up`), `bidirectional` (`bidi`); they run in this order. |
 | `--latency-duration`                             | `4s`                      | Measured time of the latency stage, 1 s to 24 h and within every test server's limit.     |
 | `--download-/--upload-/--bidirectional-duration` | `10s`                     | The same for each transfer stage.                                                         |
 | `--warmup`                                       | `800ms`                   | Before each stage, 0 to 4 s; stretched to at least 10 idle round trips, at most 4 s.      |
@@ -87,7 +90,7 @@ Durations take units such as `800ms`, `4s` or `1m30s`. Boolean flags accept `tru
 | `--latency-transport`                            | `auto`                    | `websocket` or `webtransport`.                                                            |
 | `--ping`                                         | `reply-driven`            | Idle probe interval: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or 80 ms to 15 s. |
 | `--loaded-ping`                                  | `medium`                  | Loaded probe interval, the same values.                                                   |
-| `--loaded-latency`                               | `true`                    | Probe latency during transfer stages.                                                     |
+| `--skip-loaded-latency`                          | `true`                    | Skip loaded latency if the Latency stage is off; with that stage on, transfers probe.     |
 | `--auto-streams`                                 | `6`                       | HTTP/1.1 stream limit per direction, 1 to 14.                                             |
 | `--streams`                                      | `0`                       | Exact stream count per server and direction, 1 to 14; `0` is automatic.                   |
 | `--insecure`                                     | `false`                   | Skip TLS certificate verification. Sign-in is refused.                                    |
@@ -108,13 +111,13 @@ check leaves the test, and the test continues and ends Partial.
 | Keys                       | Where         | Action                                                             |
 | -------------------------- | ------------- | ------------------------------------------------------------------ |
 | enter, space, r            | console       | Start a test, or run again.                                        |
-| esc                        | during a test | Stop the test.                                                     |
+| esc, space, r              | console, test | Stop the test; esc first closes Settings, Details or Keys.         |
 | 1, 2, 3, 4                 | console       | Switch latency, download, upload or bidirectional on or off.       |
 | s, d, ?                    | console       | Settings, Details, Keys; esc or the same key closes them.          |
 | l                          | console       | With several test servers, the server whose latency is shown.      |
 | v                          | console       | Check the server again.                                            |
 | ↑ ↓ (k j, tab), ← →        | settings      | Move; change the focused value.                                    |
-| enter, space, r            | settings      | Edit or open the row; switch it on or off; start a test.           |
+| enter, space, r            | settings      | Edit or open the row; switch it on or off; start or stop a test.   |
 | ← →, home, end, enter, esc | editing       | Move the cursor, apply, cancel.                                    |
 | tab                        | address card  | Remember this server, or forget it.                                |
 | ↑ ↓, space, enter, esc     | test servers  | Move, select, apply, cancel.                                       |
@@ -144,11 +147,12 @@ columns when stdout is a file or pipe.
 | 1      | The test ended Partial, Incomplete, Stopped or Failed, or an error such as "Sign-in required" occurred. |
 | 2      | The flags or arguments were invalid, or report mode had no server address.      |
 | 130    | SIGINT (ctrl+c) stopped the test.                                               |
-| 141    | The report was written into a closed pipe.                                      |
-| 143    | SIGTERM stopped the test.                                                       |
+| 141    | On Unix, the report was written into a closed pipe.                             |
+| 143    | SIGTERM, or closing the Windows console, stopped the test.                      |
 
-A signal stops the test, and the report still prints. A second signal exits at once with its own status, and a
-signal after the test finished does not change the status.
+A signal stops the test, and the report still prints; before the test started, stderr says "Test stopped before it
+started." instead. A second signal exits at once with its own status, and a signal after the test finished does not
+change the status.
 
 ## Environment
 
@@ -159,7 +163,7 @@ signal after the test finished does not change the status.
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | On Linux, `SSL_CERT_FILE` replaces the system CA bundle and `SSL_CERT_DIR`, a list separated like `PATH`, the system certificate directories; each one unset keeps the system's. On Windows, either one replaces the system's certificates. |
 | `NO_COLOR`                      | No color, though a terminal still gets bold text.                                                                      |
 | `CLICOLOR_FORCE`, `FORCE_COLOR` | Color even when stdout is not a terminal or `TERM=dumb`.                                                               |
-| `COLORTERM`, `TERM`             | The color depth. `COLORTERM=truecolor` or `24bit`, a `TERM` ending in `direct` or naming a 24-bit terminal such as `kitty`, `foot` or `wezterm`, and Windows Terminal give 24-bit color. `screen`, `tmux` and a `TERM` with `256color` give 256 colors, and anything else gives 16. A Windows console without `TERM` gets 24-bit color. |
+| `COLORTERM`, `TERM`             | The color depth. `COLORTERM=truecolor` or `24bit`, a `TERM` ending in `direct` or naming a 24-bit terminal such as `kitty`, `foot` or `wezterm`, and Windows Terminal give 24-bit color. `screen` and `tmux` give 256 colors even with `COLORTERM` set, any other `TERM` with `256color` gives 256 colors, and anything else gives 16. A Windows console without `TERM` gets 24-bit color. |
 
 If the client cannot use a proxy variable, every request that would go through that proxy fails and names the
 variable. HTTP/3 and WebTransport connect directly over UDP, without the proxy.

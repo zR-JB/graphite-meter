@@ -103,6 +103,66 @@ test("the idle track draws one bar per reply bucket and grows as each closes", a
   expect(live).toBeGreaterThanOrEqual(5);
 });
 
+test("every stage's warmup reads Warmup on the dial, its chip and its card, and the latency warmup's replies reach the page", async (page) => {
+  // The probe worker's round trips before the window: the latency warmup's live reading.
+  await page.addInitScript(() => {
+    const counts = ((window as any).unmeasured = { messages: 0 });
+    const Real = window.Worker;
+    window.Worker = class extends Real {
+      constructor(...args: ConstructorParameters<typeof Worker>) {
+        super(...args);
+        this.addEventListener("message", ({ data }: MessageEvent) => {
+          if (data?.type === "unmeasured") counts.messages++;
+        });
+      }
+    };
+  });
+  await open(page, home.url, {
+    config: { duration: { ...baseConfig.duration, warmupMs: 2000 } },
+  });
+  await ready(page);
+  await page.evaluate(() => {
+    const words: Record<string, string[]> = {};
+    const figures: string[] = [];
+    // A word leaving through its handoff is not the word shown.
+    const text = (selector: string) =>
+      document
+        .querySelector(`${selector}:not(.handoff-out, .handoff-out *)`)
+        ?.textContent?.replace(/\s+/g, " ")
+        .trim() ?? "";
+    const sample = () => {
+      const phase = document.getElementById("console")!.dataset.phase;
+      const stage = document.querySelector<HTMLElement>(".chip.chip--warmup")?.dataset.tone;
+      if (phase === "warmup" && stage) {
+        const seen = [
+          text(".gauge-status"),
+          text(`.chip[data-tone="${stage}"] .chip-tag`),
+          text(`.results .card[data-tone="${stage}"] .name .status`),
+        ];
+        if (seen.every(Boolean)) (words[stage] ??= []).push(seen.join("|"));
+        if (stage === "latency")
+          figures.push(text('.results .card[data-tone="latency"] .headline .num'));
+      }
+      Object.assign(window, { warmups: words, figures });
+      if (phase !== "complete") requestAnimationFrame(sample);
+    };
+    (window as any).unmeasured.messages = 0;
+    requestAnimationFrame(sample);
+  });
+  await run(page, 30_000);
+  const { words, messages, figures } = await page.evaluate(() => ({
+    words: (window as any).warmups,
+    messages: (window as any).unmeasured.messages,
+    figures: (window as any).figures as string[],
+  }));
+  expect(Object.keys(words)).toEqual(["latency", "download", "upload"]);
+  for (const seen of Object.values(words) as string[][])
+    expect([...new Set(seen)]).toEqual(["Warmup|Warmup|Warmup"]);
+  expect(messages).toBeGreaterThan(0);
+  // The latency card reads those replies, muted, before the window opens.
+  expect(figures.some((figure) => /\d/.test(figure))).toBe(true);
+});
+
 // Every page reports a policy violation as an error, so a run that trips Trusted Types fails whichever test made it.
 test("the page requires Trusted Types and refuses script it did not make", async (page) => {
   const policy = (await fetch(`${home.http}/`)).headers.get("content-security-policy");
@@ -168,6 +228,37 @@ async function arcsDrawn(page: Page) {
   // A browser that drops the dash array draws the whole ring.
   for (const arc of arcs) expect(Math.abs(arc.drawn - arc.wanted)).toBeLessThan(1);
 }
+
+for (const [width, height, route] of [
+  [390, 844, ""],
+  [1280, 800, ""],
+  [1280, 800, "#/legal"],
+  [390, 844, "#/settings"],
+  [1280, 800, "#/settings"],
+] as const)
+  test.chrome(
+    `loading ${route || "#/"} at ${width} px keeps the console still outside an opened sheet`,
+    async (page) => {
+      await page.setViewportSize({ width, height });
+      await open(page, `${home.url}/${route}`);
+      await expect(page.locator(".gauge-panel")).toBeVisible();
+      await page.evaluate(settled);
+      const shifts = await page.evaluate(() => {
+        const observer = new PerformanceObserver(() => {});
+        observer.observe({ type: "layout-shift", buffered: true });
+        return observer
+          .takeRecords()
+          .map((shift: any) => ({
+            score: shift.value,
+            sources: shift.sources.map((source: any) => source.node?.getAttribute?.("class")),
+            sheet: shift.sources.every((source: any) => source.node?.closest?.(".side-sheet")),
+          }))
+          .filter((shift) => !shift.sheet);
+      });
+      const total = shifts.reduce((sum, shift) => sum + shift.score, 0);
+      expect(total < 0.01 ? [] : shifts).toEqual([]);
+    },
+  );
 
 test.chrome("reduced motion still updates every readout and completes", async (page) => {
   await page.cdp("Emulation.setEmulatedMedia", {

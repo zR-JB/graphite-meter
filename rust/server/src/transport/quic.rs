@@ -17,19 +17,21 @@ use crate::{
 use budget::{ConnectionBudget, QuicWindow, SendWindow};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{self as http3, server};
-use graphite_meter_proto::lane::LaneEnding;
+use graphite_meter_proto::lane::{IDLE_BOUND, LaneEnding};
 use request::Requests;
 use shard::{Occupant, Shard};
 use std::{future::Future, io, net::SocketAddr, pin::pin, sync::Arc, time::Duration};
 use tokio::{
     runtime::Handle,
-    time::{MissedTickBehavior, interval, timeout},
+    time::{Instant, MissedTickBehavior, interval, timeout},
 };
 
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
 /// Connections closed once the shutdown drain ended have this long to send their close.
 const CLOSE_FLUSH: Duration = Duration::from_secs(1);
+/// A connection that did no work this long was kept open by a peer sending unasked: browsers PING only for requests.
+const UNASKED: Duration = IDLE_BOUND.saturating_mul(2);
 
 /// An endpoint's accepts; dropping it refuses new connections while running ones go on.
 pub struct Listener {
@@ -120,7 +122,7 @@ impl Http3 {
         let budget = self
             .app
             .budget()
-            .lease(floor)
+            .floor(floor, peer.ip())
             .map(|floor| self.budget(floor));
         let listener = self.clone();
         let Arrival {
@@ -175,7 +177,7 @@ impl Http3 {
         (budget, Arc::new(config))
     }
 
-    /// Serves requests until the connection ends: at noq's idle timeout, by the peer, or after a stop's drain.
+    /// Serves requests until noq's idle timeout, the peer's close, a stop's drain, or `UNASKED` without work.
     async fn serve(
         &self,
         quic: noq::Connection,
@@ -201,7 +203,12 @@ impl Http3 {
         // A child token: polling it never takes the server-wide token's waiter lock.
         let shutdown = self.app.shutdown().child_token();
         let mut stopping = pin!(shutdown.cancelled());
-        let mut stopped = false;
+        let mut retiring = pin!(connection.retire.cancelled());
+        let (mut stopped, mut retired) = (false, false);
+        let mut worked = Worked {
+            at: Instant::now(),
+            unacked: 0,
+        };
         loop {
             tokio::select! {
                 request = http.next() => match request? {
@@ -209,14 +216,39 @@ impl Http3 {
                     Some(request) => request.reject(),
                     None => return Ok(()),
                 },
-                Some(()) = running.next() => {}
+                Some(()) = running.next() => worked.at = Instant::now(),
                 () = &mut stopping, if !stopped => {
                     stopped = true;
                     http.shutdown(LaneEnding::Shutdown.webtransport_code(), LaneEnding::Shutdown.reason());
                 }
-                _ = tuning.tick() => send_window.tune(&quic, !running.is_empty(), self.app.budget()),
+                () = &mut retiring, if !retired => {
+                    retired = true;
+                    http.retire();
+                }
+                _ = tuning.tick() => {
+                    send_window.tune(&quic, !running.is_empty(), self.app.budget());
+                    if worked.lapsed(Instant::now(), !running.is_empty(), quic.send_buffered_bytes()) {
+                        quic.close(http3::Code::H3_NO_ERROR.into(), b"");
+                        return Ok(());
+                    }
+                }
             }
         }
+    }
+}
+
+/// When a connection last worked: ran a request, or saw its unacknowledged reply bytes change.
+struct Worked {
+    at: Instant,
+    unacked: u64,
+}
+
+impl Worked {
+    fn lapsed(&mut self, now: Instant, running: bool, unacked: u64) -> bool {
+        if running || unacked != self.unacked {
+            (self.at, self.unacked) = (now, unacked);
+        }
+        now.duration_since(self.at) >= UNASKED
     }
 }
 
@@ -228,4 +260,37 @@ fn ended_normally(error: &http3::Error) -> bool {
             http3::Error::Connection { local: false, .. }
                 | http3::Error::Transport(noq::ConnectionError::TimedOut)
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_connection_works_while_a_request_runs_or_its_reply_tail_moves() {
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        let mut worked = Worked {
+            at: start,
+            unacked: 0,
+        };
+        assert!(!worked.lapsed(at(30), true, 4 << 20), "a request runs");
+        for (secs, unacked) in [(40, 2 << 20), (80, 1 << 20), (130, 1)] {
+            assert!(
+                !worked.lapsed(at(secs), false, unacked),
+                "a tail moving at {secs} s"
+            );
+        }
+        assert!(!worked.lapsed(at(189), false, 1));
+        assert!(
+            worked.lapsed(at(190), false, 1),
+            "a tail stalled for a minute"
+        );
+        let mut quiet = Worked {
+            at: start,
+            unacked: 0,
+        };
+        assert!(!quiet.lapsed(at(59), false, 0));
+        assert!(quiet.lapsed(at(60), false, 0), "nothing ran nor waited");
+    }
 }

@@ -23,7 +23,7 @@ NAMING = ("scripts/legal/rust.py", "scripts/ci/workflow_policy.py")
 
 TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
-    "ci.yml": {"pull_request", "push", "schedule"},
+    "ci.yml": {"merge_group", "pull_request", "push", "schedule"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
 }
@@ -75,7 +75,7 @@ CONTEXT = {
         "REQUEST_RUN_ID": "github.event.workflow_run.id",
     },
     "run: python3 scripts/ci/release.py publish": {
-        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
+        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha", "DIGEST": "needs.verify.outputs.digest",
     },
     # What the approved job rechecks and publishes comes only from the verify job.
     "run: python3 scripts/ci/release.py recheck": {

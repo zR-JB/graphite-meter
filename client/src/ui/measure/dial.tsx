@@ -232,6 +232,8 @@ export function Dial(props: {
       const ended = ending();
       if (run.preparing())
         return { status: statusLabel(live.preparation(), phase(), undefined), tone: "preparation" };
+      if (live.preparation() === "waiting")
+        return { status: PHASE.waiting, tone: "preparation", hint: DIAL.otherTab };
       if (refused) return { status: refused.status, tone: "error", hint: refused.detail };
       if (ended) return { status: ended.status, tone: ended.tone, hint: ended.hint };
       const quiet = run.live()?.quietMs;
@@ -240,16 +242,17 @@ export function Dial(props: {
       if (silent !== null)
         return { hint: DIAL.noReplies(fmtDuration(silent, 0)), tip: TIP.noReplies };
       const known = PHASE_HINT[phase()];
-      return known ? { hint: known.text, tip: known.tip } : {};
+      return known ? { status: known.status, hint: known.text, tip: known.tip } : {};
     },
     (view) => `${view.status}|${view.tip ?? view.hint}`,
     (leaving) => (leaving.status || leaving.hint ? HANDOFF_OUT_MS : 0),
   );
-  // Preparation speaks only through its outcome; the cards announce a completed run.
+  // Preparation speaks only through its outcome or its wait; the cards announce a completed run.
   announceChanges(() => {
     const refused = refusal();
     const ended = ending();
     if (refused) return [refused.status, refused.detail].filter(Boolean).join(": ");
+    if (live.preparation() === "waiting") return `${PHASE.waiting}: ${DIAL.otherTab}`;
     if (ended) return [ended.status, ended.hint].filter(Boolean).join(": ");
     const now = phase();
     if (run.preparing() || now === "idle" || now === "connecting" || now === "complete") return "";
@@ -431,11 +434,14 @@ export function Dial(props: {
 
   // One ring per idle reply, never two at once: a steady link is seen to answer, a stalled one holds still.
   let beating = false;
-  const reply = computed(() =>
-    phase() === "latency"
-      ? (live.buckets().findLast((bucket) => bucket.medianRttMs !== null)?.startT ?? null)
-      : null,
-  );
+  const reply = computed(() => {
+    if (phase() === "latency")
+      return live.buckets().findLast((bucket) => bucket.medianRttMs !== null)?.startT ?? null;
+    // The latency warmup answers too, muted with the needle: one ring per new median of the shown server.
+    return warming() && run.stage() === "latency"
+      ? (run.warmupRtt()[live.focus() ?? ""] ?? null)
+      : null;
+  });
   effect(() => {
     if (reply() === null || beating || !motion.peek()) return;
     beating = true;

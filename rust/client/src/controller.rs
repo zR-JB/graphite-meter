@@ -4,7 +4,7 @@ use crate::{
     events::{Event, Events, SignInEnd, SignInPrompt},
     model::{Failure, Outcome},
     net::{
-        Client,
+        Client, Fault,
         approval::{self, Approval, Unapproved},
     },
     run::{
@@ -29,13 +29,6 @@ const GRACE: Duration = Duration::from_secs(5);
 /// Why a run without the interface does not sign in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "the server refused the approved sign-in; check its sign-in configuration";
-const INTERNAL: &str = "Internal error";
-
-/// A failure from a panic; `connection-lost` would send a server away for the client's own bug.
-pub fn internal() -> Failure {
-    Failure::new(FailureReason::PathFailed, INTERNAL)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Check(Config),
@@ -109,10 +102,19 @@ impl Controller {
         }
     }
 
-    pub async fn settled(&mut self) {
-        if let Some(current) = self.current.take() {
-            self.idle = current.task.await.unwrap_or_default();
+    pub async fn close(mut self) {
+        if let Some(current) = &self.current {
+            current.token.cancel();
         }
+        let closed = async {
+            if let Some(current) = self.current.take() {
+                self.idle = current.task.await.unwrap_or_default();
+            }
+            if let Some(prepared) = self.idle.prepared.take() {
+                prepared.end().await;
+            }
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(2), closed).await;
     }
 
     /// Cancels the current operation and starts one for `config` once it ended.
@@ -254,10 +256,13 @@ impl Work {
             for (origin, grant) in &state.grants {
                 client.grant(origin, grant);
             }
-            let mut prepared = self
+            let checked = self
                 .stop
-                .run_until_cancelled(prepare(config, client.clone()))
-                .await?;
+                .run_until_cancelled(prepare(config, client.clone()));
+            let Some(mut prepared) = checked.await else {
+                client.end_leases().await;
+                return None;
+            };
             let Some((origin, issuer)) = asking(&prepared, config.url.as_ref()) else {
                 return Some(prepared);
             };
@@ -275,13 +280,13 @@ impl Work {
                 refuse(&mut prepared, &refusal);
                 return Some(prepared);
             }
+            if let Ok(asked) = prepared {
+                asked.end().await;
+            }
             match self.sign_in(&origin, issuer, &client).await? {
                 Ok(grant) => state.grants.insert(origin.clone(), grant),
                 Err(failure) => return Some(Err(failure)),
             };
-            if let Ok(asked) = prepared {
-                asked.end().await;
-            }
             approved.push(origin);
         }
     }
@@ -344,7 +349,7 @@ async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Futur
     if AssertUnwindSafe(work).catch_unwind().await.is_ok() {
         return;
     }
-    let (failure, elapsed) = (internal(), started.elapsed());
+    let (failure, elapsed) = (Fault::Internal.failure(), started.elapsed());
     events.send(match kind {
         Kind::Run => Event::RunFinished {
             outcome: Outcome::Failed,
@@ -412,7 +417,7 @@ mod tests {
                 (Kind::Check, Event::CheckFailed(failure)) => failure,
                 (_, event) => panic!("{event:?}"),
             };
-            assert_eq!(failure.text, INTERNAL);
+            assert_eq!(failure, Fault::Internal.failure());
         }
         guarded(&events, Kind::Run, Instant::now(), async {}).await;
         assert!(

@@ -6,6 +6,7 @@ use graphite_meter_proto::{
     discovery::DEFAULT_STAGE_LIMIT,
     duration,
     flag::{self, Flag, Parsed},
+    text::quote,
 };
 use ipnet::IpNet;
 use std::{collections::BTreeSet, ffi::OsString, io::Write, time::Duration};
@@ -285,7 +286,7 @@ settings! {
         "label", "OIDC provider label";
 }
 
-/// Loads the environment, then the flags; `None` when usage was asked; flag errors go to `usage` before env errors.
+/// Loads the environment, then the flags; `None` when usage was asked; argument errors go to `usage` before env errors.
 pub(super) fn load(
     env: &dyn Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,
@@ -293,16 +294,19 @@ pub(super) fn load(
 ) -> Result<Option<Settings>, String> {
     let mut settings = Settings::default();
     let from_env = settings.load_env(env);
-    match flag::parse(SETTINGS, &mut settings, args) {
+    let refused = match flag::parse(SETTINGS, &mut settings, args) {
         Ok(Parsed::Help) => {
             let _ = write_usage(usage);
             return Ok(None);
         }
-        Ok(Parsed::Arguments(_)) => {}
-        Err(error) => {
-            let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage));
-            return Err(error);
-        }
+        Ok(Parsed::Arguments(rest)) => rest
+            .first()
+            .map(|stray| format!("unexpected argument {}", quote(&stray.to_string_lossy()))),
+        Err(error) => Some(error),
+    };
+    if let Some(error) = refused {
+        let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage));
+        return Err(error);
     }
     from_env?;
     settings.cover_stage_limit();
@@ -354,13 +358,40 @@ fn write_usage(usage: &mut dyn Write) -> std::io::Result<()> {
 Commands:
   version, --version  Print the version
   hash-password       Read a password twice on stdin and print its Argon2id hash
+  healthcheck         Exit 0 when this configuration's clear listener answers /probe within 2 s
   --legal             Print the reviewed project and dependency notices
 
 Options:
 ";
+    const ENVIRONMENT: &str = "
+Environment only:
+  GM_TRUSTED_PROXIES                 Proxy CIDRs allowed to supply X-Real-IP, X-Forwarded-Proto and X-Forwarded-Host
+  GM_AUTH_PASSWORD_HASH              Inline operator Argon2id PHC hash; prefer the file
+  GM_AUTH_OIDC_CLIENT_SECRET         Inline OIDC client secret; prefer the file
+  GM_SERVER_CATALOG                  Server catalog JSON
+  GM_SERVER_CATALOG_FILE             Absolute path of a server catalog JSON file
+  TZ                                 Time zone name for log times, such as Europe/Berlin (default: UTC)
+  HTTPS_PROXY, HTTP_PROXY, NO_PROXY  Proxy for OIDC requests
+  SSL_CERT_FILE, SSL_CERT_DIR        CA roots for OIDC requests (default: the system's)
+  TOKIO_WORKER_THREADS               Runtime worker threads (default: one per CPU)
+";
     write!(
         usage,
-        "{COMMANDS}{}",
+        "{COMMANDS}{}{ENVIRONMENT}",
         flag::options(SETTINGS, &Settings::default())
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn usage_names_every_variable_without_a_flag() {
+        let mut usage = Vec::new();
+        super::write_usage(&mut usage).unwrap();
+        let usage = String::from_utf8(usage).unwrap();
+        for flag in super::SETTINGS.iter().filter(|flag| flag.name.is_empty()) {
+            let env = flag.env.unwrap();
+            assert!(usage.contains(&format!("\n  {env} ")), "{env}");
+        }
+    }
 }

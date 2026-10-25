@@ -33,6 +33,7 @@ from trust import (
     require_pr,
     require_protected_environment,
 )
+from verify_oci import DIGEST_RE, PLATFORMS
 from workspace import PRERELEASE, STABLE, load, offer_name
 
 REQUEST_LIMIT = 2 * assets.OCI_LIMIT
@@ -385,16 +386,30 @@ def source_notice(release: Release) -> str:
     )
 
 
+def image_notice(release: Release, repository: str, digest: str) -> str:
+    platforms = " and ".join(f"linux/{arch}" for arch in sorted(PLATFORMS))
+    return (
+        f"## Image\n\n`ghcr.io/{repository.lower()}:{release.version}@{digest}` for {platforms}; "
+        "pin the digest to deploy exactly this release."
+    )
+
+
 def command_publish() -> None:
     """Publish the verified assets as the stable GitHub Release at its exact tag, idempotently."""
     repository = env("REPOSITORY")
     release = parse_release(env("TAG"), env_sha("TARGET_SHA"), 0)
     tag, base = release.tag, f"repos/{repository}"
+    if DIGEST_RE.fullmatch(digest := env("DIGEST")) is None:
+        gh.fail("invalid verified image digest")
     files = gh.runner_path("ASSETS_DIR")
     local = local_digests(files)
     if (expected := {*assets.release_assets(release.version), "checksums.txt"}) != set(local):
         gh.fail(f"release handoff holds {sorted(local)}; expected {sorted(expected)}")
-    notice = source_notice(release)
+    source = source_notice(release)
+    notice = f"{source}\n\n{image_notice(release, repository, digest)}"
+
+    def noticed(body: str) -> bool:
+        return body.startswith(notice) or (body.startswith(source) and "## Image" not in body)
 
     def require_tag() -> None:
         if (sha := converge(f"{tag} visibility", lambda: release_tag_target(repository, tag))) != release.sha:
@@ -408,8 +423,8 @@ def command_publish() -> None:
         if asset_digests(repository, gh.int_field(existing, "id", "release")) != local:
             gh.fail(f"{tag} is published but asset names/digests differ")
         require_tag()
-        if not str(existing.get("body") or "").startswith(notice):
-            gh.fail(f"{tag} is published but its source notice is missing or stale")
+        if not noticed(str(existing.get("body") or "")):
+            gh.fail(f"{tag} is published but its source or image notice is missing or stale")
         print(f"::notice::{tag} is already published with the expected source, assets and notice")
         return
     if existing is None:
@@ -423,8 +438,8 @@ def command_publish() -> None:
         gh.fail(f"release {release_id} must remain the {tag} draft during asset upload")
     body = str(current.get("body") or "")
     if not body.startswith(notice):
-        if "## Source" in body:
-            gh.fail(f"{tag} draft contains a stale source notice")
+        if "## Source" in body or "## Image" in body:
+            gh.fail(f"{tag} draft contains a stale source or image notice")
         edit: gh.JsonObject = {"body": f"{notice}\n\n{body}" if body else notice}
         current = gh.expect_object(gh.api(f"{base}/releases/{release_id}", method="PATCH", body=edit),
                                 "release")
@@ -467,8 +482,8 @@ def command_publish() -> None:
     final = converge(f"{tag} publication", published)
     require_tag()
     if not str(final.get("body") or "").startswith(notice):
-        gh.fail("published release lost its source notice")
-    print(f"::notice::published {tag} with verified SHA-256 assets and source notice")
+        gh.fail("published release lost its source or image notice")
+    print(f"::notice::published {tag} with verified SHA-256 assets, source and image notices")
 
 
 COMMANDS = {

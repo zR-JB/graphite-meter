@@ -355,9 +355,9 @@ mod tests {
             ("", "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249, websocket 7246"),
             ("-throughput-transport webtransport -latency-transport websocket",
                 "webtransport http3 7249, websocket 7246"),
-            ("-throughput-origin https://meter.example:7248 -stages down -loaded-latency=false",
+            ("-throughput-origin https://meter.example:7248 -stages down",
                 "fetch-stream http2 7248"),
-            ("-throughput-protocol http3 -stages up -loaded-latency=false",
+            ("-throughput-protocol http3 -stages up",
                 "fetch-stream http3 7249, webtransport http3 7249"),
             ("-latency-transport webtransport -stages ping",
                 "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249"),
@@ -385,7 +385,7 @@ mod tests {
         }
         let elsewhere = |args| paths(args, "https://meter.example", &native, &own);
         assert_eq!(
-            elsewhere("-stages down -loaded-latency=false").unwrap(),
+            elsewhere("-stages down").unwrap(),
             "webtransport http3 7249"
         );
         let several = "several throughput origins are offered; select one";
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_reuses_a_whole_check_with_its_key_for_30_s() {
+    fn a_run_reuses_a_whole_check_with_its_key_for_20_s() {
         let at = Instant::now();
         let client = Client::new(false, Arc::new(Pool::inline()));
         let (key, catalog) = (config("-server a -stages down").key(), Arc::new([]));
@@ -437,7 +437,7 @@ mod tests {
             servers: vec![server("a", 30, None)],
         };
         let longer = config("-server a -stages down -download-duration 1m -warmup 2s").key();
-        let reuse = Duration::from_secs(30);
+        let reuse = Duration::from_secs(20);
         assert!(prepared.reusable(&longer, at + reuse));
         assert!(!prepared.reusable(&longer, at + reuse + Duration::from_millis(1)));
         assert!(!prepared.reusable(&config("-server a -stages down,up").key(), at));

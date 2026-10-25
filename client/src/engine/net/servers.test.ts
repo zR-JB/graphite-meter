@@ -1,5 +1,5 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
-import { signal } from "../../lib/signal";
+import { batch, signal } from "../../lib/signal";
 import { catalog } from "../../protocol/documents";
 import type { TestConfig } from "../types";
 import {
@@ -39,6 +39,7 @@ async function load(
     transports: { ...CONFIG.transports, ...transports },
   });
   const active = signal(true);
+  const busy = signal(false);
   const online = signal(true);
   const servers = createServers({
     page,
@@ -46,6 +47,7 @@ async function load(
     config,
     setTransports: (next) => config.set({ ...config.peek(), transports: next }),
     active,
+    busy,
     hidden: signal(false),
     online,
     latencyPin: signal(null),
@@ -63,7 +65,7 @@ async function load(
       (error: Error) => error.name,
     );
   const readiness = (id = "self") => servers.views.peek().get(id)?.readiness;
-  return { servers, config, active, online, prepare, readiness };
+  return { servers, config, active, busy, online, prepare, readiness };
 }
 
 const PEER = "https://peer.example";
@@ -225,6 +227,38 @@ test("a catalog reload during Start supersedes it rather than running on closed 
   await servers.load();
   await net!.advance(1_000);
   expect(await pending).toBe("AbortError");
+});
+
+test("a selection made while a test starts or runs waits for it to go", async () => {
+  const other = "https://other.example";
+  const { servers, active, busy } = await load((url) =>
+    url.pathname === "/servers"
+      ? {
+          body: { ...HOME, servers: [...HOME.servers, { id: "other", url: other, name: "Other" }] },
+        }
+      : url.pathname === "/preflight"
+        ? { body: preflight([h(".", "http1")], [ws(".")]) }
+        : { body: PROBE, hop: "http/1.1" },
+  );
+  batch(() => {
+    active.set(false);
+    busy.set(true);
+  });
+  expect(servers.apply(["self", "other"])).toBe(true);
+  expect([servers.selected(), servers.upcoming(), servers.waiting()]).toEqual([
+    ["self"],
+    ["self", "other"],
+    true,
+  ]);
+  batch(() => {
+    busy.set(false);
+    active.set(true);
+  });
+  await Promise.resolve();
+  expect([servers.selected(), servers.waiting()]).toEqual([["self", "other"], false]);
+  busy.set(true);
+  servers.apply(["self", "other"]);
+  expect(servers.waiting()).toBe(false);
 });
 
 test("a reloaded catalog that no longer allows the chosen origin keeps the protocol it named", async () => {

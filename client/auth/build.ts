@@ -173,7 +173,7 @@ async function generated(): Promise<Map<string, string>> {
     "auth.css": css,
     "theme.js": await themeScript(),
     "pending.js": await classicScript(`import { install } from "./pending"; install(window);`),
-    "README.md":
+    README:
       "client/auth/build.ts makes these files and client/public/favicon.svg: edit its sources and run `bun run build:auth` in client.\n",
     "icon.html": `<link rel="icon" href="data:image/svg+xml;base64,${btoa(svg)}">`,
     "brand.html": BRAND_LINE,

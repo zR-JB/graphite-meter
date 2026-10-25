@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { SignInRequired, StageFailure, type StageEvents, type StageSetup } from "../types";
-import { incoherence, type RunResult } from "./result";
+import { grid, incoherence, type CellStatus, type RunResult } from "./result";
 import { Run, type RunEvent, type RunOptions, type RunPlan } from "./run";
 import type { Activity, Stage } from "./schedule";
 import { FakeClock, prepared, resources, type Peer } from "./fakes.testutil";
@@ -15,6 +15,7 @@ function harness(
     loadedLatency?: boolean;
     deal?: (activity: Activity) => void;
     mint?: RunOptions["mint"];
+    dropped?: RunOptions["dropped"];
   } = {},
 ) {
   const clock = new FakeClock();
@@ -57,7 +58,7 @@ function harness(
       run = new Run({
         servers: peers.map((peer) => prepared(peer.id, peer.latency !== false, peer.signedOut)),
         focus: options.focus ?? peers[0]!.id,
-        dropped: [],
+        dropped: options.dropped ?? [],
         plan,
         open: (setup) => {
           const { activity, server, endsIn, uploadId } = setup;
@@ -109,6 +110,22 @@ function harness(
   };
 }
 
+/** Each selected server's cells as `status` or `status: reason in stage`. */
+const cells = (result: RunResult) =>
+  Object.fromEntries(
+    grid(result).rows.map(({ server, cells }) => [
+      server.id,
+      Object.values(cells).map(({ status, cause }) =>
+        cause ? `${status}: ${cause.reason} in ${cause.stage}` : status,
+      ),
+    ]),
+  );
+const columns = (result: RunResult): CellStatus[] => Object.values(grid(result).columns);
+const stageEnds = (events: RunEvent[]) =>
+  Object.fromEntries(
+    events.flatMap((event) => (event.type === "stageEnd" ? [[event.stage, event.status]] : [])),
+  );
+
 /** Lanes report at the end of each 20 ms period, so rates are within 5%. */
 const near = (value: number | undefined, expected: number) =>
   expect(Math.abs((value ?? 0) / expected - 1)).toBeLessThan(0.05);
@@ -142,20 +159,33 @@ function setup(...args: Parameters<typeof harness>) {
   return h;
 }
 
-test("warmup probes never enter a measured population", async () => {
+test("warmup replies move the live round trip and never enter a bucket, a summary or the result", async () => {
   const h = setup(
     [
       {
         id: "self",
-        prepare: (_, events) => later(50, () => probe(900, 5)(events)),
+        prepare: (_, events) => {
+          later(50, () => events.warmupReplies([900, 900, 900, 900, 900]));
+          later(100, () => events.warmupReplies([700, 700, 700]));
+          later(300, () => events.warmupReplies([500]));
+        },
         measure: probe(10, 4),
       },
     ],
     { latency: true },
-    { warmupMs: 200, latencyMs: 400 },
+    { warmupMs: 400, latencyMs: 400 },
   );
   h.start();
-  expect((await h.result()).latencyByStage.latency).toMatchObject({ probeCount: 4, maxMs: 10 });
+  const result = await h.result();
+  expect(result.latencyByStage.latency).toMatchObject({ probeCount: 4, maxMs: 10 });
+  // The first replies show at once, later ones as one median per 200 ms.
+  expect(h.events.flatMap((event) => (event.type === "warmupReply" ? [event.rttMs] : []))).toEqual([
+    900, 700,
+  ]);
+  for (const event of h.events) {
+    if (event.type === "latency") expect(event.bucket.maxRttMs).toBeLessThan(100);
+    if (event.type === "summary") expect(event.summary?.maxMs ?? 0).toBeLessThan(100);
+  }
 });
 
 test("loaded latency ends with the stage's window, however late its final checkpoint answers", async () => {
@@ -390,8 +420,11 @@ test("a server lost in the latency stage is not prepared for the later stages", 
     { serverId: "d", stage: "latency", scope: "latency", reason: "path-failed" },
     { serverId: "a", stage: "latency", scope: "latency" },
     { serverId: "c", stage: "latency", scope: "latency" },
+    // The survivor answered no probe, so it has no latency of its own.
+    { serverId: "b", stage: "latency", reason: "insufficient-evidence" },
   ]);
-  expect(stages.download).toBe("complete");
+  // Measured without three of its four servers, Download is partial.
+  expect(stages.download).toBe("partial");
 });
 
 test("server failure text is bounded and dropped when it could disguise itself", async () => {
@@ -426,13 +459,19 @@ test("several servers that all fail end the run; a sole server skips to its next
   const result = await h.result();
   expect(h.phases()).not.toContain("upload");
   expect(result.stages).toMatchObject({ download: "failed", upload: "failed" });
+  // Upload never began: each server's own Download failure is why it was not reached.
   expect(
     result.multiServer.failures.map(({ serverId, stage, reason }) => [serverId, stage, reason]),
   ).toEqual([
     ["a", "download", "connection-lost"],
     ["b", "download", "connection-lost"],
-    ["a", "upload", "connection-lost"],
-    ["b", "upload", "connection-lost"],
+  ]);
+  expect(columns(result)).toEqual(["skipped", "failed", "unreached", "skipped"]);
+  expect(cells(result).a).toEqual([
+    "skipped",
+    "failed: connection-lost in download",
+    "unreached: connection-lost in download",
+    "skipped",
   ]);
   expect(result.outcome).toBe("incomplete");
   expect(result.multiServer.participants).toEqual([]);
@@ -446,6 +485,12 @@ test("several servers that all fail end the run; a sole server skips to its next
   sole.start();
   const skipped = await sole.result();
   expect(skipped.stages).toMatchObject({ download: "failed", upload: "complete" });
+  expect(cells(skipped).self).toEqual([
+    "skipped",
+    "failed: connection-lost in download",
+    "complete",
+    "skipped",
+  ]);
   expect(skipped.outcome).toBe("incomplete");
 });
 
@@ -461,6 +506,9 @@ test("a latency-only failure keeps both throughput participants", async () => {
   expect(result.multiServer.participants).toEqual(["a", "b"]);
   near(result.download?.reportedBytesPerSec, 4_000);
   expect(result.multiServer.failures).toMatchObject([{ serverId: "a", scope: "latency" }]);
+  // Its loaded latency is lost, not its download: the cell is complete, the run partial.
+  expect(cells(result).a).toEqual(["skipped", "complete", "skipped", "skipped"]);
+  expect(result.stages.download).toBe("complete");
   expect(result.outcome).toBe("partial");
 });
 
@@ -492,6 +540,34 @@ test("a throughput dropout reports discarded loaded probes before the server is 
     probeCount: 1,
   });
   near(result.download?.reportedBytesPerSec, 3_000);
+});
+
+test("a server dropped at Start reads not reached in every stage, so each stage and the run are partial", async () => {
+  const bergen = { id: "c", name: "Bergen", url: "https://c.example" };
+  const h = setup(
+    two({ measure: probe(10, 4) }, { measure: probe(10, 4) }),
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
+    { dropped: [{ server: bergen, reason: "server-capacity", message: "Bergen is at capacity" }] },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.selection.map(({ id }) => id)).toEqual(["a", "b", "c"]);
+  expect(cells(result)).toEqual({
+    a: ["complete", "complete", "skipped", "skipped"],
+    b: ["complete", "complete", "skipped", "skipped"],
+    c: [
+      "unreached: server-capacity in start",
+      "unreached: server-capacity in start",
+      "skipped",
+      "skipped",
+    ],
+  });
+  expect(grid(result).rows[2]!.cells.latency.cause?.message).toBe("Bergen is at capacity");
+  expect(result.stages).toMatchObject({ latency: "partial", download: "partial" });
+  expect(stageEnds(h.events)).toEqual({ latency: "partial", download: "partial" });
+  expect(result.outcome).toBe("partial");
+  near(result.download?.reportedBytesPerSec, 4_000);
 });
 
 test("a server that cannot prepare is dropped; the run fails only when none survive", async () => {
@@ -651,8 +727,20 @@ test("a server that left the run reports the stages it never began as not run, w
     { downloadMs: 1_000, uploadMs: 1_000 },
   );
   h.start();
-  const { multiServer, stages } = await h.result();
-  expect(stages.upload).toBe("complete");
+  const result = await h.result();
+  const { multiServer, stages } = result;
+  expect(stages.upload).toBe("partial");
+  // The live view hears the same word the result keeps.
+  expect(stageEnds(h.events)).toEqual({ download: "partial", upload: "partial" });
+  expect(cells(result)).toEqual({
+    a: [
+      "skipped",
+      "failed: connection-lost in download",
+      "unreached: connection-lost in download",
+      "skipped",
+    ],
+    b: ["skipped", "complete", "complete", "skipped"],
+  });
   expect(multiServer.failures.map(({ serverId, stage }) => [serverId, stage])).toEqual([
     ["a", "download"],
   ]);
@@ -662,7 +750,76 @@ test("a server that left the run reports the stages it never began as not run, w
   ]);
 });
 
-test("ending for sign-in keeps what was measured and names the reason for each unfinished stage", async () => {
+test("a server not reached names its latest failure before the stage, not its first", async () => {
+  const h = setup(
+    two(
+      {
+        measure: (events, { stage }) => {
+          if (stage === "latency") later(100, () => events.failed("protocol-error", "odd reply"));
+          if (stage === "download") fail(200)(events);
+        },
+      },
+      { measure: probe(10, 4) },
+    ),
+    { latency: true, download: true, upload: true },
+    { latencyMs: 400, downloadMs: 1_000, uploadMs: 1_000 },
+    { focus: "b" },
+  );
+  h.start();
+  const result = await h.result();
+  expect(cells(result).a).toEqual([
+    "failed: protocol-error in latency",
+    "failed: connection-lost in download",
+    "unreached: connection-lost in download",
+    "skipped",
+  ]);
+});
+
+test("a server with no latency of its own fails its latency stage, coherently", async () => {
+  const timedOut = (events: StageEvents) =>
+    events.probes(
+      Array.from({ length: 4 }, () => ({
+        rttMs: 0,
+        timedOut: true,
+        handlingMs: null,
+        observedAt: clock.t,
+        inWindow: true,
+      })),
+    );
+  const silent = setup(
+    two(
+      { measure: probe(10, 4) },
+      { measure: (events, { stage }) => void (stage === "latency" && timedOut(events)) },
+    ),
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
+  );
+  silent.start();
+  const result = await silent.result();
+  expect(cells(result).b).toEqual([
+    "failed: insufficient-evidence in latency",
+    "complete",
+    "skipped",
+    "skipped",
+  ]);
+  expect([result.stages.latency, result.outcome]).toEqual(["partial", "partial"]);
+
+  // A focus without a latency path is charged for the stage it could not run.
+  const pathless = setup(
+    two({ latency: false }, { measure: probe(10, 4) }),
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
+  );
+  pathless.start();
+  expect(cells(await pathless.result()).a).toEqual([
+    "failed: insufficient-evidence in latency",
+    "complete",
+    "skipped",
+    "skipped",
+  ]);
+});
+
+test("ending for sign-in keeps what was measured; the stage it ends in names the reason, later ones were not reached", async () => {
   const h = setup(
     [{ id: "self", rate: 2 }],
     { download: true, upload: true },
@@ -676,7 +833,12 @@ test("ending for sign-in keeps what was measured and names the reason for each u
   expect(result.stages).toMatchObject({ download: "partial", upload: "failed" });
   expect(result.multiServer.failures.map(({ stage, reason }) => [stage, reason])).toEqual([
     ["download", "sign-in-required"],
-    ["upload", "sign-in-required"],
+  ]);
+  expect(cells(result).self).toEqual([
+    "skipped",
+    "partial: sign-in-required in download",
+    "unreached: sign-in-required in download",
+    "skipped",
   ]);
 });
 

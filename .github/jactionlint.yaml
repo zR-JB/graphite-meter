@@ -6,3 +6,6 @@ ignores:
   - rule: concurrency-limits
     file: .github/workflows/release.yml
     reason: only the publish job deploys, under its own concurrency group
+rules:
+  dependabot-cooldown:
+    days: 2

@@ -46,7 +46,7 @@ impl Login<'_> {
             "proxy" => (
                 "err",
                 "This server cannot tell your address from its reverse proxy. Ask its operator to check the proxy's \
-                 X-Real-IP."
+                 X-Real-IP and X-Forwarded-For."
                     .into(),
             ),
             "provider" if self.password => ("warn", format!("{unavailable} Sign in with the operator password.")),

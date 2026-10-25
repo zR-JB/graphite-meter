@@ -38,6 +38,7 @@ use std::{
 };
 use tokio::{
     runtime::Handle,
+    sync::watch,
     time::{Instant, timeout, timeout_at},
 };
 
@@ -56,6 +57,8 @@ struct Shared {
     verify: Verify,
     grants: Mutex<Grants>,
     leases: Mutex<Leases>,
+    /// Subscribed by each unanswered lease request, so its lease is known before `end_leases` ends them.
+    unanswered: watch::Sender<()>,
     runtimes: Arc<Pool>,
 }
 
@@ -123,6 +126,7 @@ impl Client {
             verify,
             grants: Mutex::default(),
             leases: Mutex::default(),
+            unanswered: watch::Sender::new(()),
             runtimes,
         });
         Self {
@@ -134,14 +138,6 @@ impl Client {
     /// Where latency probes run, apart from the runtimes that carry transfers.
     pub fn latency_runtime(&self) -> Handle {
         self.shared.runtimes.latency()
-    }
-
-    /// The same client with control connections of its own, apart from those its lanes may share.
-    pub fn apart(&self) -> Self {
-        Self {
-            shared: self.shared.clone(),
-            connections: Arc::default(),
-        }
     }
 
     pub async fn json<T>(
@@ -226,8 +222,7 @@ impl Client {
         }
     }
 
-    /// Takes or resizes `server`'s lease at its discovery origin, presented from then on to it and `targets`; answers
-    /// what it holds and the upload IDs `grant` asks to mint.
+    /// Takes or resizes `server`'s lease for it and `targets`; answers what it holds and the upload IDs `grant` mints.
     pub async fn lease(
         &self,
         server: &Origin,
@@ -245,20 +240,26 @@ impl Client {
             body: body.into(),
             ..Request::new(Method::POST, server, Route::Lease)
         };
-        let lease = self
-            .json(Protocol::Negotiated, request, Lease::decode)
-            .await?;
-        let mut token = HeaderValue::from_str(&lease.token)
-            .map_err(|_| Fault::Malformed("the lease token fits no header".into()))?;
-        token.set_sensitive(true);
-        let held = LeaseRequest {
-            uploads: 0,
-            ..grant
-        };
-        lock(&self.shared.leases)
-            .held
-            .insert(server.clone(), (token, held));
-        Ok(lease)
+        let (client, server) = (self.clone(), server.clone());
+        let unanswered = self.shared.unanswered.subscribe();
+        let asked = tokio::spawn(async move {
+            let _unanswered = unanswered;
+            let lease = client.json(Protocol::Negotiated, request, Lease::decode);
+            lease.await.and_then(|lease| {
+                let mut token = HeaderValue::from_str(&lease.token)
+                    .map_err(|_| Fault::Malformed("the lease token fits no header".into()))?;
+                token.set_sensitive(true);
+                let held = LeaseRequest {
+                    uploads: 0,
+                    ..grant
+                };
+                lock(&client.shared.leases)
+                    .held
+                    .insert(server, (token, held));
+                Ok(lease)
+            })
+        });
+        asked.await.expect("lease requests do not panic")
     }
 
     /// A new upload ID, minted with `server`'s lease, which keeps what it holds.
@@ -283,24 +284,27 @@ impl Client {
         id.ok_or_else(|| Fault::Malformed("the lease minted no upload ID".into()))
     }
 
-    /// Ends every lease this client holds, each within a second.
+    /// Ends every lease this client holds or asks for, each within a second of its answer, even once its caller left.
     pub async fn end_leases(&self) {
-        let servers: Vec<_> = lock(&self.shared.leases).held.keys().cloned().collect();
-        let ended = servers.into_iter().map(|server| async move {
-            let request = Request::new(Method::DELETE, &server, Route::Lease);
-            let _ = timeout(
-                Duration::from_secs(1),
-                self.control(Protocol::Negotiated, request),
-            )
-            .await;
-            lock(&self.shared.leases).held.remove(&server);
+        let client = self.clone();
+        let ended = tokio::spawn(async move {
+            client.shared.unanswered.closed().await;
+            let servers: Vec<_> = lock(&client.shared.leases).held.keys().cloned().collect();
+            let client = &client;
+            let ended = servers.into_iter().map(|server| async move {
+                let request = Request::new(Method::DELETE, &server, Route::Lease);
+                let deleted = client.control(Protocol::Negotiated, request);
+                let _ = timeout(Duration::from_secs(1), deleted).await;
+                lock(&client.shared.leases).held.remove(&server);
+            });
+            futures_util::future::join_all(ended).await;
         });
-        futures_util::future::join_all(ended).await;
+        let _ = ended.await;
     }
 
-    /// Whether this client holds a lease, which `end_leases` would end.
+    /// Whether this client holds or asks for a lease, which `end_leases` would end.
     pub fn leased(&self) -> bool {
-        !lock(&self.shared.leases).held.is_empty()
+        self.shared.unanswered.receiver_count() > 0 || !lock(&self.shared.leases).held.is_empty()
     }
 
     async fn exchange<T>(

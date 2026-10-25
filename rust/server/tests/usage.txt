@@ -4,6 +4,7 @@ Usage: graphite-meter-server [options]
 Commands:
   version, --version  Print the version
   hash-password       Read a password twice on stdin and print its Argon2id hash
+  healthcheck         Exit 0 when this configuration's clear listener answers /probe within 2 s
   --legal             Print the reviewed project and dependency notices
 
 Options:
@@ -43,3 +44,14 @@ Options:
   --auth-oidc-client-secret-file <file>          File containing the OIDC client secret (env: GM_AUTH_OIDC_CLIENT_SECRET_FILE)
   --auth-oidc-allowed-groups <groups>            Comma-separated case-sensitive OIDC groups (env: GM_AUTH_OIDC_ALLOWED_GROUPS)
   --auth-oidc-provider-name <label>              OIDC provider label (env: GM_AUTH_OIDC_PROVIDER_NAME) (default: Authelia)
+
+Environment only:
+  GM_TRUSTED_PROXIES                 Proxy CIDRs allowed to supply X-Real-IP, X-Forwarded-Proto and X-Forwarded-Host
+  GM_AUTH_PASSWORD_HASH              Inline operator Argon2id PHC hash; prefer the file
+  GM_AUTH_OIDC_CLIENT_SECRET         Inline OIDC client secret; prefer the file
+  GM_SERVER_CATALOG                  Server catalog JSON
+  GM_SERVER_CATALOG_FILE             Absolute path of a server catalog JSON file
+  TZ                                 Time zone name for log times, such as Europe/Berlin (default: UTC)
+  HTTPS_PROXY, HTTP_PROXY, NO_PROXY  Proxy for OIDC requests
+  SSL_CERT_FILE, SSL_CERT_DIR        CA roots for OIDC requests (default: the system's)
+  TOKIO_WORKER_THREADS               Runtime worker threads (default: one per CPU)

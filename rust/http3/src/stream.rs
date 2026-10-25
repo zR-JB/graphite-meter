@@ -74,6 +74,7 @@ impl RequestStream {
                 method: http::Method::default(),
                 done: false,
                 left: u64::MAX,
+                failed: None,
             },
         }
     }
@@ -88,9 +89,9 @@ impl RequestStream {
     }
 
     pub(crate) fn abort(&mut self, code: Code) -> Error {
-        self.recv.stop(code);
+        let error = self.recv.abort(code);
         self.send.reset(code);
-        Error::Protocol(code)
+        error
     }
 
     pub(crate) fn shared(&self) -> &Arc<Shared> {
@@ -113,6 +114,7 @@ pub struct RecvHalf {
     done: bool,
     /// Wire bytes the peer may still send, beyond which the stream is H3_EXCESSIVE_LOAD.
     pub(crate) left: u64,
+    failed: Option<Error>,
 }
 
 impl RecvHalf {
@@ -166,6 +168,9 @@ impl RecvHalf {
     }
 
     fn poll_event(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Event>, Error>> {
+        if let Some(failed) = &self.failed {
+            return Poll::Ready(Err(failed.clone()));
+        }
         loop {
             let unread = self.input.len();
             let event = self.message.next(&mut self.input);
@@ -216,17 +221,19 @@ impl RecvHalf {
 
     /// Frame, ID and QPACK violations close the connection; the rest end only this stream.
     pub(crate) fn abort(&mut self, code: Code) -> Error {
-        if matches!(
+        let error = if matches!(
             code,
             Code::H3_FRAME_UNEXPECTED
                 | Code::H3_FRAME_ERROR
                 | Code::H3_ID_ERROR
                 | Code::QPACK_DECOMPRESSION_FAILED
         ) {
-            return self.shared.close(code);
-        }
-        self.stop(code);
-        Error::Protocol(code)
+            self.shared.close(code)
+        } else {
+            self.stop(code);
+            Error::Protocol(code)
+        };
+        self.failed.get_or_insert(error).clone()
     }
 
     fn finished_unread(&mut self) -> bool {

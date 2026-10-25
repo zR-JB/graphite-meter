@@ -2,13 +2,18 @@
 import "./settings.css";
 import type { App } from "../../app/app";
 import { DEFAULT_CONFIG, readPreferences } from "../../app/preferences";
-import { BROWSER_POOL, MAX_STREAMS, normalizeStreamCount } from "../../engine/net/streams";
+import {
+  MAX_STREAMS,
+  normalizeStreamCount,
+  planError,
+  streamNotes,
+} from "../../engine/net/streams";
 import { parseSelection } from "../../engine/net/paths";
 import type { PingCadence, TestConfig } from "../../engine/types";
-import { Show } from "../../lib/dom";
+import { For, Show } from "../../lib/dom";
 import { computed, effect, signal, untrack } from "../../lib/signal";
 import { fromRateUnit, rateUnit, toRateUnit } from "../../view/format";
-import { CADENCE, READINESS, READINESS_TIP, TIP } from "../../view/words";
+import { CADENCE, NEXT_TEST, READINESS, READINESS_TIP, TIP } from "../../view/words";
 import { announce, announceChanges } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import { Icon } from "../kit/icon";
@@ -32,6 +37,12 @@ export interface Edits {
   notice(group: Group): Node;
 }
 
+const GROUP_KEYS: Partial<Record<Group, readonly (keyof TestConfig)[]>> = {
+  connection: ["transports"],
+  probes: ["pingCadence", "loadedPingCadence", "skipLoadedLatencyWhenStageOff"],
+  transfers: ["transferStreams", "experimentalDatagramThroughput"],
+};
+
 const REFUSED = "This change cannot apply to the running test.";
 /** The maximum keeps one prefix, so a typed number never changes meaning. */
 const MAXIMUM_TIER = 2;
@@ -46,7 +57,7 @@ const DATAGRAM_DETAIL =
 const DISPLAY_DEFAULTS = readPreferences(null);
 
 export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node {
-  const config = app.preferences.config;
+  const config = app.run.upcoming;
   const { servers, run } = app;
   const locked = computed(() => run.running() || run.preparing());
   const custom = signal(false);
@@ -71,13 +82,23 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
       return false;
     },
     notice: (group) => (
-      <Show when={() => (refused()?.group === group ? refused()!.text : "")}>
-        {(text) => (
-          <p class="notice" data-tone="warn">
-            {text}
-          </p>
-        )}
-      </Show>
+      <>
+        <Show when={() => (refused()?.group === group ? refused()!.text : "")}>
+          {(text) => (
+            <p class="notice" data-tone="warn">
+              {text}
+            </p>
+          )}
+        </Show>
+        <Show
+          when={() =>
+            (GROUP_KEYS[group] ?? []).some((key) => key in run.waiting()) ||
+            (group === "connection" && servers.waiting())
+          }
+        >
+          {() => <p class="hint">{NEXT_TEST}</p>}
+        </Show>
+      </>
     ),
   };
   const configure = (group: Group, patch: Partial<TestConfig>) =>
@@ -98,6 +119,12 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
     if (!shell.shown("settings")) confirming.set(false);
   });
 
+  // The groups wait for the catalog's first answer, so the server list's length moves nothing; a retry keeps them.
+  let seen = false;
+  const answered = computed(() => (seen ||= !!servers.catalog() || !servers.loading()));
+  // Announced here, as the list that shows them mounts only once they may already be set.
+  announceChanges(() => (servers.unresolved().length ? "The saved selection has changed." : ""));
+  announceChanges(() => (servers.catalog() || servers.loading() ? "" : servers.loadError()));
   const readiness = computed(() => (app.blocker() ? "blocked" : servers.selectionState()));
   const badge = computed(() => READINESS[readiness()]);
   // Settings stays mounted: only a problem is worth interrupting for.
@@ -121,15 +148,12 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
   );
   const streams = (patch: Partial<TestConfig["transferStreams"]>) =>
     configure("transfers", { transferStreams: { ...config.peek().transferStreams, ...patch } });
-  const queued = computed(
-    () =>
-      forced() &&
-      config().transferStreams.count > BROWSER_POOL &&
-      servers.selected().some((id) => {
-        const target = servers.views().get(id)?.throughput.path?.target;
-        return target?.transport === "fetch-stream" && target.protocol === "http1";
-      }),
-  );
+  const planned = computed(() => {
+    const plans = servers.plans();
+    return plans.every((plan) => plan !== null)
+      ? { error: planError(config(), plans), notes: streamNotes(config(), plans) }
+      : { error: "", notes: [] };
+  });
   const datagrams = computed(() => {
     const selection = parseSelection(config().transports.throughputTarget);
     return (
@@ -138,7 +162,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
       (selection.kind === "origin" && selection.mechanism === "::wtdg")
     );
   });
-  announceChanges(servers.streamPlanError);
+  announceChanges(() => planned().error);
   announceChanges(() => (datagrams() ? `${DATAGRAM_NOTE} ${DATAGRAM_DETAIL}` : ""));
 
   let resetKey: HTMLButtonElement;
@@ -178,244 +202,249 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               {() => badge().label}
             </span>
           </div>
-          <ServerSelection app={app} locked={locked} />
-          <ConnectionPicker app={app} role="throughput" locked={locked} edits={edits} />
-          <ConnectionPicker app={app} role="latency" locked={locked} edits={edits} />
-          {edits.notice("connection")}
+          <Show when={answered}>
+            {() => [
+              <ServerSelection app={app} locked={locked} />,
+              <ConnectionPicker app={app} role="throughput" locked={locked} edits={edits} />,
+              <ConnectionPicker app={app} role="latency" locked={locked} edits={edits} />,
+              edits.notice("connection"),
+            ]}
+          </Show>
         </section>
 
-        <DurationGroup app={app} edits={edits} custom={custom} />
+        <Show when={answered}>
+          {() => (
+            <>
+              <DurationGroup app={app} edits={edits} custom={custom} />
 
-        <section class="group">
-          <h3>Display</h3>
-          <div class="kv">
-            <div class="units">
-              <span ref={tip(() => TIP.units)}>Units</span>
-              <Segments
-                label="Rate unit"
-                options={[
-                  { value: "bits", label: "Bits" },
-                  { value: "bytes", label: "Bytes" },
-                ]}
-                value={app.preferences.unitKind}
-                choose={(unitKind) => app.preferences.set({ unitKind })}
-              />
-              <Segments
-                label="Prefix scale"
-                options={[
-                  { value: "base10", label: "Decimal" },
-                  { value: "base2", label: "Binary" },
-                ]}
-                value={app.preferences.unitBase}
-                choose={(unitBase) => app.preferences.set({ unitBase })}
-              />
-            </div>
-            <div class="units">
-              <span ref={tip(() => TIP.explanations)}>Explanations</span>
-              <Segments
-                label="Explanations"
-                options={[
-                  { value: "hover", label: "On hover" },
-                  { value: "click", label: "On click" },
-                ]}
-                value={app.preferences.explanations}
-                choose={(explanations) => app.preferences.set({ explanations })}
-              />
-            </div>
-            <Switch
-              label="Show estimated wire rate"
-              tip={() => TIP.wireRate}
-              checked={app.preferences.showWireEstimates}
-              onToggle={(showWireEstimates) => app.preferences.set({ showWireEstimates })}
-            />
-            <Switch
-              label="Keyboard shortcuts"
-              tip={() => TIP.keyShortcuts}
-              checked={app.preferences.keyShortcuts}
-              onToggle={(keyShortcuts) => app.preferences.set({ keyShortcuts })}
-            />
-            <Switch
-              label="Scale throughput automatically"
-              tip={() => TIP.gaugeAuto}
-              checked={() => maximum() === "auto"}
-              // Fixing the scale keeps the chart's ceiling as it stands.
-              onToggle={(auto) =>
-                scale(auto ? "auto" : Math.max(1, Math.round(scales.peek().chartBytesPerSec)))
-              }
-            />
-            <Unfold when={() => maximum() !== "auto"}>
-              {() => (
-                <label>
-                  <span ref={tip(() => TIP.gaugeMax)}>Maximum</span>
-                  <span class="field-unit">
-                    <input
-                      type="number"
-                      min="1"
-                      value={() => String(shownMaximum())}
-                      onchange={(event) => {
-                        const input = event.currentTarget;
-                        const shown = shownMaximum.peek();
-                        const typed = input.valueAsNumber;
-                        const value = Number.isFinite(typed) && typed > 0 ? typed : shown;
-                        const bytes = Math.max(
-                          1,
-                          Math.round(fromRateUnit(value, units.peek(), MAXIMUM_TIER)),
-                        );
-                        input.value = String(value === shown || scale(bytes) ? value : shown);
-                      }}
-                      onkeydown={(event) => {
-                        // Escape drops a typed number first and keeps the sheet open; the next one closes it.
-                        const input = event.currentTarget;
-                        if (event.key !== "Escape" || input.value === String(shownMaximum.peek()))
-                          return;
-                        input.value = String(shownMaximum.peek());
-                        event.preventDefault();
-                      }}
+              <section class="group">
+                <h3>Display</h3>
+                <div class="kv">
+                  <div class="units">
+                    <span ref={tip(() => TIP.units)}>Units</span>
+                    <Segments
+                      label="Rate unit"
+                      options={[
+                        { value: "bits", label: "Bits" },
+                        { value: "bytes", label: "Bytes" },
+                      ]}
+                      value={app.preferences.unitKind}
+                      choose={(unitKind) => app.preferences.set({ unitKind })}
                     />
-                    <span class="unit">{() => rateUnit(units(), MAXIMUM_TIER)}</span>
-                  </span>
-                </label>
-              )}
-            </Unfold>
-          </div>
-          {edits.notice("display")}
-        </section>
+                    <Segments
+                      label="Prefix scale"
+                      options={[
+                        { value: "base10", label: "Decimal" },
+                        { value: "base2", label: "Binary" },
+                      ]}
+                      value={app.preferences.unitBase}
+                      choose={(unitBase) => app.preferences.set({ unitBase })}
+                    />
+                  </div>
+                  <div class="units">
+                    <span ref={tip(() => TIP.explanations)}>Explanations</span>
+                    <Segments
+                      label="Explanations"
+                      options={[
+                        { value: "hover", label: "On hover" },
+                        { value: "click", label: "On click" },
+                      ]}
+                      value={app.preferences.explanations}
+                      choose={(explanations) => app.preferences.set({ explanations })}
+                    />
+                  </div>
+                  <Switch
+                    label="Show estimated wire rate"
+                    tip={() => TIP.wireRate}
+                    checked={app.preferences.showWireEstimates}
+                    onToggle={(showWireEstimates) => app.preferences.set({ showWireEstimates })}
+                  />
+                  <Switch
+                    label="Keyboard shortcuts"
+                    tip={() => TIP.keyShortcuts}
+                    checked={app.preferences.keyShortcuts}
+                    onToggle={(keyShortcuts) => app.preferences.set({ keyShortcuts })}
+                  />
+                  <Switch
+                    label="Scale throughput automatically"
+                    tip={() => TIP.gaugeAuto}
+                    checked={() => maximum() === "auto"}
+                    // Fixing the scale keeps the chart's ceiling as it stands.
+                    onToggle={(auto) =>
+                      scale(auto ? "auto" : Math.max(1, Math.round(scales.peek().chartBytesPerSec)))
+                    }
+                  />
+                  <Unfold when={() => maximum() !== "auto"}>
+                    {() => (
+                      <label>
+                        <span ref={tip(() => TIP.gaugeMax)}>Maximum</span>
+                        <span class="field-unit">
+                          <input
+                            type="number"
+                            min="1"
+                            value={() => String(shownMaximum())}
+                            onchange={(event) => {
+                              const input = event.currentTarget;
+                              const shown = shownMaximum.peek();
+                              const typed = input.valueAsNumber;
+                              const value = Number.isFinite(typed) && typed > 0 ? typed : shown;
+                              const bytes = Math.max(
+                                1,
+                                Math.round(fromRateUnit(value, units.peek(), MAXIMUM_TIER)),
+                              );
+                              input.value = String(value === shown || scale(bytes) ? value : shown);
+                            }}
+                            onkeydown={(event) => {
+                              // Escape drops a typed number first and keeps the sheet open; the next one closes it.
+                              const input = event.currentTarget;
+                              if (
+                                event.key !== "Escape" ||
+                                input.value === String(shownMaximum.peek())
+                              )
+                                return;
+                              input.value = String(shownMaximum.peek());
+                              event.preventDefault();
+                            }}
+                          />
+                          <span class="unit">{() => rateUnit(units(), MAXIMUM_TIER)}</span>
+                        </span>
+                      </label>
+                    )}
+                  </Unfold>
+                </div>
+                {edits.notice("display")}
+              </section>
 
-        <section class="group">
-          <h3>History</h3>
-          <div class="kv">
-            <Switch
-              label="Save results in this browser"
-              tip={() => TIP.saveResults}
-              checked={app.saving}
-              onToggle={(on) =>
-                app.preferences.set({ resultHistoryPreference: on ? "enabled" : "disabled" })
-              }
-            />
-            <a
-              class="link-row"
-              href="#/history"
-              onclick={(event) => {
-                event.preventDefault();
-                shell.history(null, event.currentTarget);
-              }}
-            >
-              Open History
-              <Icon name="chevron" />
-            </a>
-          </div>
-        </section>
+              <section class="group">
+                <h3>History</h3>
+                <div class="kv">
+                  <Switch
+                    label="Save results in this browser"
+                    tip={() => TIP.saveResults}
+                    checked={app.saving}
+                    onToggle={(on) =>
+                      app.preferences.set({ resultHistoryPreference: on ? "enabled" : "disabled" })
+                    }
+                  />
+                  <a
+                    class="link-row"
+                    href="#/history"
+                    onclick={(event) => {
+                      event.preventDefault();
+                      shell.history(null, event.currentTarget);
+                    }}
+                  >
+                    Open History
+                    <Icon name="chevron" />
+                  </a>
+                </div>
+              </section>
 
-        <section class="group">
-          <h3>Latency probes</h3>
-          <div class="kv">
-            {CADENCE_ROWS.map(([key, label, explained]) => (
-              <div class="stacked">
-                <span ref={tip(() => explained)}>{label}</span>
-                <Segments
-                  label={label}
-                  options={CADENCES.map((value) => ({
-                    value,
-                    label: CADENCE[value].short,
-                    name: CADENCE[value].label,
-                  }))}
-                  value={() => config()[key]}
-                  disabled={locked}
-                  choose={(value) =>
-                    configure(
-                      "probes",
-                      key === "pingCadence" ? { pingCadence: value } : { loadedPingCadence: value },
-                    )
-                  }
-                />
-              </div>
-            ))}
-            <Switch
-              label="Skip loaded latency if the Latency stage is off"
-              tip={() => TIP.skipLoadedLatency}
-              checked={() => config().skipLoadedLatencyWhenStageOff}
-              disabled={locked}
-              onToggle={(skipLoadedLatencyWhenStageOff) =>
-                configure("probes", { skipLoadedLatencyWhenStageOff })
-              }
-            />
-          </div>
-          {edits.notice("probes")}
-        </section>
+              <section class="group">
+                <h3>Latency probes</h3>
+                <div class="kv">
+                  {CADENCE_ROWS.map(([key, label, explained]) => (
+                    <div class="stacked">
+                      <span ref={tip(() => explained)}>{label}</span>
+                      <Segments
+                        label={label}
+                        options={CADENCES.map((value) => ({
+                          value,
+                          label: CADENCE[value].short,
+                          name: CADENCE[value].label,
+                        }))}
+                        value={() => config()[key]}
+                        choose={(value) =>
+                          configure(
+                            "probes",
+                            key === "pingCadence"
+                              ? { pingCadence: value }
+                              : { loadedPingCadence: value },
+                          )
+                        }
+                      />
+                    </div>
+                  ))}
+                  <Switch
+                    label="Skip loaded latency if the Latency stage is off"
+                    tip={() => TIP.skipLoadedLatency}
+                    checked={() => config().skipLoadedLatencyWhenStageOff}
+                    onToggle={(skipLoadedLatencyWhenStageOff) =>
+                      configure("probes", { skipLoadedLatencyWhenStageOff })
+                    }
+                  />
+                </div>
+                {edits.notice("probes")}
+              </section>
 
-        <section class="group">
-          <h3>Transfers</h3>
-          <div class="kv">
-            <Switch
-              label="Exact stream count"
-              tip={() => TIP.forcedStreams}
-              checked={forced}
-              disabled={locked}
-              onToggle={(on) => streams({ mode: on ? "forced" : "auto" })}
-            />
-            <div class="units">
-              <span ref={tip(() => (forced() ? TIP.forcedStreamCount : TIP.autoStreamCount))}>
-                {streamLabel}
-              </span>
-              <Stepper
-                label={streamLabel}
-                value={() => config().transferStreams.count}
-                min={1}
-                max={() => MAX_STREAMS}
-                step={() => 1}
-                format={String}
-                parse={parseCount}
-                count
+              <section class="group">
+                <h3>Transfers</h3>
+                <div class="kv">
+                  <Switch
+                    label="Exact stream count"
+                    tip={() => TIP.forcedStreams}
+                    checked={forced}
+                    onToggle={(on) => streams({ mode: on ? "forced" : "auto" })}
+                  />
+                  <div class="units">
+                    <span ref={tip(() => (forced() ? TIP.forcedStreamCount : TIP.autoStreamCount))}>
+                      {streamLabel}
+                    </span>
+                    <Stepper
+                      label={streamLabel}
+                      value={() => config().transferStreams.count}
+                      min={1}
+                      max={() => MAX_STREAMS}
+                      step={() => 1}
+                      format={String}
+                      parse={parseCount}
+                      count
+                      onChange={(count) => streams({ count: normalizeStreamCount(count) })}
+                    />
+                  </div>
+                  <Switch
+                    label="Datagram throughput (experimental)"
+                    tip={() => TIP.datagramThroughput}
+                    checked={() => config().experimentalDatagramThroughput}
+                    onToggle={(experimentalDatagramThroughput) =>
+                      configure("transfers", { experimentalDatagramThroughput })
+                    }
+                  />
+                </div>
+                {edits.notice("transfers")}
+                <For each={() => planned().notes} by={(note) => note}>
+                  {(note) => <p class="hint">{note}</p>}
+                </For>
+                <Show when={() => planned().error}>
+                  {(text) => (
+                    <p class="notice" data-tone="warn">
+                      {text}
+                    </p>
+                  )}
+                </Show>
+                <Show when={datagrams}>
+                  {() => (
+                    <p class="notice" data-tone="warn">
+                      <span>
+                        <strong>{DATAGRAM_NOTE}</strong> {DATAGRAM_DETAIL}
+                      </span>
+                    </p>
+                  )}
+                </Show>
+              </section>
+
+              <button
+                class="btn btn-danger reset"
+                type="button"
                 disabled={locked}
-                onChange={(count) => streams({ count: normalizeStreamCount(count) })}
-              />
-            </div>
-            <Switch
-              label="Datagram throughput (experimental)"
-              tip={() => TIP.datagramThroughput}
-              checked={() => config().experimentalDatagramThroughput}
-              disabled={locked}
-              onToggle={(experimentalDatagramThroughput) =>
-                configure("transfers", { experimentalDatagramThroughput })
-              }
-            />
-          </div>
-          {edits.notice("transfers")}
-          <Show when={queued}>
-            {() => (
-              <p class="hint">
-                Browsers run {BROWSER_POOL} HTTP/1.1 requests per server at once. Streams past that
-                wait for one to finish.
-              </p>
-            )}
-          </Show>
-          <Show when={servers.streamPlanError}>
-            {(text) => (
-              <p class="notice" data-tone="warn">
-                {text}
-              </p>
-            )}
-          </Show>
-          <Show when={datagrams}>
-            {() => (
-              <p class="notice" data-tone="warn">
-                <span>
-                  <strong>{DATAGRAM_NOTE}</strong> {DATAGRAM_DETAIL}
-                </span>
-              </p>
-            )}
-          </Show>
-        </section>
-
-        <button
-          class="btn btn-danger reset"
-          type="button"
-          disabled={locked}
-          ref={(button) => (resetKey = button)}
-          onclick={() => confirming.set(true)}
-        >
-          Reset settings
-        </button>
+                ref={(button) => (resetKey = button)}
+                onclick={() => confirming.set(true)}
+              >
+                Reset settings
+              </button>
+            </>
+          )}
+        </Show>
       </div>
       <ConfirmDialog
         open={confirming}

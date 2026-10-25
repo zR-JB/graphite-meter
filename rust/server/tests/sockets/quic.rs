@@ -200,6 +200,37 @@ async fn only_admitted_uploads_hold_receive_credit_while_they_read() {
 }
 
 #[tokio::test]
+async fn the_last_upload_returns_its_credit_though_the_budget_is_full() {
+    let h3 = H3::start(&[]).await;
+    let budget = h3.server.budget.clone();
+    let idle = settled(&budget).await;
+    let connection = h3.connect(transport(None)).await;
+    let id = h3.server.upload_id().await;
+    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
+    upload
+        .send_data(bytes::Bytes::from_static(b"funded"))
+        .await
+        .unwrap();
+    assert!(settled(&budget).await - idle >= CONNECTION_CREDIT);
+    let _download = connection.send("GET", ENDLESS, b"").await;
+    settled(&budget).await;
+    let exhausted = exhaust(&budget, 0);
+    let full = budget.usage().used;
+    upload.finish().await.unwrap();
+    assert_eq!(answer.response().await.unwrap().status(), 200);
+    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":6}"#);
+    let returned = async {
+        while budget.usage().used > full - CONNECTION_CREDIT / 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(1), returned)
+        .await
+        .expect("the credit returns");
+    drop(exhausted);
+}
+
+#[tokio::test]
 async fn a_peer_sending_on_streams_nothing_reads_holds_at_most_192_kib() {
     let h3 = H3::start(&[]).await;
     let budget = h3.server.budget.clone();
@@ -230,13 +261,19 @@ async fn under_pressure_an_admitted_upload_reserves_no_receive_credit() {
     let id = h3.server.upload_id().await;
     let pressure = budget.lease(budget.usage().limit / 4 * 3).unwrap();
     let before = settled(&budget).await;
-    let mut answer = connection
-        .send("POST", &format!("/upload?id={id}"), b"held back")
+    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
+    upload
+        .send_data(bytes::Bytes::from_static(b"held back"))
         .await
-        .1;
-    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":9}"#);
+        .unwrap();
     let held = settled(&budget).await.saturating_sub(before);
-    assert!(held < CONNECTION_CREDIT / 4, "{held} bytes under pressure");
+    assert!(
+        held < CONNECTION_CREDIT / 4,
+        "{held} bytes while it reads under pressure"
+    );
+    upload.finish().await.unwrap();
+    assert_eq!(answer.response().await.unwrap().status(), 200);
+    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":9}"#);
     drop(pressure);
 }
 
@@ -287,5 +324,28 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_
         running.json("GET", "/probe").await["load"]["active"],
         0,
         "the running connection serves on"
+    );
+}
+
+#[tokio::test]
+async fn the_admission_line_counts_connections_whose_floor_the_budget_refuses() {
+    let h3 = H3::start(&[("GM_H2_ADDR", "localhost:0")]).await;
+    let budget = h3.server.budget.clone();
+    let exhausted = exhaust(&budget, 0);
+    let closed = h3.connect_from("127.0.0.2", transport(None)).await.err();
+    let Some(noq::ConnectionError::ConnectionClosed(close)) = closed else {
+        panic!("{closed:?}")
+    };
+    assert_eq!(
+        close.error_code,
+        noq::TransportErrorCode::CONNECTION_REFUSED
+    );
+    let mut h2 = TcpStream::connect(h3.server.h2.unwrap()).await.unwrap();
+    assert_eq!(h2.read(&mut [0; 1]).await.unwrap(), 0, "closed at accept");
+    drop(exhausted);
+    let admission = h3.server.app.quotas().admission(&budget);
+    assert!(
+        admission.contains("rejected 0 global + 2 budget"),
+        "{admission}"
     );
 }

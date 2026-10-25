@@ -12,6 +12,7 @@ function offer(throughput: object[], latency: object[]): Discovery {
     engineVersion: "",
     server: { name: "" },
     maxStageMs: 300_000,
+    maxMeasurements: 32,
     origin: page.origin,
     protocol: null,
     readAt: 0,

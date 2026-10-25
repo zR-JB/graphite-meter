@@ -341,7 +341,8 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       const replies = live.replies();
       return {
         ...none,
-        own: running && run.phase() === "latency",
+        // Its warmup's replies read too, muted, as a transfer warmup's rate does.
+        own: running && run.stage() === "latency",
         lost: replies.lost,
         spoken: replies.rttMs,
         held: idle?.p50Ms ?? null,

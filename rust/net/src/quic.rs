@@ -3,7 +3,11 @@ use crate::{
     ConnectError, Verify, bind_udp, client_config,
     dial::{TIMEOUT, resolve, share},
 };
-use graphite_meter_proto::{discovery::Protocol, lane::IDLE_BOUND, origin::Host};
+use graphite_meter_proto::{
+    discovery::Protocol,
+    lane::{IDLE_BOUND, MAX_LANE_STREAMS},
+    origin::Host,
+};
 use noq::{IdleTimeout, TransportConfig, VarInt, crypto::rustls::QuicClientConfig};
 use std::{
     io,
@@ -25,8 +29,8 @@ pub const MIN_SEND_WINDOW: u64 = 2 << 20;
 pub const MAX_SEND_WINDOW: u64 = 16 << 20;
 
 const CLIENT_UNI_STREAMS: u32 = 36;
-/// The client's three HTTP/3 streams, the 16-lane WebTransport cap and four streams of credit headroom.
-const SERVER_UNI_STREAMS: u32 = 3 + 16 + 4;
+/// The client's three HTTP/3 streams, a WebTransport lane's streams and four streams of credit headroom.
+const SERVER_UNI_STREAMS: u32 = 3 + MAX_LANE_STREAMS as u32 + 4;
 const CLIENT_DATAGRAM_BUFFER: usize = 256 << 10;
 const SERVER_DATAGRAM_BUFFER: usize = 64 << 10;
 const CLIENT_IDLE_MILLIS: u32 = 60_000;

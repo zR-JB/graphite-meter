@@ -9,7 +9,7 @@ import {
   type ThroughputResult,
 } from "../measure/aggregate";
 import { LatencyBuckets, type LatencyBucket } from "../measure/buckets";
-import { ServerLatency, type LatencySummary } from "../measure/latency";
+import { midpointMedian, ServerLatency, type LatencySummary } from "../measure/latency";
 import { LiveRates } from "../measure/live";
 import { combinedModel, type WireModel, type WirePath } from "../measure/overhead";
 import { EARLY_FINISH, mayFinishEarly, minCoverage, type Confidence } from "../measure/stability";
@@ -37,8 +37,8 @@ import {
 import { pageClock, RunClock, type Clock } from "./clock";
 import {
   failureScope,
+  graded,
   lanes,
-  outcomeOf,
   stageStatus,
   type MultiServerResult,
   type RunResult,
@@ -71,6 +71,8 @@ const SUMMARY_CADENCE_MS = 1_000;
 const QUIET_MS = 500;
 /** A warmup's ramp shows once it spans this long. */
 const RAMP_MS = 100;
+/** A latency warmup's replies show as one median this often, the window's bucket width. */
+const WARMUP_REPLY_MS = 200;
 /** A direction silent this long leaves, if another server moves it meanwhile. */
 const SILENCE_MS = 1_500;
 /** A receiver that sends no record at all is given longer, as its feed may lag. */
@@ -149,6 +151,8 @@ export type RunEvent =
   | { type: "progress"; elapsedMs: number; budgetMs: number }
   | { type: "live"; sample: LiveSample }
   | { type: "latency"; serverId: string; bucket: LatencyBucket }
+  /** The latency warmup's newest replies as one median; nothing counts them. */
+  | { type: "warmupReply"; serverId: string; rttMs: number }
   | { type: "summary"; serverId: string; stage: Stage; summary: LatencySummary | null }
   | { type: "failure"; failure: ServerFailure }
   /** The run as a whole stalled (every server recovering or quiet), or recovered. */
@@ -192,6 +196,8 @@ interface Seat {
   summaryAt: number;
   /** The warmup's first and latest receiver records of one upload id: its upload ramp. */
   ramp: { first: Checkpoint; last: Checkpoint } | null;
+  /** A latency warmup's round trips since its last shown median. */
+  warmupReplies: { since: number; rtts: number[] };
 }
 
 /** One entered stage. Every callback its resources make checks that it is still the run's stage and not settled. */
@@ -375,16 +381,13 @@ export class Run {
     this.#emit({ type: "aborted", t: this.#elapsed });
   }
 
-  /** Ends now with what was measured; each stage left unfinished fails for `reason` on each of `servers`. */
-  end(
-    reason: FailureReason,
-    message: string,
-    servers: readonly { id: string }[] = this.#participants(),
-  ): void {
+  /** Ends now with what was measured; the stage it ends in fails for `reason`, and the later ones read as not reached. */
+  end(reason: FailureReason, message: string): void {
     if (this.#state !== "running") return;
-    for (const stage of STAGES)
-      if (planned(this.#plan, stage) && !this.#settled.has(stage))
-        for (const { id } of servers) this.#record(id, failureScope(stage), reason, message, stage);
+    const stage = STAGES.find((each) => planned(this.#plan, each) && !this.#settled.has(each));
+    if (stage)
+      for (const { id } of this.#participants())
+        this.#record(id, failureScope(stage), reason, message, stage);
     this.#finish();
   }
 
@@ -689,6 +692,7 @@ export class Run {
       latencyStall: null,
       summaryAt: -Infinity,
       ramp: null,
+      warmupReplies: { since: -Infinity, rtts: [] },
     } as Partial<Seat> as Seat;
     seat.resources = this.#open({
       server: server.prepared,
@@ -799,6 +803,11 @@ export class Run {
         if (!this.#stalled) this.#live.receiver(server.id, checkpoint, this.#clock.read());
         if (this.#boundary(stage)) this.#tick();
       },
+      // A latency warmup's replies move the live round trip alone, as a transfer warmup's bytes move the live rate.
+      warmupReplies: (rtts) => {
+        if (name === "latency" && stage.phase === "warmup" && live())
+          this.#warmupReplies(seat, rtts);
+      },
       probes: (outcomes) => {
         if (!counting() || server.removed) return;
         const position = this.#position();
@@ -896,6 +905,20 @@ export class Run {
         if (live()) this.#live.hint(server.id, lane, bytes, elapsedMs, this.#clock.read());
       },
     };
+  }
+
+  #warmupReplies(seat: Seat, rttsMs: readonly number[]): void {
+    const pending = seat.warmupReplies;
+    pending.rtts.push(...rttsMs);
+    const now = this.#clock.read();
+    if (now - pending.since < WARMUP_REPLY_MS || !pending.rtts.length) return;
+    const rtts = pending.rtts.sort((a, b) => a - b);
+    seat.warmupReplies = { since: now, rtts: [] };
+    this.#emit({
+      type: "warmupReply",
+      serverId: seat.server.id,
+      rttMs: midpointMedian(rtts.length, (rank) => rtts[rank]!),
+    });
   }
 
   /** A page-clock observation on the timeline, relative to the last tick rather than to its delivery. */
@@ -1140,9 +1163,7 @@ export class Run {
           `All selected test servers failed. ${server.prepared.server.name}: ${message}`,
         );
       // A sole server skips to its next stage; several that all fail end the run as incomplete.
-      return this.#servers.length === 1
-        ? this.#skip(stage)
-        : this.end(reason, "No server was left to run this stage", this.#servers);
+      return this.#servers.length === 1 ? this.#skip(stage) : this.#finish();
     }
     if (stage.phase === "measuring" && stage.activity.transfer.length)
       this.#aggregate.dropout(
@@ -1356,8 +1377,18 @@ export class Run {
       this.#emit({ type: "stall", stall: null });
       if (!this.#current(stage)) return;
     }
-    const status = this.#settle(name);
-    this.#emit({ type: "stageEnd", stage: name, status, results: { ...this.#results } });
+    this.#settle(name);
+    const { stages } = graded({
+      ...this.#results,
+      stages: this.#statuses(),
+      multiServer: this.details(),
+    });
+    this.#emit({
+      type: "stageEnd",
+      stage: name,
+      status: stages[name],
+      results: { ...this.#results },
+    });
     // A handler may have ended or stopped the run.
     if (!this.#current(stage)) return;
     this.#tickAt = this.#clock.resume();
@@ -1447,9 +1478,8 @@ export class Run {
   }
 
   /** A stage's results and status are reduced once, the moment it ends. */
-  #settle(name: Stage): StageStatus {
-    const settled = this.#settled.get(name);
-    if (settled) return settled.status;
+  #settle(name: Stage): void {
+    if (this.#settled.has(name)) return;
     const stage = this.#stages.get(name);
     const plan = stage?.plan ?? {
       planned: planned(this.#plan, name),
@@ -1458,7 +1488,7 @@ export class Run {
     };
     if (!stage && !plan.planned) {
       this.#settled.set(name, { status: "not-run", plan });
-      return "not-run";
+      return;
     }
     if (stage) this.#reduce(name, plan.early);
     const measured = lanes(this.#results, name).every(Boolean);
@@ -1480,13 +1510,16 @@ export class Run {
         this.#record(id, failureScope(name), "insufficient-evidence", message, name);
     }
     // A server that stayed but measured too little for its own result says so, as the run does; the stage's status counts it.
-    if (stage && name !== "latency")
-      for (const id of stage.seats.keys()) {
-        const own = stage.activity.transfer.map((dir) => {
-          const result = this.#aggregate.serverResult(name, dir, id);
-          this.#own.set(`${name}\t${dir}\t${id}`, result);
-          return result;
-        });
+    if (stage)
+      for (const [id, seat] of stage.seats) {
+        const own =
+          name === "latency"
+            ? [seat.server.latency.result()]
+            : stage.activity.transfer.map((dir) => {
+                const result = this.#aggregate.serverResult(name, dir, id);
+                this.#own.set(`${name}\t${dir}\t${id}`, result);
+                return result;
+              });
         if (!own.every(Boolean) && !this.#failed(name, id))
           this.#record(
             id,
@@ -1498,7 +1531,12 @@ export class Run {
       }
     const status = stageStatus(lanes(this.#results, name), this.#failed(name));
     this.#settled.set(name, { status, plan });
-    return status;
+  }
+
+  #statuses(): Record<Stage, StageStatus> {
+    return Object.fromEntries(
+      STAGES.map((stage) => [stage, this.#settled.get(stage)?.status ?? "not-run"]),
+    ) as Record<Stage, StageStatus>;
   }
 
   #reduce(name: Stage, early: boolean): void {
@@ -1577,9 +1615,8 @@ export class Run {
     if (this.#state !== "running") return;
     this.#state = "completed";
     const durationMs = this.#clock.runMs();
-    const stages = Object.fromEntries(
-      STAGES.map((stage) => [stage, this.#settle(stage)]),
-    ) as Record<Stage, StageStatus>;
+    for (const stage of STAGES) this.#settle(stage);
+    const stages = this.#statuses();
     const plans = Object.fromEntries(
       STAGES.map((stage) => [stage, this.#settled.get(stage)!.plan]),
     ) as StagePlans;
@@ -1589,16 +1626,16 @@ export class Run {
       this.#results.latency = focus.result();
       stages.latency = stageStatus([this.#results.latency], this.#failed("latency"));
     }
-    const result: RunResult = {
+    // A stage measured without every selected server is partial, as History reads any record.
+    const result: RunResult = graded({
       ...this.#results,
       multiServer: this.details(),
-      outcome: outcomeOf(Object.values(stages), this.#failures.length),
       stages,
       latencyByStage: focus.summaries(),
       addedLatency: focus.addedLatency(),
       startedAt: this.#clock.startedAt,
       durationMs,
-    };
+    });
     this.#release();
     this.#emit({ type: "complete", result, plans });
   }

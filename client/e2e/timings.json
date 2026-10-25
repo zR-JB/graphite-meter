@@ -2,7 +2,7 @@
   "version": 1,
   "files": {
     "e2e/network/distance-quic.test.ts": 212000,
-    "e2e/network/distance-tcp.test.ts": 186000,
+    "e2e/network/distance-tcp.test.ts": 194000,
     "e2e/network/lockout.test.ts": 158000,
     "e2e/network/http3.test.ts": 90000,
     "e2e/network/outage.test.ts": 83000,
