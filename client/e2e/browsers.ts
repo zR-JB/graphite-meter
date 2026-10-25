@@ -188,7 +188,14 @@ function launchFirefox(): Promise<Bidi> {
     }
     remove();
   }
-  const launch = { bidi: start(), stop };
+  let banner = "";
+  const late = new Promise<never>((_, fail) =>
+    setTimeout(
+      () => fail(new Error(`Firefox started no WebDriver BiDi session in 30 s: ${banner}`)),
+      30_000,
+    ).unref(),
+  );
+  const launch = { bidi: Promise.race([start(), late]), stop };
   firefox = launch;
   launch.bidi.catch(stop);
   return launch.bidi;
@@ -236,16 +243,9 @@ function launchFirefox(): Promise<Bidi> {
       { stdout: "ignore", stderr: "pipe" },
     );
     const reader = child.stderr.getReader();
-    let banner = "";
     let endpoint: string | undefined;
-    const late = new Promise<never>((_, fail) =>
-      setTimeout(
-        () => fail(new Error(`Firefox printed no WebDriver BiDi banner in 30 s: ${banner}`)),
-        30_000,
-      ).unref(),
-    );
     while (!endpoint) {
-      const { value, done } = await Promise.race([reader.read(), late]);
+      const { value, done } = await reader.read();
       if (done) throw new Error(`Firefox exited before listening: ${banner}`);
       banner += new TextDecoder().decode(value);
       endpoint = /WebDriver BiDi listening on (ws:\/\/\S+)/.exec(banner)?.[1];
