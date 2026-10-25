@@ -1,6 +1,6 @@
 name: Advisories
 
-# Advisory databases change without a commit, so main is checked daily; CI's Rust checks cover crates on code PRs.
+# Advisory databases change without a commit, so main is checked daily; a new crate advisory also fails every PR.
 on:
   schedule:
     - cron: '43 5 * * *'
