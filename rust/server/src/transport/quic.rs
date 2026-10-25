@@ -120,7 +120,7 @@ impl Http3 {
         let budget = self
             .app
             .budget()
-            .lease(floor)
+            .floor(floor, peer.ip())
             .map(|floor| self.budget(floor));
         let listener = self.clone();
         let Arrival {

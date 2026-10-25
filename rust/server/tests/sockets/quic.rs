@@ -295,3 +295,26 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_
         "the running connection serves on"
     );
 }
+
+#[tokio::test]
+async fn the_admission_line_counts_connections_whose_floor_the_budget_refuses() {
+    let h3 = H3::start(&[("GM_H2_ADDR", "localhost:0")]).await;
+    let budget = h3.server.budget.clone();
+    let exhausted = exhaust(&budget, 0);
+    let closed = h3.connect_from("127.0.0.2", transport(None)).await.err();
+    let Some(noq::ConnectionError::ConnectionClosed(close)) = closed else {
+        panic!("{closed:?}")
+    };
+    assert_eq!(
+        close.error_code,
+        noq::TransportErrorCode::CONNECTION_REFUSED
+    );
+    let mut h2 = TcpStream::connect(h3.server.h2.unwrap()).await.unwrap();
+    assert_eq!(h2.read(&mut [0; 1]).await.unwrap(), 0, "closed at accept");
+    drop(exhausted);
+    let admission = h3.server.app.quotas().admission(&budget);
+    assert!(
+        admission.contains("rejected 0 global + 2 budget"),
+        "{admission}"
+    );
+}
