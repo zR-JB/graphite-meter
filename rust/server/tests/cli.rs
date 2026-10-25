@@ -185,6 +185,9 @@ fn help_prints_the_usage_and_exits_zero() {
     let output = server(&["-nope"], &[], b"");
     assert_eq!(output.status.code(), Some(1));
     assert!(text(&output.stderr).starts_with("unknown option --nope\nUsage: "));
+    let output = server(&["help"], &[], b"");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text(&output.stderr).starts_with("unexpected argument \"help\"\nUsage: "));
 }
 
 /// A verbose throughput line's message, checked for its shape, with its transfer count.

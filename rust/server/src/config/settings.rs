@@ -6,6 +6,7 @@ use graphite_meter_proto::{
     discovery::DEFAULT_STAGE_LIMIT,
     duration,
     flag::{self, Flag, Parsed},
+    text::quote,
 };
 use ipnet::IpNet;
 use std::{collections::BTreeSet, ffi::OsString, io::Write, time::Duration};
@@ -285,7 +286,7 @@ settings! {
         "label", "OIDC provider label";
 }
 
-/// Loads the environment, then the flags; `None` when usage was asked; flag errors go to `usage` before env errors.
+/// Loads the environment, then the flags; `None` when usage was asked; argument errors go to `usage` before env errors.
 pub(super) fn load(
     env: &dyn Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,
@@ -293,16 +294,19 @@ pub(super) fn load(
 ) -> Result<Option<Settings>, String> {
     let mut settings = Settings::default();
     let from_env = settings.load_env(env);
-    match flag::parse(SETTINGS, &mut settings, args) {
+    let refused = match flag::parse(SETTINGS, &mut settings, args) {
         Ok(Parsed::Help) => {
             let _ = write_usage(usage);
             return Ok(None);
         }
-        Ok(Parsed::Arguments(_)) => {}
-        Err(error) => {
-            let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage));
-            return Err(error);
-        }
+        Ok(Parsed::Arguments(rest)) => rest
+            .first()
+            .map(|stray| format!("unexpected argument {}", quote(&stray.to_string_lossy()))),
+        Err(error) => Some(error),
+    };
+    if let Some(error) = refused {
+        let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage));
+        return Err(error);
     }
     from_env?;
     settings.cover_stage_limit();
