@@ -382,3 +382,29 @@ async fn a_cancelled_download_without_reliable_reset_leaves_the_connection_usabl
     settled(&peers.budget).await;
     Ok(())
 }
+
+#[tokio::test]
+async fn a_read_past_an_abort_repeats_it_without_reserving_the_declared_length()
+-> Result<(), TestError> {
+    let bytes = [
+        request_head(&[(":method", "POST")]),
+        varint(0x01),
+        varint(1 << 61),
+        vec![0; 64],
+    ]
+    .concat();
+    let (reads, mut read) = tokio::sync::mpsc::unbounded_channel();
+    let Served { peers, .. } = pair(PLAIN).await?.serve(move |_, stream| {
+        let reads = reads.clone();
+        async move {
+            let mut recv = stream.split().1;
+            let first = recv.data().await;
+            let _ = reads.send((first, recv.data().await));
+        }
+    });
+    let (_send, _recv) = peers.bi(&bytes).await?;
+    let (first, second) = read.recv().await.ok_or("no reads")?;
+    assert_eq!(first, Err(Error::Protocol(Code::H3_EXCESSIVE_LOAD)));
+    assert_eq!(second, first);
+    Ok(())
+}
