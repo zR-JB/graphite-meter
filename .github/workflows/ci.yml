@@ -143,13 +143,19 @@ jobs:
       - id: image
         name: Name the runner image the package cache belongs to
         run: printf 'version=%s-%s\n' "${ImageOS:?}" "${ImageVersion:?}" >> "$GITHUB_OUTPUT"
-      - name: Restore the cross compilers' packages
+      - name: Restore the cross compilers' packages, saving them from main
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         # A stalled cache download falls back to the mirror in a minute instead of ten.
-        env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
-        with:
+        env: &stall {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
+        with: &apt-cross
           path: ${{ runner.temp }}/apt-cross/*.deb
           key: apt-cross-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
+      - name: Restore the cross compilers' packages
+        if: github.ref != 'refs/heads/main'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        env: *stall
+        with: *apt-cross
       # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers, which install while
       # Rust sets up. A stalled mirror fails the step in minutes instead of holding the job to its limit.
       - id: cross-compilers
@@ -216,7 +222,7 @@ jobs:
             uses: ./.github/actions/setup-buildx
           - id: target
             name: Restore the target directory of an earlier E2E server build
-            uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+            uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
             env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
             with:
               path: .server-target
@@ -236,13 +242,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Keep the target directory for the next E2E server build
-        if: steps.target.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.target.outputs.cache-hit != 'true'
         run: |
           docker buildx build --file container/Dockerfile --platform linux/amd64 --build-arg VERSION="$VERSION" \
             --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 --target server-target \
             --output "type=local,dest=$RUNNER_TEMP/server-target" .
           rm -rf .server-target
           mv "$RUNNER_TEMP/server-target" .server-target
+      - name: Save the target directory
+        if: github.ref == 'refs/heads/main' && steps.target.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .server-target
+          key: ${{ steps.target.outputs.cache-primary-key }}
 
   image:
     name: Build server image

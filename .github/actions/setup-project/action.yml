@@ -68,6 +68,7 @@ runs:
         version: 2026.10.17
         install_args: --locked ${{ steps.tools.outputs.install-args }}
         cache: ${{ inputs.cache }}
+        cache_save: ${{ github.ref == 'refs/heads/main' }}
 
     # The steps below run python3, which a Windows Python build may name python.exe only.
     - name: Name the pinned Python python3 on Windows
@@ -85,11 +86,16 @@ runs:
         printf 'bun=%s\n' "$(python3 scripts/ci/toolchains.py get tools.bun)" >> "$GITHUB_OUTPUT"
 
     - name: Cache Bun packages
-      if: inputs.client-deps == 'true' && inputs.cache == 'true'
+      if: inputs.client-deps == 'true' && inputs.cache == 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
+      with: &bun-cache
         path: ~/.bun/install/cache
         key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock') }}
+
+    - name: Restore cached Bun packages
+      if: inputs.client-deps == 'true' && inputs.cache == 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with: *bun-cache
 
     - name: Install client dependencies
       if: inputs.client-deps == 'true'
@@ -104,9 +110,9 @@ runs:
         python3 scripts/ci/toolchains.py verify-rust
 
     - name: Cache Cargo downloads and builds
-      if: inputs.rust == 'true' && inputs.cache == 'true'
+      if: inputs.rust == 'true' && inputs.cache == 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
+      with: &cargo-cache
         path: |
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
@@ -114,3 +120,8 @@ runs:
           rust/target
         key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.lock') }}
         restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-
+
+    - name: Restore cached Cargo downloads and builds
+      if: inputs.rust == 'true' && inputs.cache == 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with: *cargo-cache
