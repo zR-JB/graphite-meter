@@ -185,7 +185,7 @@ async fn a_sign_in_approved_over_http_lets_the_run_complete() {
         "{ran:#?}"
     );
     assert!(!ran.iter().any(|event| matches!(event, Event::SignIn(_))));
-    timeout(LIMIT, controller.settled())
+    timeout(LIMIT, controller.close())
         .await
-        .expect("the controller settles");
+        .expect("the controller closes");
 }
