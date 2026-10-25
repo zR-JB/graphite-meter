@@ -523,12 +523,51 @@ fn a_held_run_key_never_stops_the_test_it_started_and_a_second_tap_does() {
     );
 
     let mut app = started(now);
-    let release = KeyEvent::new_with_kind(space, KeyModifiers::NONE, KeyEventKind::Release);
-    app.input(Input::Key(release), after(100));
+    let release = |code| KeyEvent::new_with_kind(code, KeyModifiers::SHIFT, KeyEventKind::Release);
+    app.input(Input::Key(release(space)), after(100));
     assert_eq!(
         command(&press(&mut app, space, after(200))),
         &Command::Stop,
         "a terminal that reports the release lets the next press stop at once"
+    );
+    app.event(&ended(Outcome::Stopped), after(250));
+    for at in [after(1000), after(2900)] {
+        assert_eq!(
+            press(&mut app, space, at),
+            [],
+            "once releases arrive, a key is held until its own"
+        );
+    }
+    app.input(Input::Key(release(KeyCode::Char('x'))), after(3000));
+    assert_eq!(press(&mut app, space, after(3100)), []);
+    app.input(Input::Key(release(space)), after(3200));
+    assert_matches!(
+        command(&press(&mut app, space, after(3300))),
+        Command::Run(_)
+    );
+
+    let mut app = started(now);
+    let key = find(&mut app, now, "Stop test");
+    assert_eq!(command(&click(&mut app, now, key)), &Command::Stop);
+    app.event(&ended(Outcome::Stopped), now);
+    let key = find(&mut app, now, "Run again");
+    assert_matches!(command(&click(&mut app, now, key)), Command::Run(_));
+    assert_eq!(
+        command(&press(&mut app, space, after(100))),
+        &Command::Stop,
+        "a press after a click is no repeat"
+    );
+
+    let mut app = App::new(config(), None, (Profile::Plain, Palette::new(true)), now);
+    assert_matches!(
+        command(&press(&mut app, KeyCode::Char('r'), now)),
+        Command::Run(_)
+    );
+    app.input(Input::Key(release(KeyCode::Char('R'))), after(100));
+    assert_eq!(
+        command(&press(&mut app, KeyCode::Char('r'), after(200))),
+        &Command::Stop,
+        "a shifted release ends the held key"
     );
 }
 
