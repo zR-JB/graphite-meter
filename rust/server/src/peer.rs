@@ -220,6 +220,11 @@ impl ClientKeys {
         self.iter().next()
     }
 
+    pub fn shares(&self, narrowest: usize) -> impl Iterator<Item = (ClientKey, usize)> {
+        let doubled = std::iter::successors(Some(narrowest), |share| Some(share.saturating_mul(2)));
+        self.iter().zip(doubled)
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = ClientKey> {
         let prefix = |ip, bits| {
             ClientKey::V6(
