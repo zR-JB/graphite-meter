@@ -6,7 +6,9 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
+import time
 from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
@@ -26,6 +28,10 @@ PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
 JSON_STRING = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"')
 # Far deeper than any GitHub or OCI document, so the limit and not the interpreter's stack refuses one.
 JSON_DEPTH = 64
+TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS = 60, 600
+RETRY_SECONDS = (2, 10)
+REPEATABLE = ("GET", "PATCH", "DELETE")
+TRANSIENT = re.compile(r"\(HTTP (?:429|5\d\d)\)|connection reset|timeout|\bEOF\b", re.IGNORECASE)
 
 
 class ControlPlaneError(RuntimeError):
@@ -38,7 +44,7 @@ def fail(message: str) -> NoReturn:
 
 def api(path: str, *, paginate: bool = False, method: str = "GET", body: JsonValue = None,
         upload: Path | None = None) -> JsonValue:
-    """Call `gh api`, sending `body` as JSON or `upload` as bytes; the token stays in GH_TOKEN."""
+    """Call `gh api` with the token in GH_TOKEN, sending `body` as JSON or `upload` as bytes; a POST never repeats."""
     if not os.environ.get("GH_TOKEN"):
         fail("GH_TOKEN is required")
     args = ["--paginate", "--slurp"] if paginate else []
@@ -48,13 +54,23 @@ def api(path: str, *, paginate: bool = False, method: str = "GET", body: JsonVal
         args += ["--header", "Content-Type: application/octet-stream", "--input", str(upload)]
     elif body is not None:
         args += ["--input", "-"]
-    result = subprocess.run(["gh", "api", *args, path], input=None if body is None else json.dumps(body),
-                            capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        fail(f"gh api {path}: {detail}")
-    text = result.stdout.strip()
-    return decode_json(text, f"gh api {path}") if text else None
+    timeout = TIMEOUT_SECONDS if upload is None else UPLOAD_TIMEOUT_SECONDS
+    delays = iter(RETRY_SECONDS if method in REPEATABLE else ())
+    while True:
+        try:
+            result = subprocess.run(["gh", "api", *args, path], input=None if body is None else json.dumps(body),
+                                    capture_output=True, text=True, check=False, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            detail = f"timeout after {timeout} s"
+        else:
+            if result.returncode == 0:
+                text = result.stdout.strip()
+                return decode_json(text, f"gh api {path}") if text else None
+            detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        if not TRANSIENT.search(detail) or (delay := next(delays, None)) is None:
+            fail(f"gh api {path}: {detail}")
+        print(f"::warning::gh api {path}: {detail}; retrying in {delay} s", file=sys.stderr)
+        time.sleep(delay)
 
 
 def query(path: str, **params: str | int) -> str:
