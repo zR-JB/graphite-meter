@@ -177,7 +177,7 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain at once. */
+  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain 1 ms after it. */
   pace(intervalMs: number | null, maxInFlight = this.#pace.maxInFlight): void {
     this.#pace = { intervalMs, maxInFlight };
     this.#backupAt = intervalMs === null ? this.clock.now() : Infinity;
@@ -210,7 +210,7 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** Sends on the next probe's turn with room in the window; a fixed cadence never catches up, a chain waits 1 ms at least. */
+  /** Sends when it is the next probe's turn and the window has room; a fixed cadence never catches up on late sends. */
   #step(now: number, chained: boolean): void {
     const { intervalMs, maxInFlight } = this.#pace;
     if (intervalMs === null) {
@@ -353,7 +353,7 @@ export class Prober {
     this.io.post({ type: "drained", id: this.#stopId });
   }
 
-  /** Ends a finished drain, or arms the timer for the earliest thing due; an early firing just re-arms. */
+  /** Ends a finished drain, or arms the timer for the earliest thing due, rounded up: browsers clamp nested early re-arms. */
   #settle(now: number): void {
     if (this.#state === "stopped") return;
     let drainAt = Infinity;
@@ -381,6 +381,6 @@ export class Prober {
       );
     if (at >= this.#timerAt) return;
     this.#timerAt = at;
-    this.clock.arm(Math.max(0, at - now));
+    this.clock.arm(Math.max(0, Math.ceil(at - now)));
   }
 }

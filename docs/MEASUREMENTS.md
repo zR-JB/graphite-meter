@@ -118,7 +118,8 @@ after three replies and timeouts.
 
 Cadence is a scheduling policy, not an observed sampling rate. Reply-driven density follows RTT down to 1 ms, and no
 coverage is inferred from cadence and elapsed time. Every probe wakes the client's prober and the server's bus, so
-below a 1 ms RTT a denser chain adds wakeups and server CPU, while a 4 s stage still holds thousands of replies. The idle
+below a 1 ms RTT a denser chain adds wakeups and server CPU, while a 4 s stage still holds over a thousand replies.
+Spaced probes let both ends sleep between them, so a sub-millisecond RTT includes their wakeup, as a ping's does. The idle
 headline is the full stage median and the base of added latency. It never falls back to loaded RTTs or preflight
 hints. A failed stage keeps its measured population, marked incomplete. Every selected server is probed. The run's
 latency belongs to the server shown when the run starts, or to a survivor once that server leaves. The shown server

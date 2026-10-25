@@ -35,7 +35,7 @@ pub fn window(stage: Stage, cadence: Cadence) -> usize {
     }
 }
 
-/// Sends go start to start, or on the reply 1 ms after the last at least, backed by the deadline; stopped probes drain.
+/// Start to start, or on the reply 1 ms past the last send at least, backed by the deadline; stopped probes drain.
 #[derive(Debug)]
 pub struct Schedule {
     cadence: Cadence,

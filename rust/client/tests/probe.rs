@@ -110,7 +110,7 @@ fn a_reply_driven_probe_goes_on_the_reply_in_flight_and_never_on_a_late_one() {
 }
 
 #[test]
-fn a_reply_driven_chain_below_a_1_ms_rtt_sends_once_a_millisecond() {
+fn a_reply_driven_chain_below_a_1_ms_rtt_waits_out_the_millisecond() {
     let t0 = Instant::now();
     let mut schedule = Schedule::new(Cadence::ReplyDriven, 4, t0);
     let first = schedule.send(t0).unwrap();
