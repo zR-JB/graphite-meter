@@ -197,7 +197,8 @@ fn a_listener_that_cannot_bind_names_its_setting() {
 fn help_prints_the_usage_and_exits_zero() {
     let output = server(&["-h"], &[], b"");
     assert!(output.status.success());
-    assert_eq!(text(&output.stderr), include_str!("usage.txt"));
+    assert_eq!(text(&output.stdout), include_str!("usage.txt"));
+    assert!(output.stderr.is_empty());
     let output = server(&["-nope"], &[], b"");
     assert_eq!(output.status.code(), Some(1));
     assert!(text(&output.stderr).starts_with("unknown option --nope\nUsage: "));

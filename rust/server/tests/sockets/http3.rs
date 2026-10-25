@@ -9,7 +9,7 @@ use rustls::pki_types::ServerName;
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
 
-/// The HTTP/3 listener's address, which must differ from the HTTP/1 listener's.
+/// The HTTP/3 listener's address, apart from the HTTP/1 listener's.
 pub(super) const ADDRESS: &str = "127.0.0.7:0";
 /// The client's keep-alive, which keeps a connection from idling out while tests move the clock in steps of `STEP`.
 const KEEP_ALIVE: Duration = Duration::from_secs(2);

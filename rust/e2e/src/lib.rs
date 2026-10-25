@@ -14,7 +14,7 @@ use tokio::{
     time::timeout,
 };
 
-/// One loopback address spelled three ways: listeners must differ, and discovery advertises the asked host.
+/// One loopback address spelled three ways, as discovery advertises the asked host.
 const ADDRESSES: [&str; 3] = ["127.0.0.7:0", "127.0.7:0", "127.7:0"];
 
 /// The server on local ports: cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3, until dropped.
