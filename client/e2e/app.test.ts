@@ -169,6 +169,37 @@ async function arcsDrawn(page: Page) {
   for (const arc of arcs) expect(Math.abs(arc.drawn - arc.wanted)).toBeLessThan(1);
 }
 
+for (const [width, height, route] of [
+  [390, 844, ""],
+  [1280, 800, ""],
+  [1280, 800, "#/legal"],
+  [390, 844, "#/settings"],
+  [1280, 800, "#/settings"],
+] as const)
+  test.chrome(
+    `loading ${route || "#/"} at ${width} px keeps the console still outside an opened sheet`,
+    async (page) => {
+      await page.setViewportSize({ width, height });
+      await open(page, `${home.url}/${route}`);
+      await expect(page.locator(".gauge-panel")).toBeVisible();
+      await page.evaluate(settled);
+      const shifts = await page.evaluate(() => {
+        const observer = new PerformanceObserver(() => {});
+        observer.observe({ type: "layout-shift", buffered: true });
+        return observer
+          .takeRecords()
+          .map((shift: any) => ({
+            score: shift.value,
+            sources: shift.sources.map((source: any) => source.node?.getAttribute?.("class")),
+            sheet: shift.sources.every((source: any) => source.node?.closest?.(".side-sheet")),
+          }))
+          .filter((shift) => !shift.sheet);
+      });
+      const total = shifts.reduce((sum, shift) => sum + shift.score, 0);
+      expect(total < 0.01 ? [] : shifts).toEqual([]);
+    },
+  );
+
 test.chrome("reduced motion still updates every readout and completes", async (page) => {
   await page.cdp("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-reduced-motion", value: "reduce" }],

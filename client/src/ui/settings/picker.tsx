@@ -150,42 +150,38 @@ export function ConnectionPicker(props: {
           )}
         </Show>
       </div>
-      {/* Until the server list loads there is nothing to check or retry. */}
-      <Show when={() => !!servers.catalog()}>
-        {() => (
-          <div class="validation">
-            <Show when={line}>
-              {(shown) => (
-                <p>
-                  <span class="status-dot inline" data-tone={() => shown().status.tone} />
-                  <strong>{() => shown().status.label}</strong>
-                  {() => (shown().summary ? ` ${shown().summary}` : "")}
-                </p>
-              )}
-            </Show>
-            <Show when={offerAutomatic}>
-              {() => (
-                <button class="btn" type="button" onclick={() => choose("auto")}>
-                  Use Automatic
-                </button>
-              )}
-            </Show>
-            <Show when={offerRetry}>
-              {() => (
-                // Both pickers show at once, and a group's name does not name its buttons, hence "Retry Latency path".
-                <button
-                  class="btn"
-                  type="button"
-                  aria-label={`Retry ${PATH[role]}`}
-                  onclick={() => void servers.retry(undefined, role)}
-                >
-                  Retry
-                </button>
-              )}
-            </Show>
-          </div>
-        )}
-      </Show>
+      {/* The line keeps its slot from the start, though until the server list loads there is nothing to check or retry. */}
+      <div class="validation">
+        <Show when={() => (servers.catalog() ? line() : null)}>
+          {(shown) => (
+            <p>
+              <span class="status-dot inline" data-tone={() => shown().status.tone} />
+              <strong>{() => shown().status.label}</strong>
+              {() => (shown().summary ? ` ${shown().summary}` : "")}
+            </p>
+          )}
+        </Show>
+        <Show when={() => !!servers.catalog() && offerAutomatic()}>
+          {() => (
+            <button class="btn" type="button" onclick={() => choose("auto")}>
+              Use Automatic
+            </button>
+          )}
+        </Show>
+        <Show when={() => !!servers.catalog() && offerRetry()}>
+          {() => (
+            // Both pickers show at once, and a group's name does not name its buttons, hence "Retry Latency path".
+            <button
+              class="btn"
+              type="button"
+              aria-label={`Retry ${PATH[role]}`}
+              onclick={() => void servers.retry(undefined, role)}
+            >
+              Retry
+            </button>
+          )}
+        </Show>
+      </div>
     </div>
   );
 }
