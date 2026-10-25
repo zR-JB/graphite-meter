@@ -31,11 +31,11 @@ def git(directory: Path, *args: str, timeout: float = 600) -> str:
 
 
 def fetch(directory: Path, url: str, ref: str) -> None:
-    """Commits and trees only, which the checks read; a transfer slower than 1 KB/s for 30 s fails, and one retry."""
+    """Commits and trees, all the checks read."""
     for attempt in (1, 2):
         try:
             git(directory, "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30", "fetch", "-q",
-                "--filter=blob:none", url, f"+{ref}:{ref}", timeout=180)
+                "--filter=blob:none", url, f"+{ref}:{ref}", timeout=120)
             return
         except subprocess.TimeoutExpired as error:
             if attempt == 2:
