@@ -83,9 +83,12 @@ impl App {
                 let Some(((name, failure), rest)) = failed.split_first() else {
                     return Some("No test server answered".into());
                 };
-                let first = match failure.text == UNREACHABLE {
-                    true => format!("Could not reach {name}"),
-                    false => format!("{name}: {}", text::lowered(failure.reason.label())),
+                let first = match failure.reason {
+                    _ if failure.text == UNREACHABLE => format!("Could not reach {name}"),
+                    FailureReason::ServerStopped if rest.is_empty() => {
+                        format!("{name} stopped during the path check; try again when it is back")
+                    }
+                    _ => format!("{name}: {}", text::lowered(failure.reason.label())),
                 };
                 Some(match rest.len() {
                     0 => first,
