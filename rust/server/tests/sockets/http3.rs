@@ -260,6 +260,47 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
 }
 
 #[tokio::test]
+async fn a_connection_its_peer_keeps_open_without_requests_closes_after_a_minute() {
+    let h3 = H3::start(&[]).await;
+    let connection = h3.connect(transport(None)).await;
+    for _ in 0..2 {
+        assert_eq!(connection.send("GET", "/probe", b"").await.0.status(), 200);
+        pass(Duration::from_secs(55)).await;
+        assert_eq!(
+            connection.closed_within(Duration::from_millis(10)).await,
+            None,
+            "a request restarts the bound"
+        );
+    }
+    pass(Duration::from_millis(4500)).await;
+    assert_eq!(
+        connection.closed_within(Duration::from_millis(10)).await,
+        None,
+        "not before a minute"
+    );
+    pass(Duration::from_millis(10500)).await;
+    assert_eq!(
+        connection.closed_within(Duration::from_secs(1)).await,
+        Some(Code::H3_NO_ERROR)
+    );
+}
+
+#[tokio::test]
+async fn a_quiet_idle_connection_times_out_without_a_close() {
+    let h3 = H3::start(&[]).await;
+    let mut quiet = transport(None);
+    quiet.keep_alive_interval(None);
+    let connection = h3.connect(quiet).await;
+    assert_eq!(connection.send("GET", "/probe", b"").await.0.status(), 200);
+    pass(Duration::from_secs(65)).await;
+    let ended = tokio::time::timeout(Duration::from_secs(1), connection.quic.closed()).await;
+    assert!(
+        matches!(ended, Ok(noq::ConnectionError::TimedOut)),
+        "{ended:?}"
+    );
+}
+
+#[tokio::test]
 async fn cancelling_an_idle_progress_stream_releases_its_handler() {
     let h3 = H3::start(&[]).await;
     let connection = h3.connect(transport(None)).await;
