@@ -76,7 +76,8 @@ the setting.
   throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or `GM_PUBLIC_THROUGHPUT_ORIGINS`, or
   startup fails with "configuration advertises no throughput endpoint".
 - A native listener is advertised on the host the client asked for, at the listener's own port. Set its
-  `GM_H*_PUBLIC_ORIGIN` when clients reach it on another host or port, such as a remapped container port.
+  `GM_H*_PUBLIC_ORIGIN` when clients reach it on another host or port, such as a remapped container port. HTTP/3
+  uses that port for both TCP and UDP, so a remap must publish both protocols on it.
 - A client identity is a login or measurement grant, and its subject shares twice its limit. Every password login
   is the one operator subject. Without a login, the identity is an IPv4 address or an IPv6 /64, and its /56 and
   /48 share two and four times its limit. Upload receivers are counted the same way, and connections are counted

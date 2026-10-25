@@ -126,7 +126,8 @@ impl App {
         let budget = Budget::new(config.max_buffer_bytes);
         let block = Block::new(&budget, Meter::new(config.verbose))?;
         let alt_svc = config.listener(ListenerKind::H3).map(|listener| {
-            let port = listener.address.port;
+            let public = listener.public_origin.as_ref();
+            let port = public.map_or(listener.address.port, |origin| origin.port);
             HeaderValue::from_str(&format!("h3=\":{port}\"")).expect("a port is a header value")
         });
         let password = config
