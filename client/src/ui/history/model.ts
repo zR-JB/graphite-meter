@@ -238,7 +238,7 @@ function partial(entry: HistoryEntry, column: HistoryColumn): string {
   const stage = column === "idle" ? "latency" : column === "loaded" ? null : column;
   const shortfall = stage && entry.partial[stage];
   if (!shortfall) return "";
-  const several = entry.servers > 1;
+  const several = shortfall.planned > 1;
   const why = shortfall.short.map(({ server, cell: { status, cause } }) => {
     const reason = !cause
       ? lower(STAGE_STATE[status].label)
@@ -247,7 +247,7 @@ function partial(entry: HistoryEntry, column: HistoryColumn): string {
         : lower(reasonLabel(cause.reason));
     return several ? `${server}: ${reason}` : reason.charAt(0).toUpperCase() + reason.slice(1);
   });
-  const count = several ? [`${shortfall.measured} of ${entry.servers} servers`] : [];
+  const count = several ? [`${shortfall.measured} of ${shortfall.planned} servers`] : [];
   return [...count, ...why].join(". ");
 }
 

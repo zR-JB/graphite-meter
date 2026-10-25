@@ -322,6 +322,7 @@ test("a partial value keeps its number with a mark, says partial in its name, an
     upload: "complete",
     bidirectional: "not-run",
   };
+  const lanes = { latency: { reportedMs: 12 }, download: rate(1e6), upload: rate(1e6) };
   const lost = (stage: string, reason: string) => ({
     serverId: "o",
     stage,
@@ -334,10 +335,12 @@ test("a partial value keeps its number with a mark, says partial in its name, an
     multiServer: {
       selection: [frankfurt, oslo],
       servers: [
-        { server: frankfurt, latencyTarget: {}, stages: ran },
+        { server: frankfurt, latencyTarget: {}, ...lanes, stages: ran },
         {
           server: oslo,
           latencyTarget: {},
+          ...lanes,
+          upload: null,
           stages: { ...ran, download: "partial", upload: "not-run" },
         },
       ],
@@ -361,7 +364,9 @@ test("a partial value keeps its number with a mark, says partial in its name, an
     outcome: "partial",
     multiServer: {
       selection: [frankfurt],
-      servers: [{ server: frankfurt, latencyTarget: {}, stages: { ...ran, upload: "partial" } }],
+      servers: [
+        { server: frankfurt, latencyTarget: {}, ...lanes, stages: { ...ran, upload: "partial" } },
+      ],
       failures: [{ ...lost("upload", "insufficient-evidence"), serverId: "f" }],
     },
   });

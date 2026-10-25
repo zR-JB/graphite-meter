@@ -464,8 +464,10 @@ export interface HistoryEntry {
   server: string;
   /** Each stage as the result grid judges it. */
   stages: Record<Stage, CellStatus>;
-  /** Each partial stage: how many selected servers took part, and each that fell short, with its cell. */
-  partial: Partial<Record<Stage, { measured: number; short: { server: string; cell: Cell }[] }>>;
+  /** Each partial stage: of the servers planned for it, how many measured it, and each that fell short. */
+  partial: Partial<
+    Record<Stage, { planned: number; measured: number; short: { server: string; cell: Cell }[] }>
+  >;
   jitterMs: number | null;
   addedLatency: AddedLatency | null;
   /** The load whose median the Loaded column shows: the highest, the first of equals. */
@@ -502,20 +504,12 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
     stages: table.columns,
     partial: Object.fromEntries(
       STAGES.filter((stage) => table.columns[stage] === "partial").map((stage) => {
-        const cells = table.rows.map((row) => ({
-          server: row.server.name,
-          cell: row.cells[stage],
-        }));
-        return [
-          stage,
-          {
-            measured: cells.filter(({ cell }) => ["complete", "partial"].includes(cell.status))
-              .length,
-            short: cells.filter(
-              ({ cell }) => cell.status !== "complete" && cell.status !== "skipped",
-            ),
-          },
-        ];
+        const cells = table.rows
+          .map((row) => ({ server: row.server.name, cell: row.cells[stage] }))
+          .filter(({ cell }) => cell.status !== "skipped");
+        const measured = cells.filter(({ cell }) => ["complete", "partial"].includes(cell.status));
+        const short = cells.filter(({ cell }) => cell.status !== "complete");
+        return [stage, { planned: cells.length, measured: measured.length, short }];
       }),
     ),
     jitterMs: result.latency?.jitterMs ?? null,

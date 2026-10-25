@@ -282,6 +282,9 @@
     align-items: baseline;
     justify-content: end;
     column-gap: var(--space-2);
+    & .status-dot {
+      margin-inline-end: 0.4em;
+    }
 
     /* Deeper than --tone-ink, so a note keeps 4.5:1 on a row's wash as on the page. */
     & .note {
