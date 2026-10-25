@@ -28,6 +28,9 @@ Open <http://localhost:7246>, or `http://SERVER_IP:7246` from another device. Ov
 HTTP/1.1 throughput and WebSocket latency. Browsers expose WebTransport only in a secure context, so remote
 WebTransport needs HTTPS and the native HTTP/3 listener.
 
+Keep host and container ports equal. Discovery advertises a listener at its own port, so with `-p 8080:7246` the
+page loads but says "Could not reach http://SERVER_IP:7246". To serve on 8080, run `-e GM_H1_ADDR=:8080 -p 8080:8080`.
+
 ## Without Docker
 
 Every release since 0.13.1 also attaches the server alone for Linux as
@@ -396,6 +399,7 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 | Symptom                                    | Check                                                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | Another device cannot open the page        | Use the server IP, not `localhost`; publish and allow TCP 7246.                             |
+| The page loads but cannot reach the server | Keep host and container ports equal; see [one container](#one-container).                   |
 | WebTransport is unavailable                | Check for an HTTPS page, a trusted certificate, browser support, an advertised HTTP/3 origin and TCP and UDP reachability. |
 | WebTransport failed 4 times on this page   | Its handshakes failed or timed out, often UDP that a firewall drops; fix that, then reload the page. |
 | An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.          |
