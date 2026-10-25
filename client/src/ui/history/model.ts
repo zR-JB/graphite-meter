@@ -18,7 +18,8 @@ import {
   toRateUnit,
   type Units,
 } from "../../view/format";
-import { LATENCY, OUTCOME, STAGE, STAGE_STATE, TIP } from "../../view/words";
+import { LATENCY, OUTCOME, reasonLabel, STAGE, STAGE_STATE, TIP } from "../../view/words";
+import { causeAt, lower } from "../measure/cards-model";
 import type { IconName } from "../kit/icon";
 
 export const PAGE_ROWS = 50;
@@ -173,6 +174,8 @@ export interface Cell {
   /** What its bar draws against the column's peak; null for a missing value, which shows a word and no bar. */
   value: number | null;
   note: string;
+  /** Why a value is partial, as its tip says it; "" for a value every server measured. */
+  partial: string;
 }
 
 interface RowBase {
@@ -230,6 +233,24 @@ function missing(entry: HistoryEntry, column: HistoryColumn): string {
   return STATUS_WORD[entry.stages[column]];
 }
 
+/** A partial value's tip: who measured it, then who fell short and why. */
+function partial(entry: HistoryEntry, column: HistoryColumn): string {
+  const stage = column === "idle" ? "latency" : column === "loaded" ? null : column;
+  const shortfall = stage && entry.partial[stage];
+  if (!shortfall) return "";
+  const several = entry.servers > 1;
+  const why = shortfall.short.map(({ server, cell: { status, cause } }) => {
+    const reason = !cause
+      ? lower(STAGE_STATE[status].label)
+      : status === "unreached"
+        ? causeAt(cause)
+        : lower(reasonLabel(cause.reason));
+    return several ? `${server}: ${reason}` : reason.charAt(0).toUpperCase() + reason.slice(1);
+  });
+  const count = several ? [`${shortfall.measured} of ${entry.servers} servers`] : [];
+  return [...count, ...why].join(". ");
+}
+
 const notePhrase = (column: HistoryColumn, text: string) =>
   column === "idle" ? `${text} ms` : column === "loaded" ? `under ${text}` : `${text} added`;
 
@@ -256,16 +277,17 @@ function resultRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
   const where = entry.servers > 1 ? `${entry.servers} servers` : entry.server;
   const cells = columns.map((column): Cell => {
     const value = entry.keys[column];
-    if (value === null) return { column, text: missing(entry, column), value, note: "" };
+    if (value === null)
+      return { column, text: missing(entry, column), value, note: "", partial: "" };
     const { tier } = scales[column];
     const text = tier === null ? fmtMs(value) : fmtSpeed(toRateUnit(value, units, tier));
-    return { column, text, value, note: note(entry, column) };
+    return { column, text, value, note: note(entry, column), partial: partial(entry, column) };
   });
   const label = [
     [exact, where, `${OUTCOME[outcome].label.toLowerCase()} result`].filter(Boolean).join(", "),
     ...columns.map((column, index) => {
-      const { text, value, note } = cells[index]!;
-      const reading = `${SORT_LABEL[column]} ${text}${value === null ? "" : ` ${scales[column].unit}`}`;
+      const { text, value, note, partial } = cells[index]!;
+      const reading = `${SORT_LABEL[column]} ${text}${value === null ? "" : ` ${scales[column].unit}`}${partial ? ", partial" : ""}`;
       return note ? `${reading}, ${notePhrase(column, note)}` : reading;
     }),
   ].join(". ");

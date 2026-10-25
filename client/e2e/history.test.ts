@@ -503,7 +503,7 @@ test("version 3's run-wide engine version moves to its latency server, and a res
   await shows("oslo", "IPv4", { Server: "0.9.1" });
 });
 
-test("a partial three-server result shows every server's stages and causes, and the lens opens a server dropped at Start", async (page) => {
+test("a partial three-server result shows every server's stages and causes, the lens opens a server dropped at Start, and its row marks partial values", async (page) => {
   await fixturePage(page);
   const current = record(1);
   const run = current.result.multiServer;
@@ -571,6 +571,13 @@ test("a partial three-server result shows every server's stages and causes, and 
   await expect(card("upload").locator(".line .reason")).toHaveText(
     "Left at Start: server at capacity",
   );
+  // Its row in the list keeps the partial values, each marked and named so.
+  await history(page);
+  const row = page.locator(`a.result-row[data-history-id="${partial.id}"]`);
+  await expect(row).toHaveAttribute("aria-label", /Upload [^.]*, partial/);
+  await expect
+    .poll(() => row.locator(".metric .status-dot").all((dots) => dots.length))
+    .toBeGreaterThan(0);
 });
 
 test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears over the clock", async (page) => {
