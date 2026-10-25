@@ -332,8 +332,7 @@
     & .value {
       grid-area: value;
       justify-self: end;
-      font: 500 var(--type-md) / 1.35 var(--font-sans);
-      font-variant-numeric: tabular-nums;
+      font: 500 var(--type-md) / 1.35 var(--font-mono);
       white-space: nowrap;
     }
     /* A status word in a value's place is prose, not a figure. */
