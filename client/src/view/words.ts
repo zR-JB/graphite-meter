@@ -390,7 +390,7 @@ export const TIP = {
   gaugeAuto: "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
   gaugeMax: "Maximum\nFixes the chart ceiling\nThe gauge rounds up to a 1, 2, 5 step",
   saveResults: `Save results\nKeeps the newest ${HISTORY_LIMIT.toLocaleString("en-US")} results in this browser\nNothing is uploaded`,
-  idleCadence: `Idle probe interval\nReply: the next probe leaves on each reply\n${SPACINGS}`,
+  idleCadence: `Idle probe interval\nReply: the next probe leaves on each reply, 1 ms apart at least\n${SPACINGS}`,
   loadedCadence: `Loaded probe interval\nProbes during transfers, start to start\n${SPACINGS}`,
   skipLoadedLatency: "Skip loaded latency\nWith the Latency stage off, transfers send no probes",
   forcedStreams:

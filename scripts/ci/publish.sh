@@ -54,11 +54,11 @@ promote_aliases() {
   local series=${VERSION%.*} tags
   [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "invalid verified digest"
   [[ "$VERSION" =~ ^$STABLE$ ]] || fail "invalid stable version: $VERSION"
-  # The release list can trail a release published seconds ago.
+  # The release list can trail a release published seconds ago, and a failed read retries with no partial list.
   for attempt in 1 2 3 4 5 6; do
     tags=$(gh api --paginate "repos/$REPOSITORY/releases?per_page=100" \
       --jq ".[] | select(.draft == false and .prerelease == false) | .tag_name" \
-      | { grep -E "^v$STABLE\$" || true; } | sort -V)
+      | { grep -E "^v$STABLE\$" || true; } | sort -V) || tags=
     grep -qx "v$VERSION" <<<"$tags" && break
     [ "$attempt" = 6 ] && fail "v$VERSION is not a published stable release yet"
     sleep 10

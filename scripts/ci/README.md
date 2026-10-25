@@ -31,23 +31,28 @@ and the daily run on main run every job:
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
 | Run client on Windows arm64 | the Windows arm64 client out of its archive, on GitHub's arm64 Windows runner |
 | Release staging | `assets.py stage`, which joins the two OCI archives into the image, and `assets.py check` on the image, the server archives and the client archives, as a release does |
-| Browser E2E | Chrome in seven jobs and Firefox in six against the E2E server: the suite in four Chrome and three Firefox shards, and the network group, which shapes the runner's loopback, in three shards each; on the Chrome heavy shard, Chromium's HTTP/3, WebTransport and session close-code check (`rust/interop/browser.py`) |
+| Browser E2E | Chrome in seven jobs and Firefox in six against the E2E server: the suite in four Chrome and three Firefox shards, and the network group, which shapes the runner's loopback, in three shards each, its files dealt longest first by `client/e2e/timings.json`; on the Chrome heavy shard, Chromium's HTTP/3, WebTransport and session close-code check (`rust/interop/browser.py`) |
 
 `mise run ci` runs CI's check, secret-scan, target, delayed-download and browser gates locally, but not the image,
 archive, Windows or release-staging jobs; the policy fails if one of its steps has no CI job. A new push to a pull
 request cancels its run in progress; a push to main lets it finish and replaces only an older pending one, so main runs
 at most two at a time; re-run only main's head, since a re-run older run takes the newest one's pending place. Cargo
 caches are keyed by job, toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the
-same toolchain; only CI writes caches.
-The target checks' Ubuntu cross compilers install from `.deb`s cached per runner image (`scripts/ci/apt-cached.sh`),
-so a stalled Ubuntu mirror matters only on a cold cache; the Firefox network jobs take the image's own `certutil`.
+same toolchain. Only main's CI runs write caches; a pull request restores main's and saves none, so the repository's
+10 GB never fills with one copy per pull request. A pull request with a new `Cargo.lock` restores main's Cargo caches
+by prefix. The E2E server job carries its Cargo target directory the same way; its build copies it in from
+`.server-target`. The mise toolchain caches are keyed by `mise.lock` and the installed tools, so a task edit in
+`mise.toml` keeps them. The target checks' Ubuntu cross compilers install from `.deb`s cached per runner image
+(`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold cache; the Firefox network jobs take
+the image's own `certutil`.
 Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
 unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.
 `rust-check` checks the locked crates and the Cargo forks' advisory verdicts against the RustSec database it
 fetches, and CI checks the client packages against the registry's advisories, so a new advisory fails every pull
-request that runs the code checks; `advisories.yml` repeats all three daily. Pull requests and pushes test the browsers
-`mise.toml` pins; the daily CI run tests the latest stable Chrome for Testing and Firefox, without caches, and
-`mise run browser-bump` moves the pins to them.
+request that runs the code checks; `advisories.yml` repeats all three daily. `rust-deny-fetch` retries a failed fetch
+twice and never falls back to an older copy. Pull requests and pushes test the browsers `mise.toml` pins; the daily CI
+run tests the latest stable Chrome for Testing and Firefox, without caches, and `mise run browser-bump` moves the pins
+to them.
 
 ### Merge queue
 

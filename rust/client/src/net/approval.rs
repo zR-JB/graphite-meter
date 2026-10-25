@@ -2,7 +2,7 @@
 use super::{
     CONTROL_TIMEOUT, Client,
     conn::{Conn, Payload, ReadBuffer},
-    fault::Fault,
+    fault::{Class, Fault},
 };
 use crate::model::Failure;
 use bytes::Bytes;
@@ -73,7 +73,7 @@ impl Approval {
             .await
     }
 
-    /// The grant `poll` brings, asked every second; network failures are retried until the deadline reports the last.
+    /// The grant `poll` brings, asked every second; passing failures are retried until the deadline reports the last.
     pub async fn wait<F>(&self, mut poll: impl FnMut() -> F) -> Result<String, Unapproved>
     where
         F: Future<Output = Result<Option<String>, Fault>>,
@@ -87,7 +87,7 @@ impl Approval {
             match polled {
                 Ok(Ok(Some(token))) => return Ok(token),
                 Ok(Ok(None)) => unreachable = None,
-                Ok(Err(fault @ Fault::Malformed(_))) => {
+                Ok(Err(fault)) if fault.class() == Class::Final => {
                     return Err(Unapproved::Failed(fault.failure()));
                 }
                 Ok(Err(fault)) if !cut => unreachable = Some(fault),
@@ -138,10 +138,7 @@ impl Approval {
             match status {
                 StatusCode::ACCEPTED => Ok(None),
                 StatusCode::OK => grant(document?),
-                status => Err(Fault::Malformed(format!(
-                    "sign-in answered HTTP {}",
-                    status.as_u16()
-                ))),
+                status => Err(Fault::SignInAnswer(status)),
             }
         };
         let exchanged = timeout(CONTROL_TIMEOUT, exchange).await;

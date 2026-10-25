@@ -76,7 +76,7 @@ pub(super) fn forwarding_bytes(max_datagram: usize) -> Option<usize> {
         .checked_add(size_of::<FirstFlight>().checked_mul(FIRST_FLIGHTS)?)
 }
 
-/// Has the kernel deliver each datagram to the socket its connection ID names; sockets join in endpoint order.
+/// Has the kernel deliver each datagram to the socket its ID names; sockets join in endpoint order, and a joiner attaches.
 pub(super) fn route_in_kernel(socket: &std::net::UdpSocket) -> io::Result<()> {
     cfg_select! {
         target_os = "linux" => {
@@ -480,11 +480,11 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_kernel_delivers_a_datagram_to_the_socket_its_id_names() {
-        let bind = |address| graphite_meter_net::bind_udp(address, 2).unwrap().0;
-        let first = bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
+        let localhost = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+        let first = graphite_meter_net::bind_udp(localhost, 2).unwrap().0;
         let address = first.local_addr().unwrap();
-        let sockets = [first, bind(address)];
-        route_in_kernel(&sockets[0]).unwrap();
+        let sockets = [first, graphite_meter_net::join_udp(address, 2).unwrap().0];
+        route_in_kernel(&sockets[1]).unwrap();
         for socket in &sockets {
             socket
                 .set_read_timeout(Some(Duration::from_secs(2)))

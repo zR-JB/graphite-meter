@@ -72,10 +72,11 @@ pub enum Conn {
 
 pub(super) type Answer = http::Response<Incoming>;
 
-/// A request that failed; `again` when its connection failed before answering, so it may go on another.
+/// A request that failed; `broken` when its connection failed before answering, `unsent` when it never left.
 pub(super) struct Failed {
     pub fault: Fault,
-    pub again: bool,
+    pub broken: bool,
+    pub unsent: bool,
 }
 
 impl Conn {
@@ -195,12 +196,18 @@ impl Conn {
         let response = match self {
             Self::Http1 { sender, form } => {
                 http1_form(&mut head, form);
-                sender.ready().await.map_err(hyper_failed)?;
-                sender.send_request(head.map(|()| body)).await
+                sender
+                    .ready()
+                    .await
+                    .map_err(|error| hyper_failed(error, true))?;
+                sender.try_send_request(head.map(|()| body)).await
             }
             Self::Http2(sender) => {
-                sender.ready().await.map_err(hyper_failed)?;
-                sender.send_request(head.map(|()| body)).await
+                sender
+                    .ready()
+                    .await
+                    .map_err(|error| hyper_failed(error, true))?;
+                sender.try_send_request(head.map(|()| body)).await
             }
             Self::Http3 { requests, quic } => return http3_send(requests, quic, head, body).await,
         };
@@ -208,7 +215,11 @@ impl Conn {
             source: Source::Hyper(body),
             ended: None,
         };
-        Ok(response.map_err(hyper_failed)?.map(incoming))
+        let response = response.map_err(|mut failed| {
+            let unsent = failed.take_message().is_some();
+            hyper_failed(failed.into_error(), unsent)
+        });
+        Ok(response?.map(incoming))
     }
 }
 
@@ -423,14 +434,15 @@ fn hyper_fault(error: &hyper::Error) -> Fault {
     }
 }
 
-/// A hyper failure; a stream the peer reset ends alone, so only a connection's own failure goes again.
-fn hyper_failed(error: hyper::Error) -> Failed {
+/// A hyper failure; a stream the peer reset ends alone, so only a connection's own failure breaks it.
+fn hyper_failed(error: hyper::Error, unsent: bool) -> Failed {
     let source =
         std::error::Error::source(&error).and_then(|source| source.downcast_ref::<h2::Error>());
-    let again = !error.is_user() && !source.is_some_and(h2::Error::is_reset);
+    let broken = !error.is_user() && !source.is_some_and(h2::Error::is_reset);
     Failed {
         fault: hyper_fault(&error),
-        again,
+        broken,
+        unsent,
     }
 }
 
@@ -445,7 +457,8 @@ pub(super) fn http3_fault(error: http3::Error) -> Fault {
 }
 
 fn http3_failed(error: http3::Error) -> Failed {
-    let again = matches!(
+    let unsent = matches!(error, http3::Error::GoingAway);
+    let broken = matches!(
         error,
         http3::Error::Transport(_)
             | http3::Error::Connection { local: false, .. }
@@ -453,7 +466,8 @@ fn http3_failed(error: http3::Error) -> Failed {
     );
     Failed {
         fault: http3_fault(error),
-        again,
+        broken,
+        unsent,
     }
 }
 

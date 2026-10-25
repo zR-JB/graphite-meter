@@ -25,6 +25,7 @@ pub enum Fault {
         from: Route,
         retry_after: Option<Duration>,
     },
+    SignInAnswer(StatusCode),
     /// The server refused an upload ID or a route for good.
     Refused(Refusal),
     Ended(LaneEnding),
@@ -56,12 +57,19 @@ impl Fault {
                 FailureReason::ConnectionLost
             }
             Self::SignIn(_) | Self::Ended(LaneEnding::Revoked) => FailureReason::SignInRequired,
+            Self::SignInAnswer(StatusCode::GONE) => FailureReason::SignInRequired,
             Self::TimedOut(_) | Self::Ended(_) => FailureReason::Timeout,
-            Self::Status { status, .. } if *status == StatusCode::TOO_MANY_REQUESTS => {
+            Self::Status { status, .. } | Self::SignInAnswer(status)
+                if *status == StatusCode::TOO_MANY_REQUESTS =>
+            {
                 FailureReason::ClientLimit
             }
-            Self::Status { status, .. } if busy(*status) => FailureReason::ServerCapacity,
-            Self::Status { .. } | Self::Malformed(_) => FailureReason::ProtocolError,
+            Self::Status { status, .. } | Self::SignInAnswer(status) if busy(*status) => {
+                FailureReason::ServerCapacity
+            }
+            Self::Status { .. } | Self::SignInAnswer(_) | Self::Malformed(_) => {
+                FailureReason::ProtocolError
+            }
             Self::Incompatible(_) | Self::Internal => FailureReason::PathFailed,
             Self::Refused(refusal) => refusal.failure_reason(),
         }
@@ -80,10 +88,16 @@ impl Fault {
             {
                 Class::Redial
             }
+            Self::SignInAnswer(status)
+                if status.is_server_error() || *status == StatusCode::REQUEST_TIMEOUT =>
+            {
+                Class::Redial
+            }
             Self::Connect(
                 ConnectError::Proxy(_) | ConnectError::Refused(_) | ConnectError::Tls(_),
             )
             | Self::Status { .. }
+            | Self::SignInAnswer(_)
             | Self::Refused(_)
             | Self::SignIn(_)
             | Self::Ended(LaneEnding::Revoked)
@@ -186,6 +200,16 @@ impl fmt::Display for Fault {
             Self::Status { status, from, .. } => {
                 write!(formatter, "HTTP {} from {}", status.as_u16(), source(*from))
             }
+            Self::SignInAnswer(StatusCode::TOO_MANY_REQUESTS) => formatter
+                .write_str("This server's sign-in has reached its limit of authorized clients."),
+            Self::SignInAnswer(StatusCode::GONE) => {
+                formatter.write_str("The approval's answer was lost on the way. Sign in again.")
+            }
+            Self::SignInAnswer(status) => write!(
+                formatter,
+                "Could not finish the sign-in (HTTP {}).",
+                status.as_u16()
+            ),
             Self::Refused(refusal) => write!(
                 formatter,
                 "{} (HTTP {})",
