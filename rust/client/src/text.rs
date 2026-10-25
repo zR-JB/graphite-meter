@@ -160,6 +160,13 @@ pub fn capitalized(text: &str) -> String {
     })
 }
 
+pub fn lowered(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_lowercase().chain(chars).collect()
+    })
+}
+
 pub fn width(text: &str) -> usize {
     text.width()
 }

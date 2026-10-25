@@ -202,7 +202,7 @@ a meter      12.0 ms  12.0 ms
 b meter      13.0 ms  13.0 ms
 
 Issues
-b meter · Download throughput · at 7.5 s · Stopped delivering data
+b meter · Download · at 7.5 s · Stopped delivering data
 ";
     assert_eq!(text, expected);
 }
@@ -256,7 +256,7 @@ fn the_16_color_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_it
         "{details}"
     );
     assert!(
-        details.ends_with("\nb meter · Download throughput · at 7.5 …\n"),
+        details.ends_with("\nb meter · Download · at 7.5 s · Stopped…\n"),
         "{details}"
     );
 }

@@ -11,7 +11,7 @@ use graphite_meter_client::{
         aggregate::Rate,
         latency::{Latency, ProbeOutcome},
     },
-    model::{Dir, Failure, Outcome, Stage, StageResult, Throughput},
+    model::{Dir, Failure, Outcome, Scope, ServerFailure, Stage, StageResult, Throughput},
     net::{ThroughputPath, approval::Unapproved},
     report::report,
     run::{
@@ -694,6 +694,136 @@ fn the_console_follows_a_download_and_takes_presses() {
     let moved = pointer(MouseEventKind::Moved, find(&mut app, now, "Start test"));
     app.input(moved, now);
     assert!(app.hovered().is_some(), "the key lights under the pointer");
+}
+
+fn result_of(stage: Stage) -> StageResult {
+    StageResult {
+        stage,
+        measured: SECOND * 10,
+        stopped: false,
+        throughput: Dir {
+            down: Some(Throughput {
+                rate: Some(Rate {
+                    mean: 12.5e6,
+                    peak: 13e6,
+                }),
+                bytes: 125_000_000,
+            }),
+            up: None,
+        },
+        servers: Vec::new(),
+        failures: Vec::new(),
+    }
+}
+
+#[test]
+fn issues_and_a_blocked_start_read_as_the_browser_says_them() {
+    let now = Instant::now();
+    let mut app = running(&["a", "b"], &[(Stage::Download, SECOND * 10)], now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    let failed = |scope, reason| ServerFailure {
+        server: id("b"),
+        scope,
+        failure: Failure::new(reason, "lost"),
+        at: now,
+    };
+    app.event(
+        &Event::ServerFailed(failed(Scope::Latency, FailureReason::Timeout)),
+        now,
+    );
+    assert!(shows(
+        &mut app,
+        now,
+        "Issue on B · Loaded download: Stopped delivering data"
+    ));
+    let lost = failed(Scope::Throughput, FailureReason::ConnectionLost);
+    app.event(&Event::ServerFailed(lost.clone()), now);
+    assert!(shows(
+        &mut app,
+        now,
+        "Issue on B · Download: Connection lost"
+    ));
+    let result = StageResult {
+        failures: vec![lost.clone(), lost],
+        ..result_of(Stage::Download)
+    };
+    app.event(&Event::StageFinished(result), now);
+    app.event(&ended(Outcome::Partial), now);
+    let rows = frame(&mut app, now);
+    let named = rows
+        .iter()
+        .map(|row| row.matches("B: connection lost").count());
+    assert_eq!(
+        named.sum::<usize>(),
+        1,
+        "the card names the server once: {rows:#?}"
+    );
+
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    let alone = ServerFailure {
+        server: id("a"),
+        ..failed(Scope::Throughput, FailureReason::ConnectionLost)
+    };
+    app.event(&Event::ServerFailed(alone.clone()), now);
+    assert!(shows(&mut app, now, "Issue · Download: Connection lost"));
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 110, 36));
+    app.draw(&mut buffer, now);
+    let bar: String = buffer.content()[110 * 35..]
+        .iter()
+        .map(Cell::symbol)
+        .collect();
+    assert!(
+        bar.contains("Issue · Download: Connection lost")
+            && bar.contains("stop test")
+            && !bar.contains("keys"),
+        "the keys after the first give way to a notice: {bar}"
+    );
+    let loaded = ServerFailure {
+        scope: Scope::Latency,
+        ..alone
+    };
+    let result = StageResult {
+        failures: vec![loaded],
+        ..result_of(Stage::Download)
+    };
+    app.event(&Event::StageFinished(result), now);
+    app.event(&ended(Outcome::Partial), now);
+    let rows = frame(&mut app, now);
+    assert!(
+        rows.iter().any(|row| row.contains("↓ Download ✓"))
+            && !rows.iter().any(|row| row.contains("Download Partial")),
+        "loaded latency lost leaves the download whole: {rows:#?}"
+    );
+    press(&mut app, KeyCode::Char('2'), now);
+    assert!(
+        frame(&mut app, now)
+            .last()
+            .unwrap()
+            .starts_with("Test cannot start"),
+        "settings that cannot run outrank the last outcome"
+    );
+
+    let mut app = running(&["a", "b"], &[(Stage::Download, SECOND * 10)], now);
+    app.event(
+        &Event::ServerFailed(failed(Scope::Server, FailureReason::PathFailed)),
+        now,
+    );
+    assert!(shows(&mut app, now, "Issue on B · Start: Path unavailable"));
+
+    let config = Config {
+        stages: Vec::new(),
+        ..config()
+    };
+    let mut app = App::new(config, None, (Profile::Plain, Palette::new(true)), now);
+    let blocked = frame(&mut app, now);
+    let count = |text: &str| blocked.iter().filter(|row| row.contains(text)).count();
+    assert_eq!(
+        count("Test cannot start"),
+        2,
+        "dial and status bar: {blocked:#?}"
+    );
+    assert!(shows(&mut app, now, "Start test turn on a stage"));
 }
 
 fn downloaded(now: Instant) -> App {

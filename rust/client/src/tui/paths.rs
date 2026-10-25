@@ -62,6 +62,23 @@ impl App {
         failed && !self.checking()
     }
 
+    pub(super) fn start_failure(&self) -> Option<String> {
+        match &self.view.check {
+            Check::Failed(failure) => Some(failure.text.clone()),
+            _ if self.could_not_start() => {
+                let failure = self
+                    .view
+                    .servers
+                    .iter()
+                    .find_map(|server| server.path.as_ref().err());
+                Some(failure.map_or("No test server answered".into(), |failure| {
+                    failure.text.clone()
+                }))
+            }
+            _ => None,
+        }
+    }
+
     fn single(&self) -> Option<(&ServerPath, &Capabilities)> {
         match &self.view.servers[..] {
             [server] => Some((server, server.offered.as_ref()?)),
