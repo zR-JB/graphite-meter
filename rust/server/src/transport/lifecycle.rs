@@ -52,7 +52,11 @@ impl Lifecycle {
 
     /// The server stops: the connection goes away and closes after the grace, whatever runs on it.
     pub fn stop(&mut self) {
-        self.stopping = true;
+        if !std::mem::replace(&mut self.stopping, true)
+            && let Some(closing) = &mut self.closing
+        {
+            closing.as_mut().reset(Instant::now() + SHUTDOWN_GRACE);
+        }
     }
 
     /// The next event, given the connection's `activity`; unadmitted requests never hold credit open.
@@ -168,6 +172,37 @@ mod tests {
         assert_eq!(
             poll(&mut lifecycle, true, true).await,
             Poll::Ready(Event::Close)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stopping_after_an_earlier_goaway_still_gives_running_work_the_grace() {
+        let work = Work::default();
+        let mut lifecycle = Lifecycle::new(work.clone());
+        drop(work.start());
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        advance(CONNECTION_IDLE).await;
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::GoAway)
+        );
+        let _racing = work.start();
+        advance(SHUTDOWN_GRACE * 4).await;
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        lifecycle.stop();
+        assert!(
+            poll(&mut lifecycle, true, true).await.is_pending(),
+            "the earlier deadline has passed"
+        );
+        advance(SHUTDOWN_GRACE - MILLI).await;
+        lifecycle.stop();
+        assert!(poll(&mut lifecycle, true, true).await.is_pending());
+        advance(MILLI).await;
+        lifecycle.stop();
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::Close),
+            "the connection stops once"
         );
     }
 
