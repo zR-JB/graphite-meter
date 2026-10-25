@@ -310,6 +310,8 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
     /^https:\/\/github\.com\/n0-computer\/noq\/tree\/[0-9a-f]{40}$/,
   );
   expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
   await page.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(about).toBeFocused();
