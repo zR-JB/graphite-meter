@@ -185,6 +185,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ needs.verify.outputs.tag }}
           TARGET_SHA: ${{ github.sha }}
+          DIGEST: ${{ needs.verify.outputs.digest }}
           ASSETS_DIR: ${{ runner.temp }}/handoff/assets
         run: python3 scripts/ci/release.py publish
 

@@ -82,7 +82,8 @@ def github(state: State, argv: list[str], stdin: str | None) -> object:
     if "secret-token" in " ".join(argv):
         raise Refused("token in argv")
     method = flags.get("--method", "GET")
-    path = flags["path"].split("github.com/", 1)[-1].removeprefix("repos/owner/repo/")
+    path = flags["path"].split("github.com/", 1)[-1]
+    path = path[len("repos/owner/repo/"):] if path.lower().startswith("repos/owner/repo/") else path
     if method != "GET":
         state["writes"].append(f"{method} {path}")
     tags, parts = state["tags"], path.split("?")[0].split("/")
@@ -224,7 +225,8 @@ class RegistryTests(unittest.TestCase):
 
 
 class ReleasePublicationTests(unittest.TestCase):
-    def publish(self, before: State, assets: dict[str, bytes] = ASSETS) -> tuple[str | None, str, State]:
+    def publish(self, before: State, assets: dict[str, bytes] = ASSETS,
+                digest: str = VERIFIED) -> tuple[str | None, str, State]:
         state = copy.deepcopy(before)
 
         def gh(argv: list[str], *, input: str | None = None, env: dict[str, str] | None = None,
@@ -242,8 +244,8 @@ class ReleasePublicationTests(unittest.TestCase):
             files.mkdir()
             for name, payload in assets.items():
                 (files / name).write_bytes(payload)
-            env = {"GH_TOKEN": "secret-token", "REPOSITORY": "owner/repo", "TAG": TAG, "TARGET_SHA": SHA,
-                   "ASSETS_DIR": str(files), "RUNNER_TEMP": directory}
+            env = {"GH_TOKEN": "secret-token", "REPOSITORY": "Owner/Repo", "TAG": TAG, "TARGET_SHA": SHA,
+                   "DIGEST": digest, "ASSETS_DIR": str(files), "RUNNER_TEMP": directory}
             output, error = io.StringIO(), None
             with (patch.dict(os.environ, env), patch("release.time.sleep"), patch("github_api.subprocess.run", gh),
                   contextlib.redirect_stdout(output), contextlib.redirect_stderr(output)):
@@ -261,6 +263,13 @@ class ReleasePublicationTests(unittest.TestCase):
                 self.assertIn("release handoff holds", error or "")
                 self.assertEqual(after["writes"], [])
 
+    def test_a_release_names_only_a_verified_image_digest(self) -> None:
+        for digest in ("sha256:" + "A" * 64, "latest", VERIFIED + "\n"):
+            with self.subTest(digest=digest):
+                error, _, after = self.publish(EMPTY, digest=digest)
+                self.assertIn("invalid verified image digest", error or "")
+                self.assertEqual(after["writes"], [])
+
     def test_release_publishes_only_exact_assets_at_the_exact_tag(self) -> None:
         error, output, published = self.publish(EMPTY)
         self.assertIsNone(error, output)
@@ -274,7 +283,10 @@ class ReleasePublicationTests(unittest.TestCase):
         self.assertTrue(release["body"].startswith(
             f"## Source\n\nThe source for this release is the repository at tag **{TAG}** (commit **{SHA}**), "
             "attached by GitHub as Source code (zip/tar.gz). The source of the third-party components in the image "
-            f"and the server and client archives is attached as **{SOURCE}**."))
+            f"and the server and client archives is attached as **{SOURCE}**.\n\n## Image\n\n"
+            f"`ghcr.io/owner/repo:1.2.3@{VERIFIED}` for linux/amd64 and linux/arm64; pin the digest to deploy "
+            "exactly this release."))
+        source_only = release["body"].split("\n\n## Image")[0]
 
         def edit(**change: object) -> Callable[[State], State]:
             return lambda state: state | {"releases": [state["releases"][0] | change]}
@@ -304,12 +316,16 @@ class ReleasePublicationTests(unittest.TestCase):
             (published, edit(prerelease=True), "already exists as a prerelease", True),
             (published, tampered, "published but asset names/digests differ", True),
             (published, edit(body="notes"), "notice is missing or stale", True),
+            (published, edit(body=f"{source_only}\n\nnotes"), "is already published", True),
+            (published, edit(body=release["body"].replace(VERIFIED, "sha256:" + "b" * 64)),
+             "notice is missing or stale", True),
+            (published, edit(draft=True, body=f"{source_only}\n\nnotes"), "stale source or image notice", True),
             (published, lambda state: state | other_tag, f"already exists at {OTHER_SHA}", True),
             (EMPTY, lambda state: state | other_tag, f"already exists at {OTHER_SHA}", True),
             (EMPTY, lambda state: state | {"race": OTHER_SHA}, f"resolves to {OTHER_SHA}", False),
             (EMPTY, lambda state: state | rejected, "GitHub rejected creation", False),
             (EMPTY, lambda state: state | {"tamper": "x"}, "draft release asset names", False),
-            (published, edit(draft=True, body="## Source availability\nold"), "stale source notice", True),
+            (published, edit(draft=True, body="## Source availability\nold"), "stale source or image notice", True),
         )
         for base, change, expected, read_only in rows:
             before: State = change(base)
