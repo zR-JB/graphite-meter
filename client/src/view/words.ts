@@ -383,7 +383,7 @@ export const TIP = {
   wireRate:
     "Wire rate\nPayload plus the protocol headers carried with it\nAn estimate; hover a result for its parts",
   keyShortcuts:
-    "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
+    "Keyboard shortcuts\nS, D, H, R and T act when no field has focus, and Esc stops a test\nTurn off if speech input triggers them",
   gaugeAuto: "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
   gaugeMax: "Maximum\nFixes the chart ceiling\nThe gauge rounds up to a 1, 2, 5 step",
   saveResults: `Save results\nKeeps the newest ${HISTORY_LIMIT.toLocaleString("en-US")} results in this browser\nNothing is uploaded`,

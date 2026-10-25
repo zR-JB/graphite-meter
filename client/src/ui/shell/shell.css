@@ -272,6 +272,9 @@
       align-items: center;
       gap: var(--space-1);
     }
+    & > [aria-hidden="true"] {
+      visibility: hidden;
+    }
     /* Every run word shares one cell, so a change never moves the strip. */
     & .run-word {
       display: inline-grid;
