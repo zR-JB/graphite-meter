@@ -284,11 +284,18 @@ impl SendWindow {
     }
 
     fn grow(&mut self, quic: &noq::Connection, target: u64, budget: &Budget) {
-        let granted = target.min(MAX_SEND_WINDOW).saturating_sub(self.limit);
-        if granted >= SEND_WINDOW_STEP && budget.pressure() != Pressure::HoldBack {
-            self.limit += granted;
+        if self.widen(target, budget) {
             quic.set_send_window(self.limit);
         }
+    }
+
+    fn widen(&mut self, target: u64, budget: &Budget) -> bool {
+        let granted = target.min(MAX_SEND_WINDOW).saturating_sub(self.limit);
+        let widened = granted >= SEND_WINDOW_STEP && budget.pressure() != Pressure::HoldBack;
+        if widened {
+            self.limit += granted;
+        }
+        widened
     }
 
     fn release(&mut self, quic: &noq::Connection) {
@@ -324,5 +331,17 @@ mod tests {
             MIN_SEND_WINDOW,
             "no time observed"
         );
+    }
+
+    #[test]
+    fn the_send_window_grows_only_below_three_quarters_of_the_budget() {
+        let budget = Budget::new(64 << 20);
+        let pressure = budget.lease(48 << 20).unwrap();
+        let mut window = SendWindow::default();
+        assert!(!window.widen(MAX_SEND_WINDOW, &budget));
+        assert_eq!(window.limit, MIN_SEND_WINDOW);
+        drop(pressure);
+        assert!(window.widen(MAX_SEND_WINDOW, &budget));
+        assert_eq!(window.limit, MAX_SEND_WINDOW);
     }
 }
