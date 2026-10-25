@@ -81,6 +81,7 @@ export interface Discovery {
   engineVersion: string;
   server: { name: string; location?: string };
   maxStageMs: number;
+  maxMeasurements: number;
   /** The origin that answered the preflight, and the protocol the browser used for it. */
   origin: string;
   protocol: string | null;
@@ -202,7 +203,7 @@ export interface StageEvents {
 }
 
 /** A server's lanes for one stage, as the browser's connection budget dealt them. */
-export type StageLanes = Pick<StageSetup, "streams" | "gating">;
+export type StageLanes = Pick<StageSetup, "streams">;
 
 export interface StageSetup {
   server: PreparedServer;
@@ -210,8 +211,6 @@ export interface StageSetup {
   /** Lanes per direction for this server and stage; 0 for a direction the stage does not move. */
   streams: Record<Direction, number>;
   uploadLanes: number;
-  /** The lanes readiness waits for: those an HTTP/1.1 origin's pool runs at once; all of `streams` when absent. */
-  gating?: Record<Direction, number>;
   /** The probe spacing of this stage: the idle cadence for the latency stage, the loaded one otherwise. */
   cadence: PingCadence;
   events: StageEvents;

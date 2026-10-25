@@ -22,6 +22,7 @@ function offer(
     engineVersion: "",
     server: { name: "" },
     maxStageMs: 300_000,
+    maxMeasurements: 32,
     origin,
     protocol: null,
     readAt: 0,

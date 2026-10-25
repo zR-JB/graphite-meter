@@ -92,7 +92,7 @@ export function StageTrack(props: {
 function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }): Node {
   const { app, live, stage } = props;
   const { run } = app;
-  const config = app.preferences.config;
+  const config = app.run.upcoming;
   const selected = computed(() => planned(config(), stage));
   const locked = computed(() => !run.canToggle(stage));
   const state = computed(() => live.states()[stage]);

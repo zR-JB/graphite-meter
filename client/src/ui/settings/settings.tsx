@@ -2,13 +2,18 @@
 import "./settings.css";
 import type { App } from "../../app/app";
 import { DEFAULT_CONFIG, readPreferences } from "../../app/preferences";
-import { BROWSER_POOL, MAX_STREAMS, normalizeStreamCount } from "../../engine/net/streams";
+import {
+  MAX_STREAMS,
+  normalizeStreamCount,
+  planError,
+  streamNotes,
+} from "../../engine/net/streams";
 import { parseSelection } from "../../engine/net/paths";
 import type { PingCadence, TestConfig } from "../../engine/types";
-import { Show } from "../../lib/dom";
+import { For, Show } from "../../lib/dom";
 import { computed, effect, signal, untrack } from "../../lib/signal";
 import { fromRateUnit, rateUnit, toRateUnit } from "../../view/format";
-import { CADENCE, READINESS, READINESS_TIP, TIP } from "../../view/words";
+import { CADENCE, NEXT_TEST, READINESS, READINESS_TIP, TIP } from "../../view/words";
 import { announce, announceChanges } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import { Icon } from "../kit/icon";
@@ -32,6 +37,12 @@ export interface Edits {
   notice(group: Group): Node;
 }
 
+const GROUP_KEYS: Partial<Record<Group, readonly (keyof TestConfig)[]>> = {
+  connection: ["transports"],
+  probes: ["pingCadence", "loadedPingCadence", "skipLoadedLatencyWhenStageOff"],
+  transfers: ["transferStreams", "experimentalDatagramThroughput"],
+};
+
 const REFUSED = "This change cannot apply to the running test.";
 /** The maximum keeps one prefix, so a typed number never changes meaning. */
 const MAXIMUM_TIER = 2;
@@ -46,7 +57,7 @@ const DATAGRAM_DETAIL =
 const DISPLAY_DEFAULTS = readPreferences(null);
 
 export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node {
-  const config = app.preferences.config;
+  const config = app.run.upcoming;
   const { servers, run } = app;
   const locked = computed(() => run.running() || run.preparing());
   const custom = signal(false);
@@ -71,13 +82,23 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
       return false;
     },
     notice: (group) => (
-      <Show when={() => (refused()?.group === group ? refused()!.text : "")}>
-        {(text) => (
-          <p class="notice" data-tone="warn">
-            {text}
-          </p>
-        )}
-      </Show>
+      <>
+        <Show when={() => (refused()?.group === group ? refused()!.text : "")}>
+          {(text) => (
+            <p class="notice" data-tone="warn">
+              {text}
+            </p>
+          )}
+        </Show>
+        <Show
+          when={() =>
+            (GROUP_KEYS[group] ?? []).some((key) => key in run.waiting()) ||
+            (group === "connection" && servers.waiting())
+          }
+        >
+          {() => <p class="hint">{NEXT_TEST}</p>}
+        </Show>
+      </>
     ),
   };
   const configure = (group: Group, patch: Partial<TestConfig>) =>
@@ -127,15 +148,12 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
   );
   const streams = (patch: Partial<TestConfig["transferStreams"]>) =>
     configure("transfers", { transferStreams: { ...config.peek().transferStreams, ...patch } });
-  const queued = computed(
-    () =>
-      forced() &&
-      config().transferStreams.count > BROWSER_POOL &&
-      servers.selected().some((id) => {
-        const target = servers.views().get(id)?.throughput.path?.target;
-        return target?.transport === "fetch-stream" && target.protocol === "http1";
-      }),
-  );
+  const planned = computed(() => {
+    const plans = servers.plans();
+    return plans.every((plan) => plan !== null)
+      ? { error: planError(config(), plans), notes: streamNotes(config(), plans) }
+      : { error: "", notes: [] };
+  });
   const datagrams = computed(() => {
     const selection = parseSelection(config().transports.throughputTarget);
     return (
@@ -144,7 +162,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
       (selection.kind === "origin" && selection.mechanism === "::wtdg")
     );
   });
-  announceChanges(servers.streamPlanError);
+  announceChanges(() => planned().error);
   announceChanges(() => (datagrams() ? `${DATAGRAM_NOTE} ${DATAGRAM_DETAIL}` : ""));
 
   let resetKey: HTMLButtonElement;
@@ -336,7 +354,6 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                           name: CADENCE[value].label,
                         }))}
                         value={() => config()[key]}
-                        disabled={locked}
                         choose={(value) =>
                           configure(
                             "probes",
@@ -352,7 +369,6 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                     label="Skip loaded latency if the Latency stage is off"
                     tip={() => TIP.skipLoadedLatency}
                     checked={() => config().skipLoadedLatencyWhenStageOff}
-                    disabled={locked}
                     onToggle={(skipLoadedLatencyWhenStageOff) =>
                       configure("probes", { skipLoadedLatencyWhenStageOff })
                     }
@@ -368,7 +384,6 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                     label="Exact stream count"
                     tip={() => TIP.forcedStreams}
                     checked={forced}
-                    disabled={locked}
                     onToggle={(on) => streams({ mode: on ? "forced" : "auto" })}
                   />
                   <div class="units">
@@ -384,7 +399,6 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                       format={String}
                       parse={parseCount}
                       count
-                      disabled={locked}
                       onChange={(count) => streams({ count: normalizeStreamCount(count) })}
                     />
                   </div>
@@ -392,22 +406,16 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                     label="Datagram throughput (experimental)"
                     tip={() => TIP.datagramThroughput}
                     checked={() => config().experimentalDatagramThroughput}
-                    disabled={locked}
                     onToggle={(experimentalDatagramThroughput) =>
                       configure("transfers", { experimentalDatagramThroughput })
                     }
                   />
                 </div>
                 {edits.notice("transfers")}
-                <Show when={queued}>
-                  {() => (
-                    <p class="hint">
-                      Browsers run {BROWSER_POOL} HTTP/1.1 requests per server at once. Streams past
-                      that wait for one to finish.
-                    </p>
-                  )}
-                </Show>
-                <Show when={servers.streamPlanError}>
+                <For each={() => planned().notes} by={(note) => note}>
+                  {(note) => <p class="hint">{note}</p>}
+                </For>
+                <Show when={() => planned().error}>
                   {(text) => (
                     <p class="notice" data-tone="warn">
                       {text}

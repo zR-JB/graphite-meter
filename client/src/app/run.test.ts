@@ -156,16 +156,32 @@ test("a finished run is offered to History once, and the next start withdraws it
   expect(h.offers).toEqual(["withdraw", "offer", "withdraw"]);
 });
 
-test("the gauge maximum changes while a start prepares, and the start goes on", async () => {
+test("a start takes what changes while it prepares, and the next test what the run cannot", async () => {
   const { promise, resolve } = Promise.withResolvers<void>();
   const h = setup(only({ download: true }, { downloadMs: 1_000 }), { authorize: promise });
+  const streams = { mode: "forced", count: 3 } as const;
   h.run.toggle();
   expect(h.run.configure({ visualization: { throughputMaxBytesPerSec: 125e6 } })).toBe(true);
-  expect(h.run.configure({ adaptive: true })).toBe(false);
+  expect(h.run.configure({ adaptive: true })).toBe(true);
+  expect(h.run.configure({ transferStreams: streams })).toBe(true);
+  expect(h.run.waiting()).toEqual({ adaptive: true, transferStreams: streams });
+  expect(h.run.upcoming().transferStreams).toEqual(streams);
   resolve();
+  await h.clock.advance(100);
+  expect([h.run.plan()?.adaptive, h.preferences.config().adaptive]).toEqual([true, true]);
+  expect(h.run.waiting()).toEqual({ transferStreams: streams });
+  expect(
+    h.run.configure({ transports: { throughputTarget: "protocol:http2", latencyTarget: "auto" } }),
+  ).toBe(true);
+  expect(h.preferences.config().transports.throughputTarget).toBe("auto");
   await h.clock.advance(3_000);
   expect(h.run.phase()).toBe("complete");
-  expect(h.preferences.config().visualization.throughputMaxBytesPerSec).toBe(125e6);
+  expect(h.run.waiting()).toEqual({});
+  expect(h.preferences.config()).toMatchObject({
+    visualization: { throughputMaxBytesPerSec: 125e6 },
+    transferStreams: streams,
+    transports: { throughputTarget: "protocol:http2" },
+  });
 });
 
 test("a refusal speaks only for the change that caused it", async () => {
