@@ -598,7 +598,8 @@ async fn a_proxy_that_refuses_fails_the_path_and_one_that_reaches_no_target_is_r
             stream.write_all(refusal.as_bytes()).await.unwrap();
         });
         let proxy = format!("http://{address}");
-        let proxy = Proxy::from_lookup(|name| (name == "HTTPS_PROXY").then(|| proxy.clone()));
+        let proxy =
+            Proxy::from_lookup(|name| (name == "HTTPS_PROXY").then(|| proxy.clone().into()));
         let client = Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()));
         let origin = Origin::parse("https://meter.example").unwrap();
         let fault = probe(&client, Protocol::Negotiated, &origin)
