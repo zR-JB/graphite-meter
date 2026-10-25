@@ -36,7 +36,7 @@ pub enum Loaded {
     Config(Box<Config>),
 }
 
-/// Loads the environment, then the flags, and validates; flag errors and usage go to `usage`.
+/// Loads the environment, then the flags, and validates; argument errors and usage go to `usage`.
 pub fn load(
     env: impl Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,

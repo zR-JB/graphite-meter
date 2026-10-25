@@ -51,6 +51,12 @@ fn flag_errors_print_their_message_then_the_usage() {
             &["-advertised-native-endpoints", "h4"],
             "invalid value \"h4\" for --advertised-native-endpoints: unknown endpoint \"h4\"",
         ),
+        (&["help"], "unexpected argument \"help\""),
+        (
+            &["--verbose", "hash-password"],
+            "unexpected argument \"hash-password\"",
+        ),
+        (&["--", "serve"], "unexpected argument \"serve\""),
     ] {
         let (loaded, usage) = load(&[], args);
         assert_eq!(loaded.unwrap_err(), message);
