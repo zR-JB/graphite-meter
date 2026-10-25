@@ -155,7 +155,7 @@ async fn reflector() -> Origin {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_reply_driven_prober_on_loopback_probes_densely_but_a_millisecond_apart() {
+async fn a_reply_driven_prober_on_loopback_probes_once_a_timer_tick_at_most_a_millisecond() {
     let path = LatencyPath {
         origin: reflector().await,
         transport: LatencyTransport::WebSocket,
@@ -182,7 +182,7 @@ async fn a_reply_driven_prober_on_loopback_probes_densely_but_a_millisecond_apar
         .collect();
     let (replies, elapsed) = (rtts.len() as u128, start.elapsed().as_millis());
     assert!(
-        replies * 10 >= elapsed && replies <= elapsed + 1,
+        replies * 20 >= elapsed && replies <= elapsed + 1,
         "{replies} replies in {elapsed} ms"
     );
 }
