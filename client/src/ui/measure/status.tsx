@@ -143,13 +143,14 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
   const issue = computed(() => {
     const all = issues();
     const several = (run.details()?.selection.length ?? 0) > 1;
-    return {
-      kicker: all.length === 1 && several ? TOAST.issueOn(all[0]!.server) : TOAST.issue,
-      message:
-        all.length > 1
-          ? TOAST.many(all.length)
-          : all.map(({ stages, reason }) => `${stages}: ${reason}`).join(""),
-    };
+    const [first] = all;
+    // Where it happened leads, as the card it marks names its stage: "Bergen · Start", then what happened.
+    return all.length !== 1
+      ? { kicker: TOAST.several, message: TOAST.marked }
+      : {
+          kicker: several ? `${first!.server} · ${first!.stages}` : first!.stages,
+          message: first!.reason,
+        };
   });
   const toast = signal<{ kicker: string; message: string; tone: Tone }>({
     kicker: "",

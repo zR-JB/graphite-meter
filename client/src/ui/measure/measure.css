@@ -1577,12 +1577,16 @@
       translate: 0 4px;
     }
   }
-  /* A phone has no status strip: a stall shows for its reading time too. */
+  /* A phone has no status strip: the toast docks on the bottom edge, and a stall shows for its reading time too. */
   @media (max-width: 759px) {
     .phase-toast {
-      inset-inline: var(--space-4);
+      inset-inline: 0;
+      bottom: 0;
       min-width: 0;
       max-width: none;
+      padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+      border-width: var(--hairline) 0 0;
+      border-radius: 0;
       &.stall {
         animation: linger var(--leave) var(--ease-out) var(--linger) forwards;
       }

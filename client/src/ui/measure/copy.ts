@@ -67,8 +67,8 @@ export const CARDS = {
 export const LENS = "Servers shown in the results";
 
 export const TOAST = {
-  issue: "Issue",
   unsaved: "Not saved",
-  issueOn: (server: string) => `Issue on ${server}`,
-  many: (count: number) => `${count} measurement issues, each marked on its card`,
+  /** Several causes at once: each card says its own. */
+  several: "Several causes",
+  marked: "Each is marked on its card",
 } as const;

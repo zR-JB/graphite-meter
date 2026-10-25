@@ -182,8 +182,7 @@ test("a server that fails between its check and Start is named at once and reads
     await runButton(page, "Start test").click();
     const saved = await savedResult(page, startedAt, 30_000);
     const [first] = await page.evaluate(() => (window as any).toasts);
-    expect(first.text).toContain("Issue on Bergen");
-    expect(first.text).toContain("Start:");
+    expect(first.text).toContain("Bergen · Start");
     expect(first.ended).toBe(0);
     expect(saved.result.outcome).toBe("partial");
     const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
