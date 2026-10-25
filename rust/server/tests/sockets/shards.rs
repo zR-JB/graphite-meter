@@ -6,18 +6,6 @@ use super::{
     quic::retried,
 };
 use futures_util::future::join_all;
-use std::net::SocketAddr;
-
-fn endpoints(h3: &H3) -> usize {
-    let Some(SocketAddr::V4(quic)) = h3.server.quic else {
-        panic!("an IPv4 HTTP/3 address")
-    };
-    let ip = u32::from_ne_bytes(quic.ip().octets());
-    let local = format!("{ip:08X}:{:04X}", quic.port());
-    let sockets = std::fs::read_to_string("/proc/self/net/udp").unwrap();
-    let bound = |line: &&str| line.split_whitespace().nth(1) == Some(local.as_str());
-    sockets.lines().filter(bound).count()
-}
 
 async fn download(connection: &Connection, bytes: usize) -> usize {
     let (answer, mut body) = connection
@@ -30,7 +18,7 @@ async fn download(connection: &Connection, bytes: usize) -> usize {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn four_workers_run_two_endpoints_that_follow_rebound_clients() {
     let h3 = H3::start(&[]).await;
-    assert_eq!(endpoints(&h3), 2);
+    assert_eq!(h3.server.endpoints, 2);
     // Distinct sources stand for clients whose 4-tuples the kernel spreads over the endpoints.
     let transfers = (2..10).map(|source| {
         let h3 = &h3;
@@ -59,7 +47,7 @@ async fn four_workers_run_two_endpoints_that_follow_rebound_clients() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_source_s_handshake_in_progress_needs_retry_on_every_endpoint() {
     let h3 = H3::start(&[]).await;
-    assert_eq!(endpoints(&h3), 2);
+    assert_eq!(h3.server.endpoints, 2);
     // The first Initial's handshake waits for a flight that never comes.
     assert!(!retried(&h3, "127.0.0.3").await);
     // Each handshake's new port reaches either endpoint.
