@@ -15,7 +15,9 @@ mise run pipeline-test     # ty type check, control-plane, API schema and legal 
 ## CI
 
 `Gate` is the only required status check. A pull request that changes only documentation (`.github/ci-paths.yml`)
-runs the checks job alone; every other change, every push to main and the daily run on main run every job:
+runs the checks job alone. A draft also runs Rust checks if it changes code, and no more; its Gate fails until it is
+marked ready for review, which runs the rest. Every other pull request, every push to main and the daily run on main
+run every job:
 
 | Job | Runs |
 |---|---|
