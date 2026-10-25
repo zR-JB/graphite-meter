@@ -421,3 +421,48 @@ for (const [width, height] of [
       expect(shifts.reduce((sum, value) => sum + value, 0)).toBeLessThan(0.01);
     },
   );
+
+test("frames keep their pace through each stage's warmup and window, and nothing shifts as they change", async (page) => {
+  await open(page, home.http, {
+    config: {
+      stages: { ...baseConfig.stages, upload: false },
+      duration: { ...baseConfig.duration, warmupMs: 1500, latencyMs: 1500, downloadMs: 1500 },
+    },
+  });
+  await ready(page);
+  await page.evaluate(() => {
+    const frames: Record<string, number[]> = {};
+    const shifts: number[] = [];
+    let last = 0;
+    const sample = (now: number) => {
+      const phase = document.getElementById("console")!.dataset.phase!;
+      const stage = document.querySelector<HTMLElement>(".gauge-panel")!.dataset.stage ?? "";
+      if (last && (phase === "warmup" || phase === stage))
+        (frames[`${phase}:${stage}`] ??= []).push(now - last);
+      last = now;
+      if (phase !== "complete") requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+    // Layout shift is Chrome's to report; another browser reports none.
+    if (PerformanceObserver.supportedEntryTypes.includes("layout-shift"))
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as (PerformanceEntry & { value: number })[])
+          shifts.push(entry.value);
+      }).observe({ type: "layout-shift" });
+    Object.assign(window, { pacing: { frames, shifts } });
+  });
+  await run(page, 30_000);
+  const { frames, shifts } = await page.evaluate(() => (window as any).pacing);
+  expect(Object.keys(frames).sort()).toEqual([
+    "download:download",
+    "latency:latency",
+    "warmup:download",
+    "warmup:latency",
+  ]);
+  // A long frame is one a 60 Hz display shows three times; a steady phase has almost none.
+  for (const [segment, deltas] of Object.entries(frames) as [string, number[]][]) {
+    const long = deltas.filter((ms) => ms > 50).length;
+    expect(long / deltas.length, segment).toBeLessThan(0.05);
+  }
+  expect(shifts.reduce((sum: number, value: number) => sum + value, 0)).toBeLessThan(0.01);
+});
