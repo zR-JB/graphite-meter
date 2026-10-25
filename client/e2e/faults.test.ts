@@ -188,7 +188,9 @@ for (const fault of faults.filter(
       });
       const stageMs = config.duration[`${fault.during}Ms`];
       await measuredFor(page, stageMs, 300);
+      const actAt = Date.now();
       const replacement = await fault.act?.(page, victim);
+      const actedAt = Date.now();
       if (replacement) relaunched.push(replacement);
       if (fault.editDownloadMs) {
         await measuredFor(page, stageMs, 1_300);
@@ -196,6 +198,7 @@ for (const fault of faults.filter(
         config.duration.downloadMs = fault.editDownloadMs;
       }
       const saved = await savedResult(page, startedAt, 30_000);
+      console.log("DIAG", fault.name, JSON.stringify({ startedAt: saved.result.startedAt, clicked: startedAt - saved.result.startedAt, act: actAt - saved.result.startedAt, acted: actedAt - saved.result.startedAt, durationMs: saved.result.durationMs, outcome: saved.result.outcome, failures: saved.result.multiServer.failures, intervals: saved.result.multiServer.intervals, protocols: saved.result.multiServer.servers.map((s) => [s.server.id, s.throughput.protocol, s.throughput.transport, s.latencyTarget?.transport]) }));
       expect(incoherence(saved.result, plansOf({ ...config, adaptive: false }))).toEqual([]);
       const { failures } = saved.result.multiServer;
       if (fault.failure)

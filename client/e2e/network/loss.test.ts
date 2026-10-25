@@ -22,9 +22,13 @@ test(
       );
       const running = await start(page, fleet);
       await reached(page, "download");
+      const reachedAt = Date.now();
       await Bun.sleep(1500);
       fleet.children[2]!.kill("SIGKILL");
+      const killedAt = Date.now();
       const { record } = await running.end();
+      const r = record!.result;
+      console.log("DIAG T5", JSON.stringify({ startedAt: r.startedAt, reached: reachedAt - r.startedAt, killed: killedAt - r.startedAt, durationMs: r.durationMs, failures: r.multiServer.failures, intervals: r.multiServer.intervals, protocols: r.multiServer.servers.map((s) => [s.server.id, s.throughput.protocol, s.throughput.transport]) }));
       const { failures, servers } = record!.result.multiServer;
       // Throughput and loaded latency each fail on their own.
       const named = failures.map(({ serverId, stage, reason }) => `${serverId} ${stage} ${reason}`);

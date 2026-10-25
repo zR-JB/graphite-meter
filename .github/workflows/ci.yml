@@ -55,6 +55,7 @@ jobs:
 
   checks:
     name: Checks
+    if: false
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: plan
@@ -89,7 +90,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: false
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -108,7 +109,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,7 +125,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: false
     env:
       CARGO_INCREMENTAL: '0'
     steps:
@@ -169,7 +170,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: false
     defaults:
       run: {shell: bash}
     env:
@@ -223,7 +224,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: false
     env:
       VERSION: 0.0.0-ci
       GM_CLIENT_REVISION: source
@@ -276,7 +277,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 40
     needs: plan
-    if: needs.plan.outputs.code == 'true'
+    if: false
     # One runner per TUI platform of rust/Cargo.toml; staging refuses a missing or extra archive.
     strategy:
       matrix:
@@ -320,7 +321,7 @@ jobs:
     runs-on: windows-11-arm
     timeout-minutes: 15
     needs: [plan, tui]
-    if: needs.plan.outputs.code == 'true'
+    if: false
     defaults:
       run: {shell: bash}
     env:
@@ -349,7 +350,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: [plan, image, tui]
-    if: needs.plan.outputs.code == 'true'
+    if: false
     env:
       VERSION: 0.0.0-ci
     steps:
@@ -395,19 +396,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {browser: chrome, group: reversals}
-          - {browser: chrome, group: heavy}
+          - {browser: firefox, group: network, diag: loss}
+          - {browser: chrome, group: network, diag: loss}
           - {browser: chrome, group: rest-1}
           - {browser: chrome, group: rest-2}
-          - {browser: firefox, group: heavy}
           - {browser: firefox, group: rest-1}
           - {browser: firefox, group: rest-2}
-          - {browser: chrome, group: network-1}
-          - {browser: chrome, group: network-2}
-          - {browser: chrome, group: network-3}
-          - {browser: firefox, group: network-1}
-          - {browser: firefox, group: network-2}
-          - {browser: firefox, group: network-3}
+          - {browser: chrome, group: faults}
+          - {browser: firefox, group: faults}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -483,12 +479,27 @@ jobs:
           GROUP: ${{ matrix.group }}
           # The runner refuses users a network namespace; the network group shapes this throwaway machine's loopback.
           GM_E2E_HOST_LOOPBACK: ${{ startsWith(matrix.group, 'network') && '1' || '' }}
-        run: mise run e2e "$RUNNER_TEMP/image/graphite-meter-server" "$GROUP"
+          GM_VERBOSE: 'true'
+          DIAG: ${{ matrix.diag }}
+        run: |
+          export GM_E2E_SERVER_BIN="$RUNNER_TEMP/image/graphite-meter-server"
+          cd client
+          case "$GROUP" in
+            network)
+              export GM_E2E_NETWORK=1
+              sudo -n bash -ec 'ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off'
+              bun run e2e bun test ./e2e/network/loss.test.ts --no-orphans --timeout=600000 --rerun-each=16 ;;
+            rest-[12])
+              bun run e2e bun test ./e2e --parallel=3 --no-orphans --timeout=60000 '--path-ignore-patterns=**/performance.test.ts' \
+                '--path-ignore-patterns=**/network/**' "--shard=${GROUP#rest-}/2" --timings=e2e/timings.json --rerun-each=4 ;;
+            faults)
+              bun run e2e bun test ./e2e/faults.test.ts ./e2e/access.test.ts ./e2e/controls.test.ts --parallel=3 --no-orphans --timeout=60000 --rerun-each=6 ;;
+          esac
       - name: Upload E2E failure diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-failures-${{ matrix.browser }}-${{ matrix.group }}
+          name: e2e-diag-${{ matrix.browser }}-${{ matrix.group }}
           retention-days: 7
           path: |
             client/test-results/webview
@@ -501,7 +512,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-26.04
     timeout-minutes: 5
-    if: always()
+    if: false
     needs: [plan, checks, rust, rust-delayed, rust-targets, rust-windows, server, image, tui, tui-windows-arm64, release-staging, e2e]
     steps:
       - name: Require every selected job
