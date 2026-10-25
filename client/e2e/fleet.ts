@@ -4,7 +4,7 @@ import type { TestConfig as RunnerConfig } from "../src/engine/types";
 import { planned, STAGES } from "../src/engine/run/schedule";
 import { STAGE } from "../src/view/words";
 import { describe, launch, type Server } from "./servers";
-import { expect, settled, type Page } from "./webview";
+import { expect, settled, type Locator, type Page } from "./webview";
 
 /** The History database: the contract this suite holds the client to, written out on its own. */
 export const HISTORY_DB = {
@@ -122,6 +122,18 @@ export async function openSettings(page: Page) {
   // The sheet slides in with its column; a pointer aimed mid-slide misses its row.
   await page.evaluate(settled);
   return panel;
+}
+
+/** Picks a path; a picker shows the chosen one alone until its other paths are opened. */
+export async function choosePath(
+  settings: Locator,
+  picker: "Throughput path" | "Latency path",
+  name: RegExp,
+) {
+  const group = settings.getByRole("group", { name: picker });
+  const others = group.getByRole("button", { name: "Other paths", exact: true });
+  if ((await others.state()).length) await others.click();
+  await group.getByRole("radio", { name }).click();
 }
 
 export async function closeSettings(page: Page) {
