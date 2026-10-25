@@ -371,4 +371,20 @@ test("a card's line names who failed in its stage and who never reached it; one 
   expect(cardLine(table, "upload", "o")).toBe("Left in Download: connection lost");
   expect(cardLine(table, "upload", "b")).toBe("Left at Start: server at capacity");
   expect(cardLine(table, "upload", "f")).toBe("");
+  const both = grid({
+    latency: null,
+    download: null,
+    upload: null,
+    bidirectional: null,
+    stages: { ...all, download: "failed", upload: "not-run" },
+    multiServer: {
+      selection: [frankfurt, oslo],
+      servers: [
+        { server: frankfurt, stages: { ...all, download: "failed", upload: "not-run" } },
+        { server: oslo, stages: { ...all, download: "failed", upload: "not-run" } },
+      ],
+      failures: [failure("f", "connection-lost"), failure("o", "connection-lost")],
+    },
+  } as unknown as RunResult);
+  expect(cardLine(both, "download")).toBe("Frankfurt and Oslo: connection lost");
 });

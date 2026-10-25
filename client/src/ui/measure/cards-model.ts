@@ -520,6 +520,8 @@ export function cardLine(table: Grid, stage: Stage, lens = ""): string {
   const attributed = !lens && table.rows.length > 1;
   const rows = lens ? table.rows.filter((row) => row.server.id === lens) : table.rows;
   const lines: string[] = [];
+  // Servers short for one reason share it: "Lisbon and Porto: connection lost".
+  const short = new Map<string, string[]>();
   const without: string[] = [];
   for (const { server, cells } of rows) {
     const { status, cause } = cells[stage];
@@ -528,9 +530,11 @@ export function cardLine(table: Grid, stage: Stage, lens = ""): string {
       else if (cause) lines.push(leftLine(cause));
     } else if ((status === "partial" || status === "failed") && cause) {
       const reason = reasonLabel(cause.reason);
-      lines.push(attributed ? `${server.name}: ${lower(reason)}` : reason);
+      if (attributed) short.set(reason, [...(short.get(reason) ?? []), server.name]);
+      else lines.push(reason);
     }
   }
+  for (const [reason, names] of short) lines.push(`${listed(names)}: ${lower(reason)}`);
   if (without.length) lines.push(`${lines.length ? "without" : "Without"} ${listed(without)}`);
   return lines.join(", ");
 }
