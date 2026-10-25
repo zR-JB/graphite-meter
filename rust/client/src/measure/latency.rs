@@ -155,7 +155,7 @@ fn mean(sum: Duration, count: usize) -> Duration {
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
-/// Captures a population as its stage leaves it. It is `complete` unless it failed or the stage stopped.
+/// Captures a population as its stage leaves it; `complete` unless it failed, its stage stopped or a stop cut its drain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Population {
     pub summary: Summary,

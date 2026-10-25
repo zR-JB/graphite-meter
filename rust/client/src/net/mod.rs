@@ -42,7 +42,7 @@ use tokio::{
     time::{Instant, timeout, timeout_at},
 };
 
-/// How long a control request may take, its answer's body included, and a session or bus to open.
+/// How long a control request may take, its body included, a session or bus to open, or a download lane its head.
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A path check's network state, reused by its run: proxies, verification, grants, control connections, QUIC runtimes.

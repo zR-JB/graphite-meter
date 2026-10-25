@@ -1,7 +1,7 @@
 //! Lanes and buses against canned peers, for what the real server never does or does only after sign-in.
 use futures_util::SinkExt;
 use graphite_meter_client::{
-    model::{Dir, Stage},
+    model::{Dir, LaneHealth, Stage},
     net::{Client, Fault, Lanes, LatencyPath, ThroughputPath, Work, topology},
 };
 use graphite_meter_net::Pool;
@@ -139,4 +139,42 @@ async fn a_websocket_bus_closed_as_revoked_asks_its_server_for_sign_in() {
     );
     let fault = bus.next().await.unwrap_err();
     assert_matches!(&fault, Fault::SignIn(server) if *server == origin);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_download_lane_whose_answer_never_comes_fails_its_open_in_ten_seconds() {
+    let (listener, origin) = local().await;
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                read_head(&mut stream).await;
+                std::future::pending::<()>().await;
+            });
+        }
+    });
+    let path = ThroughputPath {
+        origin,
+        transport: ThroughputTransport::FetchStream,
+        protocol: Protocol::Http1,
+    };
+    let plans = topology(&path, Stage::Download, Dir { down: 1, up: 0 });
+    let (client, token) = (client(), CancellationToken::new());
+    let mut lanes = Lanes::start(
+        &client,
+        plans,
+        Work::Download,
+        Duration::ZERO,
+        token.clone(),
+    );
+    let started = tokio::time::Instant::now();
+    while lanes.health() == LaneHealth::Ok && started.elapsed() < Duration::from_secs(60) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let waited = started.elapsed();
+    assert!(
+        (Duration::from_secs(10)..Duration::from_secs(11)).contains(&waited),
+        "{waited:?} {:?}",
+        lanes.health()
+    );
+    token.cancel();
 }
