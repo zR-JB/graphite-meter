@@ -1,8 +1,9 @@
 // Chooses one server among several, as the lens over results, the server Details inspects or the History detail's.
-import { For } from "../../lib/dom";
+import { For, Show } from "../../lib/dom";
 import { effect } from "../../lib/signal";
 import { serverLabel } from "../../view/words";
 import { Icon } from "./icon";
+import { tip } from "./tip";
 
 interface ScopeServer {
   id: string;
@@ -20,8 +21,12 @@ export function ServerScope(props: {
   aggregate?: () => string;
   disabled?: () => boolean;
   unavailable?: () => readonly string[];
+  /** A server's word after its name, such as its outcome; "" for none. */
+  note?: (id: string) => string;
   /** Draws a lens over results, with a server mark and a borderless field. */
   quiet?: boolean;
+  /** What the lens's servers ran into, one line each; a warn dot marks the lens while there is any. */
+  issues?: () => string;
 }): Node {
   const select = (
     <select
@@ -37,7 +42,10 @@ export function ServerScope(props: {
             value={server().id}
             disabled={() => props.unavailable?.().includes(server().id) ?? false}
           >
-            {() => serverLabel(server())}
+            {() => {
+              const note = props.note?.(server().id);
+              return note ? `${serverLabel(server())} · ${note}` : serverLabel(server());
+            }}
           </option>
         )}
       </For>
@@ -49,11 +57,14 @@ export function ServerScope(props: {
     select.value = props.value();
   });
   return props.quiet ? (
-    <span class="lens">
+    <span class="lens" ref={props.issues && tip(props.issues)}>
       <span class="lens-mark">
         <Icon name="server" />
       </span>
       {select}
+      <Show when={() => props.issues?.() ?? ""}>
+        {() => <span class="status-dot inline" data-tone="warn" aria-hidden="true" />}
+      </Show>
     </span>
   ) : (
     select

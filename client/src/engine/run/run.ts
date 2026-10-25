@@ -158,8 +158,8 @@ export type RunEvent =
   /** The run as a whole stalled (every server recovering or quiet), or recovered. */
   | { type: "stall"; stall: Stall | null }
   | { type: "stageEnd"; stage: Stage; status: StageStatus; results: StageResults }
+  /** The run ended with what it measured, which may be nothing: History keeps any run whose timeline began. */
   | { type: "complete"; result: RunResult; plans: StagePlans }
-  | { type: "error"; reason: FailureReason; message: string }
   | { type: "aborted"; t: number };
 
 interface Participant {
@@ -275,7 +275,7 @@ export class Run {
   readonly #page: Clock;
   #clock!: RunClock;
   #handlers = new Set<(event: RunEvent) => void>();
-  #state: "created" | "running" | "completed" | "aborted" | "failed" = "created";
+  #state: "created" | "running" | "completed" | "aborted" = "created";
   #plan: RunPlan;
   #segments: Segment[];
   /** The segment the run shows; a stage's warmup and window share one activity. */
@@ -606,7 +606,7 @@ export class Run {
       const reason = classify(cause, "protocol-error");
       const message = cause instanceof Error ? cause.message : "Could not prepare the stage";
       // What earlier stages measured stays, as when every server leaves.
-      return this.#measured() ? this.end(reason, message) : this.#fail(reason, message);
+      return this.end(reason, message);
     }
     const stage: StageRun = {
       activity,
@@ -1156,15 +1156,9 @@ export class Run {
     if (unreached(reason)) void this.#signedOut(server, stage.activity.stage);
     this.#updateStalled();
     const survivors = this.#participants();
-    if (!survivors.length) {
-      if (!this.#measured())
-        return this.#fail(
-          reason,
-          `All selected test servers failed. ${server.prepared.server.name}: ${message}`,
-        );
-      // A sole server skips to its next stage; several that all fail end the run as incomplete.
-      return this.#servers.length === 1 ? this.#skip(stage) : this.#finish();
-    }
+    // A sole server that measured something skips to its next stage; otherwise the run ends with what it has.
+    if (!survivors.length)
+      return this.#servers.length === 1 && this.#measured() ? this.#skip(stage) : this.#finish();
     if (stage.phase === "measuring" && stage.activity.transfer.length)
       this.#aggregate.dropout(
         survivors.map(({ id }) => id),
@@ -1638,14 +1632,6 @@ export class Run {
     });
     this.#release();
     this.#emit({ type: "complete", result, plans });
-  }
-
-  #fail(reason: FailureReason, message: string): void {
-    if (this.#state !== "running") return;
-    this.#state = "failed";
-    for (const { buckets } of this.#servers) buckets.flush(this.#elapsed);
-    this.#release();
-    this.#emit({ type: "error", reason, message });
   }
 
   #release(): void {

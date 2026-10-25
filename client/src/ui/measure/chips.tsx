@@ -10,7 +10,6 @@ import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../
 import {
   chipTag,
   PHASE,
-  reasonLabel,
   STAGE,
   STAGE_STATE,
   TAGGED,
@@ -22,6 +21,7 @@ import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { Roll } from "../kit/roll";
 import { clip, tip } from "../kit/tip";
+import { cardLine } from "./cards-model";
 import { CHIPS } from "./copy";
 import type { Live } from "./live";
 import { Figure, painter } from "./paint";
@@ -153,13 +153,10 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
         : results[stage]?.reportedBytesPerSec;
     return bytes == null ? "" : fmtRate(bytes, live.rateUnits());
   });
+  // The card's line: who failed in the stage, and who never reached it.
   const failure = computed(() => {
-    const found = run
-      .details()
-      ?.failures.find(
-        (each) => each.stage === stage && (each.scope === "latency") === (stage === "latency"),
-      );
-    return found ? reasonLabel(found.reason) : "";
+    const table = run.table();
+    return table ? cardLine(table, stage) : "";
   });
   // One line the chip does not already show: its result, or why it is locked.
   const tipText = computed(() => {

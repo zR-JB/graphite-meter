@@ -6,7 +6,7 @@ import type { Preparation, ShownPhase } from "../app/run";
 import type { Readiness } from "../engine/net/connection";
 import { PROTOCOL_LABEL, protocolFromNextHop } from "../engine/net/paths";
 import { SESSION_MAX_LANES } from "../engine/net/streams";
-import type { Outcome, StageStatus } from "../engine/run/result";
+import { grid, type CellStatus, type Outcome, type RunResult } from "../engine/run/result";
 import type { Phase } from "../engine/run/run";
 import {
   planned,
@@ -63,7 +63,6 @@ export const PHASE = {
   upload: STAGE.upload.label,
   bidirectional: STAGE.bidirectional.label,
   stopped: "Stopped",
-  error: "Failed",
 } as const satisfies Record<Phase, string> & Record<string, string>;
 
 export const OUTCOME = {
@@ -83,23 +82,21 @@ export const RUN_ACTION = {
 export function runAction(preparing: boolean, running: boolean, phase: ShownPhase): string {
   if (preparing) return RUN_ACTION.cancel;
   if (running) return RUN_ACTION.stop;
-  return phase === "complete" || phase === "aborted" || phase === "error"
-    ? RUN_ACTION.again
-    : RUN_ACTION.start;
+  return phase === "complete" || phase === "aborted" ? RUN_ACTION.again : RUN_ACTION.start;
 }
 
 /** The run in one word, as the status strip says it: a refused start, a check, else the phase or the finished outcome. */
 export function statusLabel(
   preparation: Preparation,
   phase: ShownPhase,
-  outcome: Outcome | undefined,
+  result: RunResult | null,
 ): string {
   if (preparation === "blocked") return PHASE.blocked;
   if (preparation === "failed") return PHASE["start-failed"];
   if (preparation === "waiting") return PHASE.waiting;
   if (preparation === "authenticating") return PHASE.authenticating;
   if (preparation === "checking" || preparation === "launching") return PHASE.connecting;
-  if (phase === "complete") return OUTCOME[outcome ?? "complete"].label;
+  if (phase === "complete") return result ? runWord(result).label : OUTCOME.complete.label;
   if (phase === "aborted") return PHASE.stopped;
   return PHASE[phase];
 }
@@ -131,6 +128,10 @@ export const STAGE_STATE = {
   unreached: { label: "Not reached", tone: "neutral" },
 } as const satisfies Record<StageState, Word>;
 
+/** How a finished run reads: its outcome, or Failed when no stage has a result, though History keeps it Incomplete. */
+export const runWord = (result: RunResult): Word =>
+  grid(result).measured ? OUTCOME[result.outcome] : STAGE_STATE.failed;
+
 /** A stage the next run includes but the shown run did not run, as its chip names it. */
 export const NEXT_RUN = { label: "Next test", tone: null } as const satisfies Word;
 export const NEXT_TEST = "Applies to the next test";
@@ -153,24 +154,20 @@ export function chipTag(state: StageState, selected: boolean, nextRun: boolean):
 /** What the runner has said about one stage of the shown run. */
 export interface StageFacts {
   planned: boolean;
-  settled: StageStatus | null;
+  /** As the result grid judges it. */
+  settled: CellStatus | null;
   /** The run's phase while this is its stage, kept once the run ends; null until the run moves to it. */
   phase: Phase | null;
   stalled: boolean;
-  ended: "complete" | "stopped" | "error" | null;
+  ended: "complete" | "stopped" | null;
 }
 
 /** A stage's state: planned, then settled; a stall reads Recovering, an ended run leaves unsettled stages unreached. */
 export function stageState({ planned, settled, phase, stalled, ended }: StageFacts): StageState {
-  if (!planned || settled === "not-run") return "skipped";
+  if (!planned || settled === "skipped") return "skipped";
   if (settled) return settled;
   const began = phase !== null && phase !== "connecting";
-  if (ended)
-    return !began || ended === "complete"
-      ? "unreached"
-      : ended === "stopped"
-        ? "stopped"
-        : "failed";
+  if (ended) return !began || ended === "complete" ? "unreached" : "stopped";
   if (!began) return "upcoming";
   return stalled ? "recovering" : phase === "warmup" ? "warmup" : "running";
 }

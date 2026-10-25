@@ -2,11 +2,12 @@
 import type { App } from "../../app/app";
 import { Show } from "../../lib/dom";
 import { computed, effect } from "../../lib/signal";
-import { allServersLabel } from "../../view/words";
+import { allServersLabel, OUTCOME } from "../../view/words";
 import { ServerScope } from "../kit/scope";
 import type { Shell } from "../shell/api";
 import { media } from "../shell/layout";
 import { ResultCards } from "./cards";
+import { causeAt } from "./cards-model";
 import { RunButton, StageTrack } from "./chips";
 import { LENS } from "./copy";
 import { Dial } from "./dial";
@@ -72,22 +73,27 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
 /** One lens over a multi-server result: every server together, or one; a running stage has only all servers' rate. */
 function Lens(props: { app: App; live: Live }): Node {
   const { app, live } = props;
+  const { run } = app;
   const servers = live.indicated;
-  // A server with no result of its own cannot be shown alone.
-  const unmeasured = computed(() => {
-    const details = app.run.details();
-    return details
-      ? servers()
-          .filter(({ id }) => !details.servers.some((entry) => entry.server.id === id))
-          .map(({ id }) => id)
-      : [];
-  });
   const stayed = computed(() => {
-    const details = app.run.details();
+    const details = run.details();
     return details
       ? servers().filter(({ id }) => details.participants.includes(id)).length
       : servers().length;
   });
+  const measured = computed(() => run.details()?.servers.length ?? servers().length);
+  const rows = computed(() => run.table()?.rows ?? []);
+  // A finished run names each server that fell short of complete by its own outcome.
+  const note = (id: string) => {
+    const outcome = run.result() ? rows().find((row) => row.server.id === id)?.outcome : undefined;
+    return outcome && outcome !== "complete" ? OUTCOME[outcome].label : "";
+  };
+  const issues = computed(() =>
+    rows()
+      .filter((row) => row.causes.length)
+      .map(({ server, causes }) => `${server.name}: ${causeAt(causes[0]!)}`)
+      .join("\n"),
+  );
   return (
     <Show when={() => servers().length > 1}>
       {() => (
@@ -98,11 +104,10 @@ function Lens(props: { app: App; live: Live }): Node {
             servers={servers}
             value={live.lens}
             onChange={live.showServer}
-            aggregate={() =>
-              allServersLabel(servers().length, stayed(), servers().length - unmeasured().length)
-            }
-            unavailable={unmeasured}
-            disabled={app.run.running}
+            aggregate={() => allServersLabel(servers().length, stayed(), measured())}
+            note={note}
+            issues={issues}
+            disabled={run.running}
           />
         </div>
       )}

@@ -13,6 +13,7 @@ import {
   OUTCOME,
   PHASE,
   reasonLabel,
+  STAGE_STATE,
   statusLabel,
   type Connectivity,
   type Tone,
@@ -28,7 +29,11 @@ import { Figure, painter, setText } from "./paint";
 
 /** The word cell is as wide as the widest word it can say, so the figures stay where they are. */
 const WORDS = [
-  ...new Set([...Object.values(PHASE), ...Object.values(OUTCOME).map((outcome) => outcome.label)]),
+  ...new Set([
+    ...Object.values(PHASE),
+    ...Object.values(OUTCOME).map((outcome) => outcome.label),
+    STAGE_STATE.failed.label,
+  ]),
 ];
 
 /** The status strip; each figure's cell is as wide as its longest value, so counting never moves its neighbors. */
@@ -37,7 +42,7 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
   const { run } = app;
   const live = liveOf(app);
   const label = handoff(
-    () => statusLabel(live.preparation(), run.phase(), run.result()?.outcome),
+    () => statusLabel(live.preparation(), run.phase(), run.result()),
     (word) => word,
   );
   const refused = computed(
@@ -64,7 +69,7 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
     (now) => {
       // A stopped run keeps the time it showed when it stopped.
       const phase = run.phase.peek();
-      if (phase !== "aborted" && phase !== "error")
+      if (phase !== "aborted")
         elapsed.set(fmtDuration(run.result.peek()?.durationMs ?? live.runClock.at(now)));
       const rest = fmtDuration(Math.max(0, live.budget.peek() - live.phaseClock.at(now)));
       if (left.shown.peek().recovering) setText(recoveringText, rest);
@@ -169,10 +174,6 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     seen = count;
     if (phase === "idle") show(null);
     else if (added) show({ ...untrack(issue), tone: "err" });
-    else if (phase === "error") {
-      const error = untrack(run.error);
-      show({ kicker: PHASE.error, message: error ? reasonLabel(error.reason) : "", tone: "err" });
-    }
   });
   const unsaved = computed(
     () =>

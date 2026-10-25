@@ -1,6 +1,6 @@
 // The instrument's own words: the dial's notes and the labels of the chips, lanes, cards, lens and toast.
 import type { ShownPhase } from "../../app/run";
-import { listed, PHASE, READINESS_TIP, TIP } from "../../view/words";
+import { PHASE, READINESS_TIP, TIP } from "../../view/words";
 
 /** What the dial's note says between measurements; the explainer, when there is one, is the hint's tip. */
 export const PHASE_HINT: Partial<
@@ -12,19 +12,13 @@ export const PHASE_HINT: Partial<
 };
 
 export const DIAL = {
-  restart: "Press Run again to restart",
   otherTab: "A test is running in another tab. This one starts when it ends.",
-  retry: "Press Run again to retry",
-  unknownError: "Something went wrong",
+  /** A stop is never saved. */
+  unsaved: "Nothing was saved",
   noData: (time: string) => `No data for ${time}`,
   noReplies: (time: string) => `No replies for ${time}`,
-  /** What a finished run lacks: the stages with no result, else what it measured in part; "" when it names none. */
-  unfinished: (failed: readonly string[], partial: readonly string[]) =>
-    failed.length
-      ? `${listed(failed)} failed`
-      : partial.length
-        ? `${listed(partial)} measured in part`
-        : "",
+  /** A finished run's issues on more servers than one line names. */
+  troubled: (servers: number) => `${servers} servers with issues, each marked on its card`,
   unavailable: (throughput: boolean, latency: boolean) =>
     throughput && latency
       ? "Throughput and latency paths are unavailable"

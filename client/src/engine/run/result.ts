@@ -120,44 +120,78 @@ export interface Cell {
   /** Its own failure, or for an unreached cell the one that took its server out. */
   cause: Cause | null;
 }
+export interface Row {
+  server: ServerIdentity;
+  cells: Record<Stage, Cell>;
+  /** The server's own outcome by the run's rule: Incomplete when a stage it was planned for has no result of its. */
+  outcome: Outcome;
+  /** Each of its failures, in stage order; loaded latency's included. */
+  causes: Cause[];
+}
 export interface Grid {
   /** Every selected server, in selection order. */
-  rows: { server: ServerIdentity; cells: Record<Stage, Cell> }[];
+  rows: Row[];
   /** Complete only when every selected server measured the stage. */
   columns: Record<Stage, CellStatus>;
   outcome: Outcome;
+  /** Some stage has a result; a run without one failed, though History keeps it as Incomplete. */
+  measured: boolean;
+  /** Every server's causes, in selection order. */
+  causes: Cause[];
 }
 type Graded = StageResults & Pick<RunResult, "stages" | "multiServer"> & { outcome?: Outcome };
+
+const order = (stage: Stage | "start") => (stage === "start" ? -1 : STAGES.indexOf(stage));
 
 const perStage = <T>(value: (stage: Stage) => T) =>
   Object.fromEntries(STAGES.map((stage) => [stage, value(stage)])) as Record<Stage, T>;
 
-/** The result as servers by stages, from what schema 6 saves; every surface reads its words from this. */
-export function grid(result: Graded): Grid {
-  const { selection, servers, failures } = result.multiServer;
+/** The result as servers by stages, from what schema 6 saves; every surface reads its words from this. A `running`
+ *  stage reads each server as it stands so far: failed there, gone before it, or still measuring as complete. */
+export function grid(result: Graded, running: Stage | null = null): Grid {
+  const { selection, servers, failures, participants } = result.multiServer;
   const rows = selection.map((server) => {
     const summary = servers.find((entry) => entry.server.id === server.id);
     const own = failures.filter((failure) => failure.serverId === server.id);
     // A server outside the run failed its start check; its failure was charged to a stage it never reached.
     const start: Cause | null = summary || !own[0] ? null : { ...own[0], stage: "start" };
     const cell = (stage: Stage): Cell => {
-      if (result.stages[stage] === "not-run") return { status: "skipped", cause: null };
+      if (result.stages[stage] === "not-run" && stage !== running)
+        return { status: "skipped", cause: null };
       if (!summary) return { status: "unreached", cause: start };
-      const status = summary.stages[stage];
       const failure = own.find((f) => f.stage === stage && f.scope === failureScope(stage));
       // A server without a latency path takes no part in the latency stage by plan, unless charged for it.
       if (stage === "latency" && summary.latencyTarget === null && !failure)
         return { status: "skipped", cause: null };
-      if (status !== "not-run") return { status, cause: failure ?? null };
-      // Charged for a stage it never ran, as a focus without a latency path is: it failed there.
-      if (failure) return { status: "failed", cause: failure };
       const before = STAGES.indexOf(stage);
       const left = own.findLast(
         (f) => f.scope === failureScope(f.stage) && STAGES.indexOf(f.stage) < before,
       );
+      if (stage === running)
+        return failure
+          ? { status: "failed", cause: failure }
+          : participants.includes(server.id)
+            ? { status: "complete", cause: null }
+            : { status: "unreached", cause: left ?? null };
+      const status = summary.stages[stage];
+      if (status !== "not-run") return { status, cause: failure ?? null };
+      // Charged for a stage it never ran, as a focus without a latency path is: it failed there.
+      if (failure) return { status: "failed", cause: failure };
       return { status: "unreached", cause: left ?? null };
     };
-    return { server, cells: perStage(cell) };
+    const cells = perStage(cell);
+    const statuses = Object.values(cells).map(({ status }) => status);
+    const causes: Cause[] = start
+      ? [start]
+      : own.toSorted((a, b) => order(a.stage) - order(b.stage));
+    const outcome: Outcome = statuses.some(
+      (status) => status === "failed" || status === "unreached",
+    )
+      ? "incomplete"
+      : causes.length || statuses.includes("partial")
+        ? "partial"
+        : "complete";
+    return { server, cells, outcome, causes };
   });
   const columns = perStage((stage): CellStatus => {
     const saved = result.stages[stage];
@@ -175,7 +209,13 @@ export function grid(result: Graded): Grid {
     : failures.length || statuses.includes("partial")
       ? "partial"
       : "complete";
-  return { rows, columns, outcome };
+  return {
+    rows,
+    columns,
+    outcome,
+    measured: statuses.some((status) => status === "complete" || status === "partial"),
+    causes: rows.flatMap((row) => row.causes),
+  };
 }
 
 /** A column as schema 6 saves it, in the words every release reads. */

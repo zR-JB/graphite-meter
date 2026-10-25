@@ -49,7 +49,27 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
       stage: "download",
       reason: "connection-lost",
     });
-    await expect(page.locator(".gauge-hint")).toContainText("Download");
+    // Upload ran without Oslo: it is partial, says who it lacked, and Oslo alone reads it as not reached.
+    await expect(page.locator(".gauge-hint")).toHaveText("Oslo: connection lost in Download");
+    expect(saved.result.stages.upload).toBe("partial");
+    const card = (stage: string) => page.locator(`.results .card[data-tone="${stage}"]`);
+    await expect(card("upload").locator(".name .status")).toHaveText("Partial");
+    await expect(card("upload").locator(".line .reason")).toHaveText("Without Oslo");
+    await expect(card("download").locator(".line .reason")).toHaveText("Oslo: connection lost");
+    await expect(page.getByRole("switch", { name: /^Upload stage/ })).toHaveAttribute(
+      "class",
+      /\bchip--partial\b/,
+    );
+    const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
+    await expect(lens.locator('option[value="oslo"]')).toHaveText("Oslo · Incomplete");
+    await lens.evaluate((select: HTMLSelectElement) => {
+      select.value = "oslo";
+      select.dispatchEvent(new Event("change"));
+    });
+    await expect(card("upload").locator(".name .status")).toHaveText("Not reached");
+    await expect(card("upload").locator(".line .reason")).toHaveText(
+      "Left in Download: connection lost",
+    );
     const later = saved.result.multiServer.intervals.filter(
       (interval) => interval.reason === "dropout" || interval.stage !== "download",
     );
@@ -90,6 +110,44 @@ test("losing every server ends Incomplete without an Aborted flash", async (page
       timeout: 20_000,
     });
     expect(await page.evaluate(() => (window as any).phases)).not.toContain("aborted");
+    // Too little evidence for a result: Download failed, and Upload, which nobody was left for, was not reached.
+    await expect(page.getByRole("switch", { name: /^Download stage/ })).toHaveAttribute(
+      "class",
+      /\bchip--failed\b/,
+    );
+    await expect(page.getByRole("switch", { name: /^Upload stage/ })).toContainText("Not reached");
+  } finally {
+    porto.kill();
+    lisbon.kill();
+  }
+});
+
+test("a run that measured nothing reads Failed with its cause and is kept in History as Incomplete", async (page) => {
+  const porto = await spawnPeer("Porto");
+  const lisbon = await spawnPeer("Lisbon", catalog(porto.server));
+  try {
+    await open(page, lisbon.server.url, {
+      servers: [{ id: "self", url: lisbon.server.url }, porto.server],
+      config: {
+        ...long,
+        stages: { latency: false, download: true, upload: true, bidirectional: false },
+      },
+    });
+    await ready(page);
+    const startedAt = Date.now();
+    await runButton(page, "Start test").click();
+    await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+    porto.kill("SIGKILL");
+    lisbon.kill("SIGKILL");
+    const saved = await savedResult(page, startedAt, 30_000);
+    expect(saved.result.outcome).toBe("incomplete");
+    await expect(page.locator(".gauge-status.error")).toHaveText("Failed");
+    await expect(page.locator("footer.status .label")).toHaveText("Failed");
+    await expect(page.locator(".gauge-hint")).toContainText("Download");
+    await expect(page.getByRole("switch", { name: /^Download stage/ })).toHaveAttribute(
+      "class",
+      /\bchip--failed\b/,
+    );
   } finally {
     porto.kill();
     lisbon.kill();

@@ -43,8 +43,7 @@ function harness(
     adaptive: !!options.adaptive,
   };
   let run: Run | undefined;
-  const terminal = () =>
-    events.find((event) => event.type === "complete" || event.type === "error");
+  const terminal = () => events.find((event) => event.type === "complete");
   return {
     clock,
     calls,
@@ -105,7 +104,7 @@ function harness(
         expect(incoherence(end.result, end.plans)).toEqual([]);
         return end.result;
       }
-      throw end?.type === "error" ? end : new Error("the run did not end");
+      throw new Error("the run did not end");
     },
   };
 }
@@ -570,7 +569,7 @@ test("a server dropped at Start reads not reached in every stage, so each stage 
   near(result.download?.reportedBytesPerSec, 4_000);
 });
 
-test("a server that cannot prepare is dropped; the run fails only when none survive", async () => {
+test("a server that cannot prepare is dropped; with none left the run ends, measured nothing, with each cause", async () => {
   const refuse = { prepare: () => Promise.reject(new Error("fixture")) };
   const early = setup(two(refuse), { download: true }, { downloadMs: 1_000 });
   early.start();
@@ -582,11 +581,28 @@ test("a server that cannot prepare is dropped; the run fails only when none surv
     { serverId: "a", stage: "download", reason: "path-failed" },
   ]);
 
-  const none = setup(two(refuse, refuse), { download: true }, { downloadMs: 1_000 });
+  const none = setup(
+    two(refuse, refuse),
+    { download: true, upload: true },
+    { downloadMs: 1_000, uploadMs: 1_000 },
+  );
   none.start();
-  await expect(none.result()).rejects.toMatchObject({
-    reason: "path-failed",
-    message: expect.stringMatching(/^All selected test servers failed/),
+  const nothing = await none.result();
+  expect(grid(nothing).measured).toBe(false);
+  expect(nothing.outcome).toBe("incomplete");
+  expect(cells(nothing)).toEqual({
+    a: [
+      "skipped",
+      "failed: path-failed in download",
+      "unreached: path-failed in download",
+      "skipped",
+    ],
+    b: [
+      "skipped",
+      "failed: path-failed in download",
+      "unreached: path-failed in download",
+      "skipped",
+    ],
   });
   for (const [cause, reason] of [
     [new TypeError("Failed to fetch"), "connection-lost"],
@@ -597,7 +613,10 @@ test("a server that cannot prepare is dropped; the run fails only when none surv
     const reject = { prepare: () => Promise.reject(new Error("no", { cause })) };
     const refused = setup(two(reject, reject), { download: true }, { downloadMs: 1_000 });
     refused.start();
-    await expect(refused.result()).rejects.toMatchObject({ reason });
+    expect((await refused.result()).multiServer.failures.map((f) => f.reason)).toEqual([
+      reason,
+      reason,
+    ]);
   }
 
   const upload = setup(
@@ -857,7 +876,6 @@ test("ending while the first stage prepares completes the run instead of failing
   const result = await h.result();
   expect(result.stages.download).toBe("failed");
   expect(result.outcome).toBe("incomplete");
-  expect(h.events.some(({ type }) => type === "error")).toBe(false);
 });
 
 test("a 0 ms stage is not planned, and a plan without a stage is refused", async () => {
@@ -987,7 +1005,15 @@ test("removing one server keeps the outcomes the others report in the same prepa
     { downloadMs: 1_000 },
   );
   preparing.start();
-  await expect(preparing.result()).rejects.toMatchObject({ reason: "server-capacity" });
+  expect(
+    (await preparing.result()).multiServer.failures.map(({ serverId, reason }) => [
+      serverId,
+      reason,
+    ]),
+  ).toEqual([
+    ["a", "sign-in-required"],
+    ["b", "server-capacity"],
+  ]);
 
   let b: StageEvents;
   const server = { id: "a", name: "a", url: "https://a.example" };
@@ -1641,9 +1667,7 @@ test("a stage end handler may end or stop the run there, and one that throws cha
         else throw new Error("handler");
       });
       await h.elapse(5_000);
-      const ends = h.events.filter(
-        ({ type }) => type === "complete" || type === "aborted" || type === "error",
-      );
+      const ends = h.events.filter(({ type }) => type === "complete" || type === "aborted");
       expect(ends.map(({ type }) => type)).toEqual([act === "abort" ? "aborted" : "complete"]);
       expect(h.calls.includes("begin:self:upload")).toBe(act === "throw");
     }
@@ -1848,10 +1872,9 @@ test("a stage that cannot prepare reports the reason its lanes gave", async () =
     { downloadMs: 1_000 },
   );
   h.start();
-  await expect(h.result()).rejects.toMatchObject({
-    reason: "protocol-error",
-    message: expect.stringContaining("HTTP 400"),
-  });
+  expect((await h.result()).multiServer.failures).toMatchObject([
+    { reason: "protocol-error", message: expect.stringContaining("HTTP 400") },
+  ]);
 });
 
 test("a stage's readiness waits and checkpoints end as it settles", async () => {

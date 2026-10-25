@@ -1,7 +1,7 @@
 // The dial; per frame its painter writes a path, a transform, a text node and a class.
 import type { App } from "../../app/app";
 import { CHECK_FAILED } from "../../engine/net/checks";
-import { STAGES, type Stage } from "../../engine/run/schedule";
+import type { Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { pageMs } from "../../lib/frame";
 import { HANDOFF_OUT_MS, handoff, reducedMotion } from "../../lib/motion";
@@ -17,7 +17,7 @@ import {
   withUnit,
 } from "../../view/format";
 import { latencyCeilingMs } from "../../view/scales";
-import { OUTCOME, PHASE, POPULATION, reasonLabel, STAGE, statusLabel, TIP } from "../../view/words";
+import { PHASE, runWord, STAGE, statusLabel, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
@@ -30,6 +30,7 @@ import {
   beadKinds,
   DIAL_LABELS,
   dialLayout,
+  endingHint,
   gaugeFraction,
   gaugeValue,
   headlineArc,
@@ -71,8 +72,8 @@ export function Dial(props: {
   // A finished run's arcs read what the lens shows: every server together, or the one chosen under the dial.
   const shown = computed(() => {
     const id = live.lens();
-    const details = run.details();
-    return id && details ? serverEvidence(details, id) : run.result();
+    const result = run.result();
+    return id && result ? serverEvidence(result, id) : result;
   });
   const arcs = computed(() => (phase() === "complete" ? resultArcs(shown()) : []));
   const headline = computed(() => headlineArc(arcs()));
@@ -196,34 +197,18 @@ export function Dial(props: {
     if (waiting) return { status: CHECK_FAILED, detail: waiting.message! };
     return { status: CHECK_FAILED, detail: DIAL.unavailable(throughput, latency) };
   });
+  // How the run ended, when that needs saying: stopped, or short of complete with its first cause.
   const ending = computed(() => {
-    if (phase() === "aborted") return { status: PHASE.stopped, tone: "", hint: DIAL.restart };
+    if (phase() === "aborted")
+      return { status: PHASE.stopped, tone: "", hint: app.saving() ? DIAL.unsaved : "" };
     const result = run.result();
-    if (phase() === "complete" && result && result.outcome !== "complete") {
-      const named = (status: string) =>
-        STAGES.filter((stage) => result.stages[stage] === status).map(
-          (stage) => STAGE[stage].label,
-        );
-      // Loaded latency that failed leaves its transfer stage complete but the run partial.
-      const loaded = STAGES.filter(
-        (stage) =>
-          stage !== "latency" &&
-          result.multiServer.failures.some(
-            (each) => each.scope === "latency" && each.stage === stage,
-          ),
-      ).map((stage) => POPULATION[stage]);
-      return {
-        status: OUTCOME[result.outcome].label,
-        tone: "warn",
-        hint: DIAL.unfinished(named("failed"), [...named("partial"), ...loaded]),
-      };
-    }
-    if (phase() !== "error") return null;
-    const error = run.error();
+    const table = run.table();
+    if (phase() !== "complete" || !result || !table || result.outcome === "complete") return null;
+    const word = runWord(result);
     return {
-      status: error ? reasonLabel(error.reason) : DIAL.unknownError,
-      tone: "error",
-      hint: DIAL.retry,
+      status: word.label,
+      tone: word.tone === "err" ? "error" : "warn",
+      hint: endingHint(table),
     };
   });
   const note = handoff(
@@ -231,7 +216,7 @@ export function Dial(props: {
       const refused = refusal();
       const ended = ending();
       if (run.preparing())
-        return { status: statusLabel(live.preparation(), phase(), undefined), tone: "preparation" };
+        return { status: statusLabel(live.preparation(), phase(), null), tone: "preparation" };
       if (live.preparation() === "waiting")
         return { status: PHASE.waiting, tone: "preparation", hint: DIAL.otherTab };
       if (refused) return { status: refused.status, tone: "error", hint: refused.detail };

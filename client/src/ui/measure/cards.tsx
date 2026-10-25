@@ -1,6 +1,6 @@
 // The result cards: the live console's carry strips and follow the frame clock; History's show a saved result.
 import type { App } from "../../app/app";
-import type { RunResult } from "../../engine/run/result";
+import { grid, type RunResult } from "../../engine/run/result";
 import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, untrack, type Read } from "../../lib/signal";
@@ -20,9 +20,10 @@ import { Icon } from "../kit/icon";
 import { tipGroup } from "../kit/rove";
 import { clip, term, tip } from "../kit/tip";
 import {
-  cardReason,
+  cardLine,
   liveCard,
   resultSentence,
+  runEvidence,
   serverEvidence,
   serverIssues,
   settled,
@@ -255,12 +256,10 @@ export function ResultSummary(props: {
   showWire: () => boolean;
 }): Node {
   const { lens } = props;
-  const evidence = computed<Evidence>(() => {
-    const result = props.result();
-    return lens()
-      ? serverEvidence(result.multiServer, lens())
-      : { ...result, status: result.stages, idle: result.latencyByStage.latency };
-  });
+  const evidence = computed<Evidence>(() =>
+    lens() ? serverEvidence(props.result(), lens()) : runEvidence(props.result()),
+  );
+  const table = computed(() => grid(props.result()));
   const stages = computed(() => STAGES.filter((stage) => settled(evidence().status[stage])));
   const issues = computed(() => serverIssues(props.result().multiServer, lens()));
   const attributed = computed(() => props.result().multiServer.selection.length > 1 && !lens());
@@ -277,7 +276,7 @@ export function ResultSummary(props: {
           props.showWire(),
         );
       }),
-      reason: computed(() => cardReason(issues(), stage, attributed())),
+      reason: computed(() => cardLine(table(), stage, lens())),
       lens,
     }).element;
   return (
@@ -317,6 +316,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
   const { lens } = live;
   const evidence = computed<Evidence>(() =>
     shownEvidence({
+      result: run.result(),
       details: details(),
       lens: lens(),
       focus: live.focus(),
@@ -324,11 +324,6 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       idle: live.summaries().latency ?? null,
     }),
   );
-  // Lost latency probes are marked on the latency card's facts; nothing is added under the cards mid-run.
-  const issues = computed(() =>
-    details() ? serverIssues(details()!, lens()).filter((issue) => issue.throughput.length) : [],
-  );
-  const attributed = computed(() => (details()?.selection.length ?? 1) > 1 && !lens());
   const plan = computed(() => run.plan() ?? app.preferences.config());
 
   /** What a stage that has not settled shows, read from the run only while it runs or after it stopped. */
@@ -369,8 +364,9 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
       const status = evidence().status[stage];
       if (settled(status))
         return settledCard(stage, status, evidence(), units(), app.preferences.showWireEstimates());
-      // A server shown alone that never ran the stage reads as skipped.
-      const state: StageState = status === "not-run" ? "skipped" : live.states()[stage];
+      // A server shown alone reads its own cell: one it never reached, or a stage off for the run.
+      const state: StageState =
+        status === "unreached" || status === "skipped" ? status : live.states()[stage];
       return liveCard(stage, state, liveEvidence(stage, state), units());
     });
 
@@ -471,7 +467,11 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     const view = model(stage);
     const { element, figures } = Card({
       card: view,
-      reason: computed(() => cardReason(issues(), stage, attributed())),
+      // Lost latency probes are marked on the latency card's facts; a line names who failed or is missing.
+      reason: computed(() => {
+        const table = run.table();
+        return table ? cardLine(table, stage, lens()) : "";
+      }),
       lens,
       strip: strip(stage),
     });
@@ -525,15 +525,11 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     const result = run.result();
     if (run.phase() !== "complete" || !result || result === spoken) return;
     spoken = result;
-    const cards = STAGES.filter((stage) => settled(result.stages[stage])).map((stage) =>
-      settledCard(
-        stage,
-        result.stages[stage] as "complete",
-        { ...result, status: result.stages, idle: result.latencyByStage.latency },
-        untrack(units),
-        false,
-      ),
-    );
+    const evidence = runEvidence(result);
+    const cards = STAGES.flatMap((stage) => {
+      const status = evidence.status[stage];
+      return settled(status) ? [settledCard(stage, status, evidence, untrack(units), false)] : [];
+    });
     untrack(() => announce(resultSentence(cards)));
   });
 

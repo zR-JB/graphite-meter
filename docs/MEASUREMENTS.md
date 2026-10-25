@@ -174,7 +174,7 @@ RTT stays primary for latency, jitter, deadlines and added latency.
 | Partial    | Every stage has its results, but a server missed one or a latency population failed. |
 | Incomplete | A planned result is missing after measurement began, including every server failing. |
 | Stopped    | Canceled by the user; work a failure cancels carries that failure, never "stopped". |
-| Failed     | Nothing was measured.                                                                |
+| Failed     | Nothing was measured; the browser keeps such a run in History as Incomplete.         |
 
 In the browser a stage is Complete only when every selected server measured it. A server that left in an earlier
 stage, or failed its check at Start, did not reach it, so the stage is Partial even though its result stands.
@@ -202,7 +202,8 @@ pins:
 
 ## Saved history
 
-When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB.
+When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB,
+a run that failed once its stages began among them; a refused Start and a stop are never kept.
 A record holds the build and the result. The result covers the selected servers and survivors, each server's engine
 version, path evidence and stage statuses, latency populations with exact probe counts, at most 128 recent intervals,
 failures with reasons, byte totals, and the headline with its peak, stability and wire estimate. Missing

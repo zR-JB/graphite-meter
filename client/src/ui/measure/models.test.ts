@@ -2,10 +2,11 @@ import { expect, test } from "bun:test";
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { LatencySummary } from "../../engine/measure/latency";
-import type { MultiServerResult } from "../../engine/run/result";
+import { grid, type MultiServerResult, type RunResult } from "../../engine/run/result";
 import { MISSING } from "../../view/format";
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
 import {
+  cardLine,
   liveCard,
   serverIssues,
   settledCard,
@@ -147,6 +148,7 @@ const transfer = (bytesPerSec: number): ThroughputResult => ({
 });
 const NOTHING: Evidence = {
   status: {},
+  whole: new Set(),
   download: null,
   upload: null,
   bidirectional: null,
@@ -302,10 +304,20 @@ test("shown together, the latency card reads the server latency is shown for, he
     download: null,
     upload: null,
     bidirectional: null,
-  } as unknown as Omit<Evidence, "idle">;
+  } as unknown as Omit<Evidence, "idle" | "whole">;
+  const result = {
+    ...run,
+    stages: {
+      latency: "complete",
+      download: "not-run",
+      upload: "not-run",
+      bidirectional: "not-run",
+    },
+    multiServer: { ...details, selection: [near.server, far.server], failures: [] },
+  } as unknown as RunResult;
   const live = summary(121, 40);
   const shown = (focus: string, lens = "") =>
-    shownEvidence({ details, lens, focus, run, idle: live });
+    shownEvidence({ result: lens ? result : null, details, lens, focus, run, idle: live });
   // Latency shown for the far server reads its result and its own replies, never the run's near headline.
   expect([shown("far").latency, shown("far").idle?.probeCount]).toEqual([far.latency as never, 9]);
   expect(shown("far").status).toEqual({ latency: "complete", download: "complete" });
@@ -315,5 +327,48 @@ test("shown together, the latency card reads the server latency is shown for, he
   ]);
   // A lens on one server reads that server alone; with no result yet, the run's own and the live replies.
   expect(shown("near", "far").latency).toBe(far.latency as never);
-  expect(shownEvidence({ details: null, lens: "", focus: "far", run, idle: live }).idle).toBe(live);
+  expect(
+    shownEvidence({ result: null, details: null, lens: "", focus: "far", run, idle: live }).idle,
+  ).toBe(live);
+});
+
+test("a card's line names who failed in its stage and who never reached it; one server shown alone says why", () => {
+  const frankfurt = { id: "f", name: "Frankfurt", url: "" };
+  const oslo = { id: "o", name: "Oslo", url: "" };
+  const bergen = { id: "b", name: "Bergen", url: "" };
+  const all = {
+    latency: "not-run",
+    download: "complete",
+    upload: "complete",
+    bidirectional: "not-run",
+  };
+  const failure = (serverId: string, reason: string) => ({
+    serverId,
+    stage: "download",
+    atMs: 0,
+    scope: "throughput",
+    reason,
+    message: "",
+  });
+  const table = grid({
+    latency: null,
+    download: transfer(1e6),
+    upload: transfer(1e6),
+    bidirectional: null,
+    stages: { ...all, download: "partial", upload: "partial" },
+    multiServer: {
+      selection: [frankfurt, oslo, bergen],
+      servers: [
+        { server: frankfurt, stages: all },
+        { server: oslo, stages: { ...all, download: "partial", upload: "not-run" } },
+      ],
+      failures: [failure("o", "connection-lost"), failure("b", "server-capacity")],
+    },
+  } as unknown as RunResult);
+  expect(cardLine(table, "download")).toBe("Oslo: connection lost, without Bergen");
+  expect(cardLine(table, "upload")).toBe("Without Oslo and Bergen");
+  expect(cardLine(table, "download", "o")).toBe("Connection lost");
+  expect(cardLine(table, "upload", "o")).toBe("Left in Download: connection lost");
+  expect(cardLine(table, "upload", "b")).toBe("Left at Start: server at capacity");
+  expect(cardLine(table, "upload", "f")).toBe("");
 });

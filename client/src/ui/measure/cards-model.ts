@@ -3,8 +3,15 @@ import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyResult, LatencySummary } from "../../engine/measure/latency";
 import type { WireModel } from "../../engine/measure/overhead";
 import { stabilityPct } from "../../engine/measure/stability";
-import type { MultiServerResult, StageStatus } from "../../engine/run/result";
-import type { Stage, TransferStage } from "../../engine/run/schedule";
+import {
+  grid,
+  type Cause,
+  type CellStatus,
+  type Grid,
+  type MultiServerResult,
+  type RunResult,
+} from "../../engine/run/result";
+import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import {
   fmtBytes,
   fmtCount,
@@ -22,6 +29,7 @@ import {
   type RateUnits,
 } from "../../view/format";
 import {
+  listed,
   POPULATION,
   reasonLabel,
   STAGE,
@@ -76,7 +84,10 @@ type Transfer = ThroughputResult & { wire?: WireModel | null };
 
 /** The evidence a card shows, the run's or one server's share of it. */
 export interface Evidence {
-  status: Partial<Record<Stage, StageStatus>>;
+  /** As the result grid judges each stage. */
+  status: Partial<Record<Stage, CellStatus>>;
+  /** Stages every server that took part measured in full, however many did not: their stability and wire rate stand. */
+  whole: ReadonlySet<Stage>;
   download: Transfer | null;
   upload: Transfer | null;
   bidirectional: {
@@ -89,12 +100,45 @@ export interface Evidence {
   idle: LatencySummary | null;
 }
 
-/** Takes one server's share of a multi-server result; nothing is settled for a server that measured nothing. */
-export function serverEvidence(details: MultiServerResult, id: string): Evidence {
-  const server = details.servers.find((entry) => entry.server.id === id);
+/** The stages a judged result measured in full, or one server of it did. */
+function wholeStages(table: Grid, id = ""): Set<Stage> {
+  const rows = id ? table.rows.filter((row) => row.server.id === id) : table.rows;
+  return new Set(
+    STAGES.filter(
+      (stage) =>
+        table.columns[stage] !== "skipped" &&
+        rows.some((row) => row.cells[stage].status === "complete") &&
+        rows.every(({ cells }) =>
+          ["complete", "unreached", "skipped"].includes(cells[stage].status),
+        ),
+    ),
+  );
+}
+
+/** A finished result as the cards read every server together. */
+export const runEvidence = (result: RunResult): Evidence => {
+  const table = grid(result);
+  return {
+    ...result,
+    status: table.columns,
+    whole: wholeStages(table),
+    idle: result.latencyByStage.latency,
+  };
+};
+
+/** One server's share of a finished result, each stage as its cell reads; a server dropped at Start measured nothing. */
+export function serverEvidence(result: RunResult, id: string): Evidence {
+  const table = grid(result);
+  const row = table.rows.find((entry) => entry.server.id === id);
+  const status = row
+    ? Object.fromEntries(STAGES.map((stage) => [stage, row.cells[stage].status]))
+    : {};
+  const whole = wholeStages(table, id);
+  const server = result.multiServer.servers.find((entry) => entry.server.id === id);
   if (!server)
     return {
-      status: {},
+      status,
+      whole,
       download: null,
       upload: null,
       bidirectional: null,
@@ -102,7 +146,8 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
       idle: null,
     };
   return {
-    status: server.stages,
+    status,
+    whole,
     download: server.download,
     upload: server.upload,
     bidirectional: server.bidirectional,
@@ -111,30 +156,34 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
   };
 }
 
-/** What the cards read: the lens's server, or all together; latency reads only its shown server so figures never mix servers. */
+/** What the cards read: the lens's server of a finished result, or all together; latency reads only its shown server
+ *  so figures never mix servers. */
 export function shownEvidence(view: {
+  result: RunResult | null;
   details: MultiServerResult | null;
   lens: string;
   focus: string | null;
-  run: Omit<Evidence, "idle">;
+  run: Omit<Evidence, "idle" | "whole">;
   /** The focus's live replies stand in while it has no result. */
   idle: LatencySummary | null;
 }): Evidence {
-  const { details, lens, focus, run } = view;
-  if (details && lens) return serverEvidence(details, lens);
+  const { result, details, lens, focus, run } = view;
+  if (result && lens) return serverEvidence(result, lens);
+  const evidence = { ...run, whole: result ? runEvidence(result).whole : new Set<Stage>() };
   const focused = details?.servers.find((entry) => entry.server.id === focus);
-  if (!focused?.latency) return { ...run, idle: view.idle };
+  if (!focused?.latency) return { ...evidence, idle: view.idle };
+  const own = focused.stages.latency;
   return {
-    ...run,
-    status: { ...run.status, latency: focused.stages.latency },
+    ...evidence,
+    status: own === "not-run" ? run.status : { ...run.status, latency: own },
     latency: focused.latency,
     idle: focused.latencyByStage.latency,
   };
 }
 
-const SETTLED = new Set<StageStatus>(["complete", "partial", "failed"]);
+const SETTLED = new Set<CellStatus>(["complete", "partial", "failed"]);
 export const settled = (
-  status: StageStatus | null | undefined,
+  status: CellStatus | null | undefined,
 ): status is "complete" | "partial" | "failed" => !!status && SETTLED.has(status);
 
 const LOOK: Record<StageState, CardStatus> = {
@@ -251,7 +300,7 @@ export function settledCard(
   showWire: boolean,
 ): CardModel {
   const card = blank(stage, status);
-  const complete = status === "complete";
+  const complete = status === "complete" || evidence.whole.has(stage);
   if (stage === "latency") {
     const latency = evidence.latency;
     const idle = idleFacts(evidence.idle);
@@ -437,14 +486,43 @@ export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
   return [...lines.values()].map(({ stages, ...line }) => ({ ...line, stages: stages.join(", ") }));
 }
 
-/** Gives a card's failure reason, named by server when several ran and all are shown. */
-export function cardReason(issues: readonly Issue[], stage: Stage, attributed: boolean): string {
-  return issues
-    .filter((issue) => issue.throughput.includes(stage))
-    .map(({ server, reason }) =>
-      attributed ? `${server}: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}` : reason,
-    )
-    .join(", ");
+export const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+const loaded = (cause: Cause) => cause.scope === "latency" && cause.stage !== "latency";
+
+/** Where a cause arose, as a line starts with it: Start, a stage, or a transfer stage's loaded latency. */
+export const causePlace = (cause: Cause) =>
+  cause.stage === "start"
+    ? "Start"
+    : loaded(cause)
+      ? POPULATION[cause.stage]
+      : STAGE[cause.stage].label;
+
+/** A cause mid-sentence: "connection lost in Download", "server at capacity at Start". */
+export const causeAt = (cause: Cause) =>
+  `${lower(reasonLabel(cause.reason))} ${cause.stage === "start" ? "at" : "in"} ${loaded(cause) ? lower(causePlace(cause)) : causePlace(cause)}`;
+
+/** Where a server left the run, and why: "Left in Download: connection lost". */
+export const leftLine = (cause: Cause) =>
+  `${cause.stage === "start" ? "Left at Start" : `Left in ${STAGE[cause.stage].label}`}: ${lower(reasonLabel(cause.reason))}`;
+
+/** A card's line: each server's failure in its stage, then who never reached it; one server alone says why. */
+export function cardLine(table: Grid, stage: Stage, lens = ""): string {
+  const attributed = !lens && table.rows.length > 1;
+  const rows = lens ? table.rows.filter((row) => row.server.id === lens) : table.rows;
+  const lines: string[] = [];
+  const without: string[] = [];
+  for (const { server, cells } of rows) {
+    const { status, cause } = cells[stage];
+    if (status === "unreached") {
+      if (attributed) without.push(server.name);
+      else if (cause) lines.push(leftLine(cause));
+    } else if ((status === "partial" || status === "failed") && cause) {
+      const reason = reasonLabel(cause.reason);
+      lines.push(attributed ? `${server.name}: ${lower(reason)}` : reason);
+    }
+  }
+  if (without.length) lines.push(`${lines.length ? "without" : "Without"} ${listed(without)}`);
+  return lines.join(", ");
 }
 
 /** Speaks a completed run once in card order, with each headline, its status if not complete and latency's jitter. */

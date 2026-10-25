@@ -213,7 +213,6 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
           preparation: run.preparation.peek(),
           startError: run.startError.peek(),
           connectivity: (latencyServer && views.get(latencyServer)?.connectivity) ?? null,
-          error: run.error.peek(),
           stall: run.stall.peek(),
           stages: run.statuses.peek(),
           stageResults: run.results.peek(),

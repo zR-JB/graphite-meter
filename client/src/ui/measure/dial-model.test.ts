@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
 import type { ThroughputResult } from "../../engine/measure/aggregate";
+import type { Cause, CellStatus, Grid } from "../../engine/run/result";
+import { STAGES, type Stage } from "../../engine/run/schedule";
 import { fmtTick } from "../../view/format";
 import {
   beadKinds,
   DIAL_LABELS,
   dialLayout,
   DRAIN_MS,
+  endingHint,
   gaugeFraction,
   gaugeValue,
   headlineArc,
@@ -208,4 +211,126 @@ test("the needle rises, follows, glides across a rescale, drains, and leaves the
   still.update(shown("a", false), 0);
   expect(still.angle(0, 77)).toBe(77);
   expect(still.takeover(false, 10)).toBe(0);
+});
+
+/** A grid of named servers, each with its cells by stage and its causes; stages it does not name were off. */
+function judged(
+  outcome: Grid["outcome"],
+  servers: Record<string, { cells: Partial<Record<Stage, CellStatus>>; causes?: Partial<Cause>[] }>,
+): Grid {
+  const rows = Object.entries(servers).map(([name, { cells, causes = [] }]) => {
+    const own = causes.map(
+      (cause) => ({ serverId: name, atMs: 0, scope: "throughput", message: "", ...cause }) as Cause,
+    );
+    return {
+      server: { id: name, name, url: "" },
+      outcome,
+      causes: own,
+      cells: Object.fromEntries(
+        STAGES.map((stage) => {
+          const status = cells[stage] ?? "skipped";
+          const cause =
+            status === "complete" || status === "skipped"
+              ? null
+              : (own.find((each) => each.stage === stage) ?? own.at(-1) ?? null);
+          return [stage, { status, cause }];
+        }),
+      ) as Grid["rows"][number]["cells"],
+    };
+  });
+  const columns = Object.fromEntries(
+    STAGES.map((stage) => {
+      const all = rows.map(({ cells }) => cells[stage].status);
+      const column = all.every((s) => s === "skipped")
+        ? "skipped"
+        : all.every((s) => s === "unreached")
+          ? "unreached"
+          : all.every((s) => s === "failed" || s === "unreached")
+            ? "failed"
+            : all.every((s) => s === "complete")
+              ? "complete"
+              : "partial";
+      return [stage, column];
+    }),
+  ) as Grid["columns"];
+  const measured = Object.values(columns).some((s) => s === "complete" || s === "partial");
+  return { rows, columns, outcome, measured, causes: rows.flatMap((row) => row.causes) };
+}
+
+test("a run short of complete names what it lacks first, then the first cause in server order", () => {
+  const lost = { stage: "download", reason: "connection-lost" } as const;
+  const cases: [string, Grid, string][] = [
+    [
+      "one server lost in Download",
+      judged("partial", {
+        Frankfurt: { cells: { download: "complete", upload: "complete" } },
+        Oslo: { cells: { download: "partial", upload: "unreached" }, causes: [lost] },
+      }),
+      "Oslo: connection lost in Download",
+    ],
+    [
+      "dropped at Start",
+      judged("partial", {
+        Frankfurt: { cells: { download: "complete" } },
+        Bergen: {
+          cells: { download: "unreached" },
+          causes: [{ stage: "start", reason: "server-capacity" }],
+        },
+      }),
+      "Bergen: server at capacity at Start",
+    ],
+    [
+      "loaded latency lost",
+      judged("partial", {
+        Frankfurt: { cells: { download: "complete" } },
+        Oslo: { cells: { download: "complete" }, causes: [{ ...lost, scope: "latency" }] },
+      }),
+      "Oslo: connection lost in loaded download",
+    ],
+    [
+      "two servers",
+      judged("partial", {
+        Frankfurt: { cells: { download: "partial" }, causes: [{ ...lost, reason: "timeout" }] },
+        Oslo: { cells: { download: "partial" }, causes: [lost] },
+      }),
+      "2 servers with issues, each marked on its card",
+    ],
+    [
+      "one server alone",
+      judged("partial", {
+        Home: {
+          cells: { download: "complete", upload: "partial" },
+          causes: [{ stage: "upload", reason: "insufficient-evidence" }],
+        },
+      }),
+      "Upload: too little measured time",
+    ],
+    [
+      "a stage without a result",
+      judged("incomplete", {
+        Home: {
+          cells: { download: "complete", upload: "failed" },
+          causes: [{ stage: "upload", reason: "connection-lost" }],
+        },
+      }),
+      "Upload failed: connection lost",
+    ],
+    [
+      "every server lost before a stage",
+      judged("incomplete", {
+        Frankfurt: { cells: { download: "partial", upload: "unreached" }, causes: [lost] },
+        Oslo: { cells: { download: "partial", upload: "unreached" }, causes: [lost] },
+      }),
+      "Upload not reached: connection lost in Download",
+    ],
+    [
+      "nothing measured",
+      judged("incomplete", {
+        Frankfurt: { cells: { download: "failed", upload: "unreached" }, causes: [lost] },
+        Oslo: { cells: { download: "failed", upload: "unreached" } },
+      }),
+      "Frankfurt: connection lost in Download",
+    ],
+  ];
+  for (const [name, table, hint] of cases) expect(endingHint(table), name).toBe(hint);
 });
