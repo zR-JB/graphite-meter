@@ -4,7 +4,7 @@ use graphite_meter_client::{
     controller::{Command, Controller},
     events::Events,
     model::Stage,
-    net::{Client, Fault, ReadBuffer, Request, ThroughputPath},
+    net::{Class, Client, Fault, ReadBuffer, Request, ThroughputPath},
     run::{prepare::prepare, upload::UploadSession},
 };
 use graphite_meter_net::{ConnectError, Pool, Proxy, Trust, Verify};
@@ -13,6 +13,7 @@ use graphite_meter_proto::{
     json,
     lease::LeaseRequest,
     origin::Origin,
+    reason::FailureReason,
     route::Route,
 };
 use graphite_meter_testkit::{Identity, Scratch, read_head};
@@ -574,4 +575,40 @@ async fn a_check_or_run_cut_short_ends_its_lease() {
         [false, true].repeat(3),
         "each lease taken, then ended with its token"
     );
+}
+
+#[tokio::test]
+async fn a_proxy_that_refuses_fails_the_path_and_one_that_reaches_no_target_is_retried() {
+    for (answer, reason, class) in [
+        (
+            "407 Proxy Authentication Required",
+            FailureReason::PathFailed,
+            Class::Final,
+        ),
+        (
+            "502 Bad Gateway",
+            FailureReason::ConnectionLost,
+            Class::Redial,
+        ),
+    ] {
+        let (listener, address) = local().await;
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_head(&mut stream).await;
+            let refusal = format!("HTTP/1.1 {answer}\r\ncontent-length: 0\r\n\r\n");
+            stream.write_all(refusal.as_bytes()).await.unwrap();
+        });
+        let proxy = format!("http://{address}");
+        let proxy = Proxy::from_lookup(|name| (name == "HTTPS_PROXY").then(|| proxy.clone()));
+        let client = Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()));
+        let origin = Origin::parse("https://meter.example").unwrap();
+        let fault = probe(&client, Protocol::Negotiated, &origin)
+            .await
+            .unwrap_err();
+        assert_eq!((fault.reason(), fault.class()), (reason, class), "{fault}");
+        assert_eq!(
+            fault.to_string(),
+            format!("Could not connect: proxy refused CONNECT with {answer}")
+        );
+    }
 }
