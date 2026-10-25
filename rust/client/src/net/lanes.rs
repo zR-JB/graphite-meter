@@ -10,6 +10,7 @@ use crate::model::{Dir, Direction, Failure, LaneHealth, Stage};
 use bytes::Bytes;
 use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
+    lane::MAX_LANE_STREAMS,
     origin::Origin,
     refusal::Refusal,
     route::Route,
@@ -28,7 +29,6 @@ use tokio::{runtime::Handle, sync::watch, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
 const STREAM_BYTES: u64 = 64 << 20;
-const SESSION_LANES: usize = 16;
 /// The block an upload repeats; an attempt that handed on more than one moved bytes.
 const BLOCK_BYTES: usize = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
@@ -70,7 +70,7 @@ pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<G
             }
             (ThroughputTransport::FetchStream, Protocol::Http3) => (Carrier::Path, usize::MAX),
             (ThroughputTransport::FetchStream, _) => (Carrier::Dialed, 1),
-            _ => (Carrier::Session, SESSION_LANES),
+            _ => (Carrier::Session, MAX_LANE_STREAMS),
         };
         let count = lanes[direction];
         plans.extend((0..count).step_by(size).map(|first| GroupPlan {
