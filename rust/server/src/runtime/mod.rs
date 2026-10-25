@@ -196,7 +196,7 @@ impl Server {
         {
             let role = endpoint.protocol();
             let (app, next) = (app.clone(), || pool.next());
-            let protocol = match socket {
+            let (protocol, endpoints) = match socket {
                 Socket::Http1(socket, tls) => {
                     let http1 = Http1 {
                         app: app.clone(),
@@ -206,7 +206,7 @@ impl Server {
                     };
                     let serve = move |socket, peer| http1.connection(socket, peer);
                     accepting.push(listen(app, socket, next, stopping, role, serve));
-                    "tcp"
+                    ("tcp", String::new())
                 }
                 Socket::Http2(socket, tls) => {
                     let http2 = Http2 {
@@ -215,9 +215,13 @@ impl Server {
                     };
                     let serve = move |socket, peer| http2.connection(socket, peer);
                     accepting.push(listen(app, socket, next, stopping, role, serve));
-                    "tcp"
+                    ("tcp", String::new())
                 }
                 Socket::Quic(quic) => {
+                    let endpoints = match quic.listeners.len() {
+                        1 => " (1 endpoint)".to_owned(),
+                        count => format!(" ({count} endpoints)"),
+                    };
                     // Each endpoint accepts, answers Retry and runs its connections on its own runtime.
                     for listener in quic.listeners {
                         let (runtime, http3) = (listener.runtime(), quic.http3.clone());
@@ -240,14 +244,14 @@ impl Server {
                             serving.await.map_err(|error| format!("{role}: {error}"))?
                         }));
                     }
-                    "udp"
+                    ("udp", endpoints)
                 }
             };
             let place = format!("{address}/{protocol}");
             log!(
                 Info,
                 "listen",
-                "{place:<21} {role:<9} {}",
+                "{place:<21} {role:<9} {}{endpoints}",
                 endpoint.roles(auth)
             );
         }

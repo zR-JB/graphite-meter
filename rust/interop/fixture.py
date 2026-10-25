@@ -61,13 +61,6 @@ def free_port() -> int:
                 return port
 
 
-def udp_sockets(port: int) -> int:
-    """The UDP sockets bound to 127.0.0.1:`port`; SO_REUSEPORT endpoints each have one."""
-    local = f"0100007F:{port:04X}"
-    lines = Path("/proc/net/udp").read_text().splitlines()[1:]
-    return sum(1 for line in lines if line.split()[1] == local)
-
-
 class Fixture:
     """Evidence directory and trust material for one run."""
 
@@ -131,6 +124,15 @@ class Server:
 
     def output(self) -> str:
         return self.log.read_text()
+
+    def endpoints(self) -> int:
+        """The HTTP/3 endpoints the server's listen line counts, once its log writer wrote the line."""
+        deadline = time.monotonic() + 5
+        while not (found := re.search(rf"127\.0\.0\.1:{self.h3}/udp .* \((\d+) endpoints?\)", self.output())):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"no HTTP/3 listen line:\n{self.output()}")
+            time.sleep(0.05)
+        return int(found[1])
 
     def start(self, retries: int = 2) -> subprocess.Popen[bytes]:
         """Starts the server; it is ready once its clear listener answers. A port taken since it was picked is

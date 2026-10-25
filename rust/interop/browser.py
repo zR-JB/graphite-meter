@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from fixture import ROOT, Fixture, Server, build_server, planned_endpoints, udp_sockets
+from fixture import ROOT, Fixture, Server, build_server, planned_endpoints
 
 PAGE = (Path(__file__).parent / "browser.html").read_bytes()
 # Chrome for Testing as setup-chrome puts it on PATH, then a distribution's Chromium.
@@ -119,9 +119,9 @@ def main() -> None:
     context.load_cert_chain(fixture.cert, fixture.key)
     settings = {"GM_MAX_OPERATION_DURATION": "2s", "GM_MAX_SESSION_DURATION": "3s"}
     with fixture.server(binary, "chromium", settings) as server:
-        planned, sockets = planned_endpoints(), udp_sockets(server.h3)
-        if sockets != planned:
-            raise RuntimeError(f"{sockets} HTTP/3 sockets, {planned} planned")
+        planned, endpoints = planned_endpoints(), server.endpoints()
+        if endpoints != planned:
+            raise RuntimeError(f"{endpoints} HTTP/3 endpoints, {planned} planned")
         pages = Pages(context, server)
         threading.Thread(target=pages.serve_forever, daemon=True).start()
         try:
@@ -129,7 +129,7 @@ def main() -> None:
         finally:
             pages.shutdown()
     (fixture.directory / "chromium.json").write_text(json.dumps(report, indent=1))
-    print(f"chromium on {sockets} HTTP/3 endpoints: {report['ua']}", flush=True)
+    print(f"chromium on {endpoints} HTTP/3 endpoints: {report['ua']}", flush=True)
     failed = []
     for name, accept in CHECKS.items():
         check = report["checks"].get(name, {"ok": False, "detail": "missing"})
