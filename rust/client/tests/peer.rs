@@ -471,7 +471,7 @@ async fn a_server_of_another_api_version_is_named_either_way_and_a_lease_cut_bel
         ("newer", newer.as_str()),
         (
             "cut",
-            "the test needs more measurements at once than this server admits for one client",
+            "The test needs more measurements at once than this server admits for one client",
         ),
     ] {
         let (listener, served) = local().await;
