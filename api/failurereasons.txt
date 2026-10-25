@@ -6,7 +6,7 @@
 #   reason = the key every implementation uses for the failure
 #   label  = the text every view shows for it
 #
-# Read by rust/proto/tests/codes.rs, client/src/protocol/pins.test.ts and client/src/view/words.test.ts.
+# Read by rust/proto/tests/codes.rs and client/src/protocol/pins.test.ts.
 
 path-failed | Path unavailable
 connection-lost | Connection lost

@@ -34,8 +34,9 @@ and `apiVersion`, an integer the server raises with each change older clients ca
 [apiversions.txt](apiversions.txt) pins each API version's first release. A client reads the envelope first, whatever
 the rest of the document holds, and validates the rest only for an API version it speaks.
 
-- A preflight without `apiVersion` is a server's from before the envelope: without `lease` it is API version 1
-  (0.13.4 and earlier), with `lease` API version 2 (0.13.5). A probe without `apiVersion` is read as before.
+- A preflight without `apiVersion` but with a string `engineVersion` is a server's from before the envelope: without
+  `lease` it is API version 1 (0.13.4 and earlier), with `lease` API version 2 (0.13.5). A probe without
+  `apiVersion` is read as before.
 - A server of an API version the client does not speak fails its check with words that say which side to update. The
   browser shows them in the server's row and on the dial, and reads that server again only on Retry or a reload; the
   terminal client reports them.
@@ -43,19 +44,21 @@ the rest of the document holds, and validates the rest only for an API version i
   - Newer: "S2 runs Graphite Meter 0.15.0, newer than this page (0.13.6); reload the page or update the server this
     page comes from." The terminal client says "this client" and "update this client".
   - A probe names its origin in place of the server, so a transfer port that another release serves is named too.
-- Where `engineVersion` is missing, empty or unsafe, the words say "an unknown Graphite Meter release". A document of
-  an API version the client speaks still needs a valid one.
+- Where `engineVersion` is missing, empty or unsafe, the words say "an unknown Graphite Meter release". A preflight
+  of an API version the client speaks still needs a safe one, which may be empty; a probe may omit it, but one it
+  sends must be safe.
 
 ## Refusals
 
-A server that refuses a measurement request says why: the answer carries `Graphite-Meter-Refusal: <code>`, which
-CORS exposes, and a one-line text body. [refusals.txt](refusals.txt) pins each code's text, status and the failure
-reason a client records when the refusal ends a server's stage; an upload's progress feed carries the same code in its
-`error` record ([upload contract](upload.md)).
+A server that refuses a measurement request for a reason below says why: the answer carries
+`Graphite-Meter-Refusal: <code>`, which CORS exposes, and a one-line text body. A request that needs a sign-in gets
+`403` with `Graphite-Meter-Auth: required`, which a `revoked` refusal carries too. [refusals.txt](refusals.txt) pins
+each code's text, status and the failure reason a client records when the refusal ends a server's stage; an upload's
+progress feed carries the same code in its `error` record ([upload contract](upload.md)).
 
 | Code | Answer | When |
 | --- | --- | --- |
-| `client-limit` | `429`, `Retry-After: 1` | The client's address or sign-in already holds its share: `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` measurements, `GM_MAX_SESSIONS_PER_CLIENT` WebTransport sessions, or its upload ids. |
+| `client-limit` | `429`, `Retry-After: 1` | The client's address or sign-in already holds its share: `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` measurements, `GM_MAX_SESSIONS_PER_CLIENT` WebTransport sessions, or its upload IDs, of which each lease holds its own share. |
 | `server-capacity` | `503`, `Retry-After: 1` | The server holds `GM_MAX_ACTIVE_MEASUREMENTS` measurements, `GM_MAX_ACTIVE_SESSIONS` sessions, or all the upload ids it keeps. |
 | `wrong-protocol` | `409` with `Alt-Svc` | `/download` or `/upload` reached the HTTP/3 port over TCP, which serves no transfer. The client fails the path at once instead of asking again; `Alt-Svc` brings the browser back to HTTP/3 for later requests. Not `421`, which makes Firefox forget the origin's HTTP/3. |
 | `invalid`, `owner-mismatch`, `idle`, `revoked` | `400`, `403`, `408`, `403` | An upload id or lane; see the [upload contract](upload.md). |
@@ -80,8 +83,8 @@ never refused for the client's share while the lease holds room for it.
 - **Admits against itself.** A lane, latency bus, progress feed or session presenting the lease takes one of its
   measurements, a WebTransport transfer session one of its sessions too. Work past what it holds is admitted against
   the client's share as work without a lease is, which a reopening lane may need while its old request still ends.
-- **Owns its uploads.** An upload first used with the lease belongs to it, whatever address or origin later presents
-  it; one used without a lease belongs to the sign-in or address, as before.
+- **Owns its uploads.** An upload first used with the lease belongs to it, whatever address later presents it with
+  the lease; one used without a lease belongs to the sign-in or address, as before.
 - **Bound** to the sign-in that took it, which it presents for its work and ends with, and to the `Origin` that took
   it. A request naming another `Origin`, or presenting a lease that ended or never was, as after a restart, is served
   as one without a lease; one naming no `Origin`, as a same-origin `GET`, presents it.
@@ -96,11 +99,12 @@ never refused for the client's share while the lease holds room for it.
 read only this catalog and then each selected server's `/preflight`.
 
 IDs and canonical discovery origins are unique; saved choices bind both, so a changed binding needs the user. A `.`
-origin is the origin serving the catalog. Discovery may use other ports on the entry's hostname; other hosts need
-an exact `additionalOrigins` entry, which discovery cannot extend. Mixed-content and secure-context rules still
-apply. `maxStageMs` in preflight capabilities is the longest stage a client may plan against that server (1000 to
+origin is the origin serving the catalog. Discovery may use other ports on the entry's hostname; other hosts need an
+exact `additionalOrigins` entry, which discovery cannot extend. Mixed-content and secure-context rules still apply.
+`maxStageMs` in preflight capabilities is the longest stage a client may plan against that server (1000 to
 86400000); a run uses the smallest among its servers and refuses a longer plan by naming the server.
-`uploadCheckpoint: true` in preflight advertises [receiver checkpoints](upload.md), which coordinated uploads require.
+`uploadCheckpoint: true` in preflight advertises [receiver checkpoints](upload.md); the browser requires it of every
+server, the terminal client for a run with an upload stage.
 
 ## Browser measurement authorization
 

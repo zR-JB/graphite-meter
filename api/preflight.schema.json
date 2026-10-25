@@ -27,7 +27,7 @@
       "additionalProperties": false,
       "required": ["uploadCheckpoint", "maxStageMs", "throughput", "latency"],
       "properties": {
-        "uploadCheckpoint": { "type": "boolean", "description": "Fresh owner-checked receiver windows are available." },
+        "uploadCheckpoint": { "type": "boolean", "description": "The server answers POST /upload/checkpoint (upload.md)." },
         "maxStageMs": {
           "type": "integer", "minimum": 1000, "maximum": 86400000,
           "description": "Longest stage a client may plan against this server."
