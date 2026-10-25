@@ -54,6 +54,10 @@ prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or `
 open same-repository PR; it publishes only the image of that version, such as `X.Y.Z-rc.N`, which no alias follows.
 `mode=validate` stops before any write. Approve the `ghcr-release` deployment when the Release run asks.
 
+A PR that changes the wire protocol, the API, configuration or saved data incompatibly carries the `breaking change`
+label. The release notes list those PRs under their own heading (`.github/release.yml`), and a stable request is
+refused unless it raises the minor version (the major from 1.0) over the latest release when one was merged since.
+
 1. Untrusted build. `release-request.yml` runs from main with `contents: read`, no secrets and no caches; dispatched
    from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees the
    inputs, which GitHub also renders into the run title (`v1.2.3 · publish · main`), and the token, with which it

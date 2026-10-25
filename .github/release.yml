@@ -1,0 +1,7 @@
+# Groups the generated release notes; the release request refuses a version that a labelled change does not bump.
+changelog:
+  categories:
+    - title: Breaking changes
+      labels: ["breaking change"]
+    - title: Other changes
+      labels: ["*"]
