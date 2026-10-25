@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# apt-cached.sh <set> <dir>: installs a set of Ubuntu packages from the .debs in <dir>, downloading them there first
-# when no cache restored them. Ubuntu's mirror can trickle at a few KB/s; a warm cache never reaches it.
+# apt-cached.sh <dir>: installs the target checks' C cross compilers from the .debs in <dir>, downloading them there
+# first when no cache restored them. Ubuntu's mirror can trickle at a few KB/s; a warm cache never reaches it.
 set -euo pipefail
-case $1 in
-  cross) packages=(gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross) ;;
-  certutil) packages=(libnss3-tools) ;;
-  *) echo "apt-cached.sh: unknown package set $1" >&2; exit 2 ;;
-esac
-dir=$2
+packages=(gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross)
+dir=$1
 apt=(sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Dir::Cache::archives="$dir")
 mkdir -p "$dir/partial"
 if ! compgen -G "$dir/*.deb" >/dev/null; then

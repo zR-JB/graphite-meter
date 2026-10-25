@@ -41,10 +41,11 @@ caches are keyed by job, toolchain and `Cargo.lock`, and a new `Cargo.lock` star
 same toolchain. Only main's CI runs write caches; a pull request restores main's and saves none, so the repository's
 10 GB never fills with one copy per pull request. A pull request with a new `Cargo.lock` restores main's Cargo caches
 by prefix. The E2E server job carries its Cargo target directory the same way; its build copies it in from
-`.server-target`.
-The target checks' Ubuntu cross compilers and the Firefox network jobs' `certutil` install
-from `.deb`s cached per runner image (`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold
-cache. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
+`.server-target`. The mise toolchain caches are keyed by `mise.lock` and the installed tools, so a task edit in
+`mise.toml` keeps them. The target checks' Ubuntu cross compilers install from `.deb`s cached per runner image
+(`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold cache; the Firefox network jobs take
+the image's own `certutil`.
+Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
 unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.
 `rust-check` checks the locked crates and the Cargo forks' advisory verdicts against the RustSec database it
 fetches, and CI checks the client packages against the registry's advisories, so a new advisory fails every pull

@@ -161,7 +161,7 @@ jobs:
         background: true
         timeout-minutes: 5
         run: |
-          scripts/ci/apt-cached.sh cross "$RUNNER_TEMP/apt-cross"
+          scripts/ci/apt-cached.sh "$RUNNER_TEMP/apt-cross"
           read -r url sha256 < <(python3 scripts/ci/toolchains.py llvm-mingw)
           archive="$RUNNER_TEMP/llvm-mingw.tar.xz"
           curl -fsSL --connect-timeout 20 --max-time 60 --retry 3 --retry-all-errors -o "$archive" "$url"
@@ -489,22 +489,6 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/browser.py --server image
-      - id: image
-        if: startsWith(matrix.group, 'network') && matrix.browser == 'firefox'
-        name: Name the runner image the package cache belongs to
-        run: printf 'version=%s-%s\n' "${ImageOS:?}" "${ImageVersion:?}" >> "$GITHUB_OUTPUT"
-      - name: Restore certutil's packages
-        if: startsWith(matrix.group, 'network') && matrix.browser == 'firefox'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        # A stalled cache download falls back to the mirror in a minute instead of ten.
-        env: {SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'}
-        with:
-          path: ${{ runner.temp }}/apt-certutil/*.deb
-          key: apt-certutil-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('scripts/ci/apt-cached.sh') }}
-      # The network group's Firefox trusts the run's CA through certutil.
-      - name: Install certutil
-        if: startsWith(matrix.group, 'network') && matrix.browser == 'firefox'
-        run: command -v certutil || scripts/ci/apt-cached.sh certutil "$RUNNER_TEMP/apt-certutil"
       - name: Run the browser against one local fleet of the image's server
         env:
           GM_E2E_BROWSER: ${{ matrix.browser }}

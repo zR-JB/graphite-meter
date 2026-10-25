@@ -69,6 +69,7 @@ runs:
         install_args: --locked ${{ steps.tools.outputs.install-args }}
         cache: ${{ inputs.cache }}
         cache_save: ${{ github.ref == 'refs/heads/main' }}
+        cache_key: "{{cache_key_prefix}}-{{platform}}-{{version}}-{{install_args_hash}}-p{{cache_period}}-${{ hashFiles('mise.lock') }}"
 
     # The steps below run python3, which a Windows Python build may name python.exe only.
     - name: Name the pinned Python python3 on Windows
