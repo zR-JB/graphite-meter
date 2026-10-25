@@ -30,37 +30,41 @@ function stored(
   completedAt: number,
   result: Partial<Record<keyof RunResult, unknown>> = {},
 ) {
+  const shown = {
+    latency: { reportedMs: 12.4, jitterMs: 2.2 },
+    latencyByStage: {
+      latency: latency(12.4),
+      download: latency(23.9),
+      upload: latency(30.25),
+      bidirectional: null,
+    },
+    addedLatency: { download: 11.5, upload: -0.34, bidirectional: null },
+    download: rate(25_000_000),
+    upload: rate(5_000_000),
+    bidirectional: null,
+    stages: {
+      latency: "complete",
+      download: "complete",
+      upload: "complete",
+      bidirectional: "not-run",
+    },
+    outcome: "complete",
+    multiServer: undefined as unknown,
+    ...result,
+  };
+  // One server, which measured what the run did, unless a case says otherwise.
+  const frankfurt = { id: "a", name: "Frankfurt", url: "" };
+  shown.multiServer ??= {
+    selection: [frankfurt],
+    servers: [{ server: frankfurt, latencyTarget: {}, stages: shown.stages }],
+    failures: [],
+  };
   return {
     schemaVersion: 6,
     id,
     completedAt,
     build: "",
-    result: {
-      latency: { reportedMs: 12.4, jitterMs: 2.2 },
-      latencyByStage: {
-        latency: latency(12.4),
-        download: latency(23.9),
-        upload: latency(30.25),
-        bidirectional: null,
-      },
-      addedLatency: { download: 11.5, upload: -0.34, bidirectional: null },
-      download: rate(25_000_000),
-      upload: rate(5_000_000),
-      bidirectional: null,
-      stages: {
-        latency: "complete",
-        download: "complete",
-        upload: "complete",
-        bidirectional: "not-run",
-      },
-      outcome: "complete",
-      multiServer: {
-        selection: [{ id: "a", name: "Frankfurt", url: "" }],
-        servers: [],
-        failures: [],
-      },
-      ...result,
-    },
+    result: shown,
   } as unknown as HistoryRecord;
 }
 const saved = (...args: Parameters<typeof stored>): HistoryEntry => historyEntry(stored(...args));
@@ -113,7 +117,7 @@ test("a row's cells read value, note and the word for a missing value", () => {
       {
         bidirectional: { down: rate(1_000_000), up: null },
         stages: {
-          latency: "partial",
+          latency: "failed",
           download: "failed",
           upload: "not-run",
           bidirectional: "failed",
@@ -123,7 +127,39 @@ test("a row's cells read value, note and the word for a missing value", () => {
         latency: null,
         latencyByStage: { latency: null, download: null, upload: null, bidirectional: null },
       },
-      ["Failed/", "Skipped/", "Down only/", "Partial/", `${MISSING}/`],
+      ["Failed/", "Skipped/", "Down only/", "Failed/", `${MISSING}/`],
+    ],
+    [
+      "lost in Download, so Upload was not reached",
+      {
+        stages: {
+          latency: "complete",
+          download: "failed",
+          upload: "failed",
+          bidirectional: "not-run",
+        },
+        download: null,
+        upload: null,
+        multiServer: {
+          selection: [{ id: "a", name: "Frankfurt", url: "" }],
+          servers: [
+            {
+              server: { id: "a" },
+              latencyTarget: {},
+              stages: {
+                latency: "complete",
+                download: "failed",
+                upload: "not-run",
+                bidirectional: "not-run",
+              },
+            },
+          ],
+          failures: [
+            { serverId: "a", stage: "download", scope: "throughput", reason: "connection-lost" },
+          ],
+        },
+      },
+      ["Failed/", "Not reached/", "Skipped/", "12.4/jitter 2.2", "30.3/upload"],
     ],
     [
       "both directions",

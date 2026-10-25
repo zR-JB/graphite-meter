@@ -401,7 +401,8 @@ export function createRun(env: RunEnvironment) {
   const canToggle = (name: Stage) => {
     if (preparing()) return false;
     if (!running()) return true;
-    stage();
+    // The first stage locks as it leaves Checking paths, not as it is named: follow every phase.
+    phase();
     return run?.canChange(name) ?? false;
   };
 

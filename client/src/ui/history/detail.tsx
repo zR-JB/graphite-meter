@@ -44,7 +44,8 @@ export const TITLE = new Intl.DateTimeFormat(undefined, {
 });
 const PROBES_TIP =
   "Probe accounting\nA timeout: no reply by the probe's deadline\nUnfinished or failed sends are not timeouts";
-const PARTIAL_TIP = "\nPartial: Some probe outcomes are unknown. Counts cover known outcomes only.";
+const UNKNOWN = "Some outcomes unknown";
+const UNKNOWN_TIP = `\n${UNKNOWN}: counts cover known outcomes only.`;
 const CLOSE_TIP = "Close result (Esc)\n↑ ↓ open the result above or below";
 
 /** How a role was carried: its mechanism, and each side's HTTP version when they differ; an unreported negotiated one is not named. */
@@ -364,7 +365,7 @@ export function ResultDetail(props: {
                   <span
                     ref={tip(() =>
                       accounting().some(({ summary }) => summary.accountingComplete === false)
-                        ? PROBES_TIP + PARTIAL_TIP
+                        ? PROBES_TIP + UNKNOWN_TIP
                         : PROBES_TIP,
                     )}
                   >
@@ -384,7 +385,7 @@ export function ResultDetail(props: {
                               {() => counts().shown}
                               {() =>
                                 row().summary.accountingComplete === false && (
-                                  <span class="aside">Partial</span>
+                                  <span class="aside">{UNKNOWN}</span>
                                 )
                               }
                             </span>
