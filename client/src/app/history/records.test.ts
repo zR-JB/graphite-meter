@@ -96,16 +96,34 @@ const full: HistoryRecord = {
   },
 };
 
+const latencyStages = {
+  latency: "complete",
+  download: "not-run",
+  upload: "not-run",
+  bidirectional: "not-run",
+} as const;
 const latencyOnly: RunResult = {
   ...full.result,
-  download: null,
-  upload: null,
-  bidirectional: null,
+  ...none,
+  latency: measured.latency,
   latencyByStage: { ...none, latency: population(12) },
   addedLatency: null,
-  multiServer: { ...full.result.multiServer, servers: [], failures: [] },
+  multiServer: {
+    ...full.result.multiServer,
+    servers: [
+      {
+        ...full.result.multiServer.servers[0]!,
+        ...none,
+        latency: measured.latency,
+        latencyByStage: { ...none, latency: population(12) },
+        addedLatency: null,
+        stages: latencyStages,
+      },
+    ],
+    failures: [],
+  },
   outcome: "complete",
-  stages: { latency: "complete", download: "not-run", upload: "not-run", bidirectional: "not-run" },
+  stages: latencyStages,
 };
 const off = { planned: false, durationMs: 10_000, early: false };
 const plans: StagePlans = {
@@ -276,9 +294,73 @@ const v5 = {
   result: { ...full.result, multiServer: { ...full.result.multiServer, servers: [unversioned] } },
 };
 
+/** Frankfurt measured every stage; Oslo, as older builds saved it, lost in Download and absent after it, or dropped at Start. */
+function twoServers(oslo: "left" | "dropped", schemaVersion: 5 | 6): unknown {
+  const { engineVersion: _, ...frankfurt } = {
+    ...full.result.multiServer.servers[0]!,
+    stages: { ...stages, bidirectional: "complete" },
+  };
+  const osloId = { id: "b", name: "Oslo", url: "https://b.example" };
+  const left = {
+    ...frankfurt,
+    server: osloId,
+    upload: null,
+    bidirectional: null,
+    stages: {
+      ...frankfurt.stages,
+      download: "failed",
+      upload: "not-run",
+      bidirectional: "not-run",
+    },
+  };
+  const failure = { ...full.result.multiServer.failures[0]!, serverId: "b", stage: "download" };
+  const servers = oslo === "left" ? [frankfurt, left] : [frankfurt];
+  return {
+    ...full,
+    ...(schemaVersion === 5 && { schemaVersion, engine: "1.2.3" }),
+    result: {
+      ...full.result,
+      stages: { ...stages, download: "partial", bidirectional: "complete" },
+      outcome: "partial",
+      multiServer: {
+        ...full.result.multiServer,
+        selection: [identity, osloId],
+        servers:
+          schemaVersion === 5
+            ? servers
+            : servers.map((each) => ({ ...each, engineVersion: "1.2.3" })),
+        failures: [failure],
+      },
+    },
+  };
+}
+
+test("an older record's stage measured without a selected server reads partial, and a Start drop makes every stage so", () => {
+  const read = (row: unknown) => {
+    const { stages, outcome } = (readHistoryRecord(row) ?? upgradeRecord(row))!.result;
+    return { ...stages, outcome };
+  };
+  for (const schema of [6, 5] as const) {
+    expect(read(twoServers("left", schema)), `schema ${schema}`).toEqual({
+      latency: "complete",
+      download: "partial",
+      upload: "partial",
+      bidirectional: "partial",
+      outcome: "partial",
+    });
+    expect(read(twoServers("dropped", schema)), `schema ${schema}`).toEqual({
+      latency: "partial",
+      download: "partial",
+      upload: "partial",
+      bidirectional: "partial",
+      outcome: "partial",
+    });
+  }
+});
+
 test("an older build's row upgrades to this build's form, and the row itself stays as stored", () => {
   const server = "result.multiServer.servers.0";
-  const cases: [string, unknown, unknown][] = [
+  const cases: [string, unknown, unknown, [string, unknown]?][] = [
     // Older builds saved no peak without a 500 ms window.
     ["result.download.peakBytesPerSec", null, 9e7],
     ["result.bidirectional.up.peakBytesPerSec", undefined, 3e7],
@@ -297,14 +379,15 @@ test("an older build's row upgrades to this build's form, and the row itself sta
     // Views look stage statuses up: one this build does not know reads as not run.
     ["result.stages.download", "aborted", "not-run"],
     ["result.stages.upload", undefined, "not-run"],
-    [`${server}.stages.latency`, "running", "not-run"],
+    // A server's stage read as not run is one it never reached, so the whole stage is partial.
+    [`${server}.stages.latency`, "running", "not-run", ["result.stages.latency", "partial"]],
     [`${server}.stages.bidirectional`, "toString", "not-run"],
   ];
-  for (const [path, stored, read] of cases) {
+  for (const [path, stored, read, [also, judged] = [path, read]] of cases) {
     const row = altered(v5, path, stored);
     const before = structuredClone(row);
     expect(upgradeRecord(row), `${path} = ${stored}`).toEqual(
-      altered(full, path, read) as HistoryRecord,
+      altered(altered(full, path, read), also, judged) as HistoryRecord,
     );
     expect(row, path).toEqual(before);
   }
@@ -477,15 +560,23 @@ test("a schema 4 row upgrades to schema 6 with its servers, without its grade or
   const saved = { ...full.result.multiServer, servers: [{ ...unversioned, stages: {} }] };
   const cases: [string, unknown, unknown][] = [
     ["one server, its grade dropped and its wire rate a model", flat, lifted()],
-    ["its own outcome kept", { ...flat, outcome: "partial" }, lifted({ outcome: "partial" })],
+    [
+      "its own outcome kept where its stages read better",
+      {
+        ...flat,
+        stages: { ...flat.stages, upload: { status: "not-run", result: null } },
+        outcome: "partial",
+      },
+      lifted({ stages: { ...statuses4, upload: "not-run" }, outcome: "partial" }),
+    ],
     [
       "both bidirectional lanes, with one wire model",
       {
         ...flat,
-        stages: { ...flat.stages, upload: { status: "complete", result: null }, bidirectional },
+        stages: { ...flat.stages, upload: { status: "not-run", result: null }, bidirectional },
       },
       lifted({
-        stages: { ...statuses4, upload: "complete", bidirectional: "partial" },
+        stages: { ...statuses4, upload: "not-run", bidirectional: "partial" },
         outcome: "partial",
         bidirectional: {
           down: bidirectional.down,
@@ -495,12 +586,16 @@ test("a schema 4 row upgrades to schema 6 with its servers, without its grade or
       }),
     ],
     [
-      "one bidirectional lane, without a wire model",
+      "one bidirectional lane, without a wire model, read as this build judges it",
       { ...flat, stages: { ...flat.stages, bidirectional: { ...bidirectional, up: null } } },
-      lifted({
-        stages: { ...statuses4, bidirectional: "partial" },
-        bidirectional: { down: bidirectional.down, up: null, wire: null },
-      }),
+      altered(
+        lifted({
+          stages: { ...statuses4, bidirectional: "partial" },
+          bidirectional: { down: bidirectional.down, up: null, wire: null },
+        }),
+        "result.stages.bidirectional",
+        "failed",
+      ),
     ],
     [
       "nothing optional",

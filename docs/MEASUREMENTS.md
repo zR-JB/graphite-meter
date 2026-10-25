@@ -163,11 +163,14 @@ RTT stays primary for latency, jitter, deadlines and added latency.
 
 | Outcome    | Meaning                                                                              |
 | ---------- | ------------------------------------------------------------------------------------ |
-| Complete   | Every planned stage finished with every server.                                      |
-| Partial    | Every stage has its results, but a server or latency population failed.              |
+| Complete   | Every planned stage finished with every selected server.                             |
+| Partial    | Every stage has its results, but a server missed one or a latency population failed. |
 | Incomplete | A planned result is missing after measurement began, including every server failing. |
 | Stopped    | Canceled by the user; work a failure cancels carries that failure, never "stopped". |
 | Failed     | Nothing was measured.                                                                |
+
+In the browser a stage is Complete only when every selected server measured it. A server that left in an earlier
+stage, or failed its check at Start, did not reach it, so the stage is Partial even though its result stands.
 
 The latency result is the latency-focus server's population. If that server leaves, the focus moves to a surviving
 server that measured latency. The latency stage is Incomplete only when no focus population has a median; latency
@@ -202,8 +205,11 @@ stay in storage, are skipped and are reported. A failure earlier releases saved 
 `path-failed`, and one saved as `server-busy` as `server-capacity`.
 
 Before saving, a result must be coherent: every failure has one of the eight reasons; a failed or partial stage has
-a failure in its scope; a complete stage has none, every lane and, for transfers, an interval with 800 ms of evidence;
+a failure in its scope, or a selected server that never reached it and the failure that took that server out; a
+complete stage has none, every lane and, for transfers, an interval with 800 ms of evidence;
 a skipped stage has no evidence; some stage ran; a complete transfer stage's intervals span at least 75 % of its
 planned time (52 % with early finish); and the outcome follows the stage statuses, so any failed stage makes it
 Incomplete and otherwise any failure makes it Partial. The run applies the same span rule as each stage ends, so
-History agrees with what was shown. An incoherent result is logged as an error and saved as Incomplete.
+History agrees with what was shown. An incoherent result is logged as an error and saved as Incomplete. History
+judges every record's stages again as it reads them, so a stage an earlier release saved as Complete without one of
+its selected servers reads Partial.

@@ -111,8 +111,97 @@ export const lanes = (
 export const stageStatus = (results: unknown[], failed: boolean): StageStatus =>
   !results.every(Boolean) ? "failed" : failed ? "partial" : "complete";
 
-export const outcomeOf = (statuses: StageStatus[], failures: number): Outcome =>
-  statuses.includes("failed") ? "incomplete" : failures ? "partial" : "complete";
+/** A selected server's stage, or a whole stage: `unreached` took no part, `skipped` was off for the run. */
+export type CellStatus = "complete" | "partial" | "failed" | "unreached" | "skipped";
+/** Why a cell is not complete; a server dropped at Start left at "start". */
+export type Cause = Omit<ServerFailure, "stage"> & { stage: Stage | "start" };
+export interface Cell {
+  status: CellStatus;
+  /** Its own failure, or for an unreached cell the one that took its server out. */
+  cause: Cause | null;
+}
+export interface Grid {
+  /** Every selected server, in selection order. */
+  rows: { server: ServerIdentity; cells: Record<Stage, Cell> }[];
+  /** Complete only when every selected server measured the stage. */
+  columns: Record<Stage, CellStatus>;
+  outcome: Outcome;
+}
+type Graded = StageResults & Pick<RunResult, "stages" | "multiServer"> & { outcome?: Outcome };
+
+const perStage = <T>(value: (stage: Stage) => T) =>
+  Object.fromEntries(STAGES.map((stage) => [stage, value(stage)])) as Record<Stage, T>;
+
+/** The result as servers by stages, from what schema 6 saves; every surface reads its words from this. */
+export function grid(result: Graded): Grid {
+  const { selection, servers, failures } = result.multiServer;
+  const rows = selection.map((server) => {
+    const summary = servers.find((entry) => entry.server.id === server.id);
+    const own = failures.filter((failure) => failure.serverId === server.id);
+    // A server outside the run failed its start check; its failure was charged to a stage it never reached.
+    const start: Cause | null = summary || !own[0] ? null : { ...own[0], stage: "start" };
+    const cell = (stage: Stage): Cell => {
+      // A server without a latency path takes no part in the latency stage by plan, not by failure.
+      if (
+        result.stages[stage] === "not-run" ||
+        (stage === "latency" && summary?.latencyTarget === null)
+      )
+        return { status: "skipped", cause: null };
+      const status = summary?.stages[stage] ?? "not-run";
+      if (status !== "not-run")
+        return {
+          status,
+          cause: own.find((f) => f.stage === stage && f.scope === failureScope(stage)) ?? null,
+        };
+      const before = STAGES.indexOf(stage);
+      const left = own.findLast(
+        (f) => f.scope === failureScope(f.stage) && STAGES.indexOf(f.stage) < before,
+      );
+      return { status: "unreached", cause: start ?? left ?? null };
+    };
+    return { server, cells: perStage(cell) };
+  });
+  const columns = perStage((stage): CellStatus => {
+    const saved = result.stages[stage];
+    if (saved === "not-run") return "skipped";
+    const cells = rows.map(({ cells }) => cells[stage].status).filter((s) => s !== "skipped");
+    if (!lanes(result, stage).every(Boolean))
+      return cells.every((status) => status === "unreached") ? "unreached" : "failed";
+    return saved === "complete" && cells.every((status) => status === "complete")
+      ? "complete"
+      : "partial";
+  });
+  const statuses = Object.values(columns);
+  const outcome: Outcome = statuses.some((status) => status === "failed" || status === "unreached")
+    ? "incomplete"
+    : failures.length || statuses.includes("partial")
+      ? "partial"
+      : "complete";
+  return { rows, columns, outcome };
+}
+
+/** A column as schema 6 saves it, in the words every release reads. */
+const SAVED: Record<CellStatus, StageStatus> = {
+  complete: "complete",
+  partial: "partial",
+  failed: "failed",
+  unreached: "failed",
+  skipped: "not-run",
+};
+
+const OUTCOMES: readonly Outcome[] = ["complete", "partial", "incomplete"];
+
+/** The result with the grid's stages and outcome: what a run saves, and what History reads of any record. */
+export function graded<T extends Graded>(result: T): T & { outcome: Outcome } {
+  const { columns, outcome } = grid(result);
+  // Judging again only adds causes; a saved worse outcome had evidence a record no longer keeps.
+  const saved = OUTCOMES.indexOf(result.outcome ?? "complete");
+  return {
+    ...result,
+    stages: perStage((stage) => SAVED[columns[stage]]),
+    outcome: OUTCOMES[Math.max(saved, OUTCOMES.indexOf(outcome))]!,
+  };
+}
 
 export const movedBytes = (result: MultiServerResult) =>
   result.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
@@ -121,6 +210,7 @@ export const movedBytes = (result: MultiServerResult) =>
 export function incoherence(result: RunResult, plans: StagePlans): string[] {
   const problems: string[] = [];
   const { failures, intervals, omittedIntervals } = result.multiServer;
+  const { rows, columns, outcome } = grid(result);
   // Past the interval limit the oldest give way; a stage that ran up to the first kept one cannot be checked against them.
   const firstKept = intervals.length ? STAGES.indexOf(intervals[0]!.stage) : STAGES.length;
   for (const failure of failures)
@@ -128,15 +218,16 @@ export function incoherence(result: RunResult, plans: StagePlans): string[] {
       problems.push(`unknown failure reason ${failure.reason}`);
   for (const stage of STAGES) {
     const status = result.stages[stage];
-    const explained = failures.some((f) => f.stage === stage && f.scope === failureScope(stage));
+    // A server that left earlier, or at Start, explains a stage it never reached.
+    const explained = rows.some(({ cells }) => cells[stage].cause);
     const spans = intervals.filter((interval) => interval.stage === stage);
     const { planned, durationMs, early } = plans[stage];
     if (planned === (status === "not-run"))
       problems.push(`${stage} is ${status} but planned ${planned}`);
     if ((status === "failed" || status === "partial") && !explained)
       problems.push(`${stage} is ${status} without a stated reason`);
-    if (status === "complete" && (explained || !lanes(result, stage).every(Boolean)))
-      problems.push(`${stage} is complete without every result or with a failure`);
+    if (status === "complete" && (explained || columns[stage] !== "complete"))
+      problems.push(`${stage} is complete without every server's result or with a failure`);
     if (status === "not-run" && (lanes(result, stage).some(Boolean) || spans.length))
       problems.push(`${stage} is not-run but has evidence`);
     if (
@@ -151,9 +242,8 @@ export function incoherence(result: RunResult, plans: StagePlans): string[] {
     if (covered < durationMs * minCoverage(early))
       problems.push(`${stage} covers ${Math.round(covered)} of ${durationMs} ms`);
   }
-  const statuses = Object.values(result.stages);
-  if (statuses.every((status) => status === "not-run")) problems.push("no stage ran");
-  const expected = outcomeOf(statuses, failures.length);
-  if (result.outcome !== expected) problems.push(`outcome ${result.outcome} should be ${expected}`);
+  if (Object.values(result.stages).every((status) => status === "not-run"))
+    problems.push("no stage ran");
+  if (result.outcome !== outcome) problems.push(`outcome ${result.outcome} should be ${outcome}`);
   return problems;
 }
