@@ -251,7 +251,7 @@ impl App {
         if row == Row::Address {
             let url = server_origin(raw)?;
             if config.url.as_ref() != Some(&url) {
-                config.servers.clear();
+                config.select(Vec::new(), None);
             }
             config.url = Some(url);
             return Ok(());

@@ -87,6 +87,7 @@ fn viewed(
             plan: plan.to_vec(),
             focus: id(names[0]),
             at,
+            loaded_latency: true,
         },
     ];
     events.extend(results.into_iter().map(Event::StageFinished));

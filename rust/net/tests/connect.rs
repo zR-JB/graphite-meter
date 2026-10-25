@@ -2,7 +2,7 @@
 use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify};
 use graphite_meter_proto::{discovery::Protocol, origin::Origin};
 use graphite_meter_testkit::{Identity, read_head};
-use std::{assert_matches, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -14,7 +14,7 @@ use tokio_rustls::{TlsAcceptor, server::TlsStream};
 fn connector(variable: &str, proxy: &str, verify: Verify) -> Connector {
     let (variable, proxy) = (variable.to_owned(), proxy.to_owned());
     Connector::new(
-        Proxy::from_lookup(move |name| (name == variable).then(|| proxy.clone())),
+        Proxy::from_lookup(move |name| (name == variable).then(|| proxy.clone().into())),
         verify,
     )
 }
@@ -114,7 +114,7 @@ async fn a_connect_response_with_bare_line_feeds_opens_the_tunnel() {
 }
 
 #[tokio::test]
-async fn connect_answers_other_than_200_are_refused() {
+async fn connect_answers_other_than_200_are_refused_and_502_to_504_name_an_unreachable_target() {
     let oversized = [&b"HTTP/1.1 200 OK\r\nX-Padding: "[..], &[b'a'; 64 * 1024]].concat();
     let malformed = "proxy sent a malformed CONNECT response";
     for (authority, response, reason) in [
@@ -134,21 +134,38 @@ async fn connect_answers_other_than_200_are_refused() {
             oversized,
             "proxy sent an oversized CONNECT response",
         ),
-    ] {
+    ]
+    .into_iter()
+    .chain(
+        [
+            "502 Bad Gateway",
+            "503 Service Unavailable",
+            "504 Gateway Timeout",
+        ]
+        .map(|status| {
+            (
+                "meter.test:443",
+                format!("HTTP/1.1 {status}\r\ncontent-length: 0\r\n\r\n").into_bytes(),
+                &*format!("proxy refused CONNECT with {status}").leak(),
+            )
+        }),
+    ) {
         let (address, proxy) = answering(response).await;
         let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::trusted());
         let refused = connect(&connector, &format!("https://{authority}"))
             .await
             .err()
             .unwrap();
-        assert_matches!(&refused, ConnectError::Refused(text) if text == reason);
+        assert_eq!(refused.to_string(), reason);
+        let target = matches!(refused, ConnectError::TargetUnreachable(_));
+        assert_eq!(target, reason.contains(" 50"), "{refused:?}");
         let head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
         assert_eq!(proxy.await.unwrap(), head);
     }
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
+async fn a_proxy_that_accepts_and_stays_silent_fails_within_the_dial_timeout() {
     for scheme in ["http", "https", "socks5"] {
         let (address, _proxy) = peer(|stream| async move {
             std::future::pending::<()>().await;
@@ -168,13 +185,8 @@ async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
         let ConnectError::Unreachable(error) = &refused else {
             panic!("{scheme}: {refused:?}");
         };
-        // Paused time may jump while the loopback connect is in flight, though never past the dial's 9 s.
-        let elapsed = started.elapsed();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{scheme}");
-        assert!(
-            (Duration::from_secs(60)..Duration::from_secs(69)).contains(&elapsed),
-            "{scheme}: {elapsed:?}"
-        );
+        assert_eq!(started.elapsed(), Duration::from_secs(9), "{scheme}");
     }
 }
 
@@ -194,7 +206,7 @@ async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentia
         (None, &RequestForm::Absolute { authorization })
     );
     let proxy_variable =
-        |name: &str| (name == "HTTP_PROXY").then(|| format!("user:secret@{address}"));
+        |name: &str| (name == "HTTP_PROXY").then(|| format!("user:secret@{address}").into());
     let printed = format!(
         "{:?} {:?}",
         connection.form,
@@ -286,7 +298,13 @@ async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
             "accepts none of the offered authentication methods",
         ),
         (2, 0, "asked for unsupported authentication method 2"),
+        (0, 1, "refused: general failure"),
+        (0, 2, "refused: connection not allowed by ruleset"),
+        (0, 3, "refused: network unreachable"),
+        (0, 4, "refused: host unreachable"),
         (0, 5, "refused: connection refused"),
+        (0, 6, "refused: TTL expired"),
+        (0, 7, "refused: command not supported"),
     ] {
         let (proxy, _) = socks(method, status).await;
         let connector = connector(
@@ -299,6 +317,8 @@ async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
             .err()
             .unwrap();
         assert_eq!(refused.to_string(), format!("SOCKS5 proxy {reason}"));
+        let target = matches!(refused, ConnectError::TargetUnreachable(_));
+        assert_eq!(target, matches!(status, 1 | 3..=6), "{reason}");
     }
 }
 
@@ -341,7 +361,7 @@ async fn socks5_offers_a_login_only_when_the_proxy_url_carries_one() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_target_that_accepts_and_never_answers_tls_fails_after_ten_seconds() {
+async fn a_target_that_accepts_and_never_answers_tls_fails_within_the_dial_timeout() {
     let (address, _target) = peer(|stream| async move {
         std::future::pending::<()>().await;
         drop(stream);
@@ -357,5 +377,5 @@ async fn a_target_that_accepts_and_never_answers_tls_fails_after_ten_seconds() {
         panic!("{:?}", refused.err());
     };
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-    assert!((Duration::from_secs(10)..Duration::from_secs(19)).contains(&started.elapsed()));
+    assert_eq!(started.elapsed(), Duration::from_secs(9));
 }

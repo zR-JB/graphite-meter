@@ -38,6 +38,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
     runtime::Handle,
+    task::JoinSet,
     time::{Instant, Sleep, sleep_until},
 };
 use tokio_rustls::TlsAcceptor;
@@ -124,8 +125,10 @@ impl Http1 {
         }
         let upgraded = lock(&bus).take();
         if let Some((upgrade, socket)) = upgraded {
-            // This task, holding the connection's admission, waits off the socket's path.
-            let _ = self.buses.spawn(run_bus::<S>(upgrade, socket)).await;
+            // This task, holding the connection's admission, waits off the socket's path; the drain's abort ends both.
+            let mut bus = JoinSet::new();
+            bus.spawn_on(run_bus::<S>(upgrade, socket), &self.buses);
+            bus.join_next().await;
         }
     }
 }

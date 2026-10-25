@@ -6,7 +6,7 @@ use crate::{
     events::Event,
     format,
     model::Failure,
-    net::{Client, Fault, LatencyPath, Request, ThroughputPath},
+    net::{CONTROL_TIMEOUT, Client, Fault, LatencyPath, Request, ThroughputPath},
 };
 use futures_util::future::join_all;
 use graphite_meter_proto::{
@@ -16,7 +16,7 @@ use graphite_meter_proto::{
         Capabilities, IpFamily, LatencyTransport, Preflight, Protocol, ThroughputTransport,
     },
     envelope::Envelope,
-    lease::LeaseRequest,
+    lease::{LeaseRequest, UNUSED_BOUND},
     origin::Origin,
     reason::FailureReason,
     route::Route,
@@ -33,8 +33,8 @@ const TOO_MANY: &str =
     "the test needs more measurements at once than this server admits for one client";
 /// How long a path check may take, the catalog and every server included.
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
-/// How long a run may take its check's paths and connections.
-const REUSE: Duration = Duration::from_secs(30);
+/// How long a run may take its check's paths and leases, so one presented a control timeout later still holds.
+const REUSE: Duration = UNUSED_BOUND.saturating_sub(CONTROL_TIMEOUT);
 /// How long a WebTransport session or a latency bus may take to show that its path works.
 const VERIFY: Duration = Duration::from_secs(3);
 /// How long a datagram probe waits for its reply before another goes.

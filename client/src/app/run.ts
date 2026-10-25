@@ -19,7 +19,15 @@ import {
   type RunPlan,
 } from "../engine/run/run";
 import { CHECK_FAILED } from "../engine/net/checks";
-import { adaptWarmup, planned, STAGES, totalMs, type Stage } from "../engine/run/schedule";
+import { needsPings } from "../engine/net/streams";
+import {
+  activities,
+  adaptWarmup,
+  planned,
+  STAGES,
+  totalMs,
+  type Stage,
+} from "../engine/run/schedule";
 import type { FailureReason, OpenStage, PreparedServer, Stall, TestConfig } from "../engine/types";
 import { batch, computed, effect, signal, untrack, type Read, type Signal } from "../lib/signal";
 import type { PreferenceStore } from "./preferences";
@@ -28,6 +36,20 @@ import { appendThroughput, upsertLatency, type ThroughputSample } from "./series
 /** Coverage assumes the longest warmup, since the RTT that adapts it is known only after the checks. */
 const SESSION_MARGIN_MS = 60_000;
 const LONGEST_WARMUP_RTT_MS = Number.POSITIVE_INFINITY;
+const LIVE: readonly (keyof TestConfig)[] = ["stages", "duration", "adaptive", "visualization"];
+
+const pick = (config: Partial<TestConfig>, keys: readonly (keyof TestConfig)[]) =>
+  Object.fromEntries(
+    Object.entries(config).filter(([key]) => keys.includes(key as keyof TestConfig)),
+  ) as Partial<TestConfig>;
+const omit = (config: Partial<TestConfig>, keys: readonly (keyof TestConfig)[]) =>
+  Object.fromEntries(
+    Object.entries(config).filter(([key]) => !keys.includes(key as keyof TestConfig)),
+  ) as Partial<TestConfig>;
+
+const valid = (config: TestConfig) =>
+  STAGES.some((name) => planned(config, name)) &&
+  Object.values(config.duration).every((ms) => Number.isFinite(ms) && ms >= 0);
 
 interface RunEnvironment {
   preferences: PreferenceStore;
@@ -99,6 +121,8 @@ export function createRun(env: RunEnvironment) {
   const progress = signal({ elapsedMs: 0, budgetMs: 0 });
   const stall = signal<Stall | null>(null);
   const live = signal<LiveSample | null>(null);
+  /** Each server's latest latency-warmup median. */
+  const warmupRtt = signal<Readonly<Record<string, number>>>({});
   const stageBytes = signal(0);
   const throughput: ThroughputSample[] = [];
   const throughputVersion = signal(0);
@@ -117,6 +141,9 @@ export function createRun(env: RunEnvironment) {
   const refusal = signal("");
   /** The servers the current or last run measured, as Start prepared them. */
   const prepared = signal<readonly PreparedServer[]>([]);
+  /** Edits made while a test starts, or that a running one cannot take: the next test's, until this one goes. */
+  const waiting = signal<Partial<TestConfig>>({});
+  const upcoming = computed(() => ({ ...preferences.config(), ...waiting() }));
 
   let run: Run | null = null;
   let rttMs = 0;
@@ -154,6 +181,7 @@ export function createRun(env: RunEnvironment) {
       progress.set({ elapsedMs: 0, budgetMs: 0 });
       stall.set(null);
       live.set(null);
+      warmupRtt.set({});
       stageBytes.set(0);
       results.set(NO_RESULTS);
       statuses.set({});
@@ -229,6 +257,8 @@ export function createRun(env: RunEnvironment) {
             throughputVersion.set(throughputVersion.peek() + 1);
           });
         }
+        case "warmupReply":
+          return warmupRtt.set({ ...warmupRtt.peek(), [event.serverId]: event.rttMs });
         case "latency": {
           const entry = series(event.serverId);
           upsertLatency(entry.buckets, event.bucket);
@@ -261,7 +291,8 @@ export function createRun(env: RunEnvironment) {
             phase.set("complete");
           });
           env.finished({ result: finished, plans });
-          return releaseRun();
+          releaseRun();
+          return settle();
         }
         case "error":
           env.recheck(null);
@@ -271,7 +302,8 @@ export function createRun(env: RunEnvironment) {
             error.set({ reason: event.reason, message: event.message });
             phase.set("error");
           });
-          return releaseRun();
+          releaseRun();
+          return settle();
         case "aborted":
           batch(() => {
             live.set(null);
@@ -279,7 +311,8 @@ export function createRun(env: RunEnvironment) {
             phase.set("aborted");
           });
           // Nothing reads a run that ended; what it measured lives in the facts above.
-          return releaseRun();
+          releaseRun();
+          return settle();
       }
     });
     release = unsubscribe;
@@ -307,6 +340,21 @@ export function createRun(env: RunEnvironment) {
             .join("; ") || CHECK_FAILED,
         );
       focus = ready.servers.find(({ server }) => server.id === ready.focus) ?? ready.servers[0]!;
+      // Stage edits made while it prepared shape the run, unless they move its proven paths or outlast the sign-in.
+      const live = pick(waiting.peek(), LIVE);
+      const merged = { ...config, ...live };
+      const pings = (each: TestConfig) => activities(each).some(needsPings);
+      if (
+        Object.keys(live).length &&
+        pings(merged) === pings(config) &&
+        env.fits(totalMs(adaptWarmup(merged, LONGEST_WARMUP_RTT_MS)) + SESSION_MARGIN_MS)
+      ) {
+        config = merged;
+        batch(() => {
+          waiting.set(omit(waiting.peek(), LIVE));
+          preferences.set({ config: { ...preferences.config.peek(), ...live } });
+        });
+      }
       runPlan = adaptWarmup(config, focus.latency?.rttMs ?? 0);
       next = new Run({
         servers: ready.servers,
@@ -379,6 +427,11 @@ export function createRun(env: RunEnvironment) {
         if (!current()) return;
         pending = null;
         if (preparing.peek()) preparation.set("idle");
+        if (!running.peek()) return settle();
+        const live = pick(waiting.peek(), LIVE);
+        if (!Object.keys(live).length) return;
+        waiting.set(omit(waiting.peek(), LIVE));
+        if (!configure(live)) wait(live);
       });
   }
 
@@ -390,6 +443,16 @@ export function createRun(env: RunEnvironment) {
       startError.set("");
       preparation.set("idle");
     });
+    if (!running.peek()) settle();
+  }
+
+  function settle(): void {
+    const edits = waiting.peek();
+    if (pending || running.peek() || !Object.keys(edits).length) return;
+    batch(() => {
+      waiting.set({});
+      preferences.set({ config: { ...preferences.config.peek(), ...edits } });
+    });
   }
 
   const stopLapse = effect(() => {
@@ -399,31 +462,30 @@ export function createRun(env: RunEnvironment) {
 
   /** Whether a stage may be turned on or off now; while a test runs, the run's own rule decides. */
   const canToggle = (name: Stage) => {
-    if (preparing()) return false;
-    if (!running()) return true;
-    stage();
+    if (!running() || preparing()) return true;
+    // The first stage locks as it leaves Checking paths, not as it is named: follow every phase.
+    phase();
     return run?.canChange(name) ?? false;
   };
 
-  /** The one writer of test settings; while a run is live only stages, durations, early finish and the gauge may change. */
+  /** The one writer of test settings; an edit a starting or running test cannot take waits for the next test. */
   function configure(patch: Partial<TestConfig>): boolean {
-    const keys = Object.keys(patch);
     // A refusal speaks for the change that caused it, never for a later one.
     refusal.set("");
-    // The gauge's maximum is the page's alone, so it may change even while a start prepares.
-    if (preparing.peek() && keys.some((key) => key !== "visualization")) return false;
     const current = run && running.peek() ? run : null;
-    if (
-      current &&
-      keys.some((key) => !["stages", "duration", "adaptive", "visualization"].includes(key))
-    )
-      return false;
+    const later = preparing.peek()
+      ? omit(patch, ["visualization"])
+      : current
+        ? omit(patch, LIVE)
+        : {};
+    if (!valid({ ...upcoming.peek(), ...patch })) return false;
+    if (Object.keys(later).length) {
+      wait(later);
+      patch = omit(patch, Object.keys(later) as (keyof TestConfig)[]);
+    }
+    const keys = Object.keys(patch);
+    if (!keys.length) return true;
     const candidate = { ...preferences.config.peek(), ...patch };
-    if (
-      !STAGES.some((name) => planned(candidate, name)) ||
-      Object.values(candidate.duration).some((ms) => !Number.isFinite(ms) || ms < 0)
-    )
-      return false;
     if (current && keys.some((key) => key !== "visualization")) {
       const runPlan = adaptWarmup(
         {
@@ -454,12 +516,25 @@ export function createRun(env: RunEnvironment) {
     }
     // A change to what Start would run lapses a refused or failed start; the gauge alone leaves it be.
     if (keys.some((key) => key !== "visualization")) cancel();
-    preferences.set({ config: candidate });
+    preferences.set({ config: { ...preferences.config.peek(), ...patch } });
     return true;
   }
 
+  function wait(edits: Partial<TestConfig>): void {
+    const settled = preferences.config.peek();
+    const next = { ...waiting.peek(), ...edits };
+    waiting.set(
+      Object.fromEntries(
+        Object.entries(next).filter(
+          ([key, value]) =>
+            JSON.stringify(value) !== JSON.stringify(settled[key as keyof TestConfig]),
+        ),
+      ),
+    );
+  }
+
   function toggleStage(name: Stage): boolean {
-    const config = preferences.config.peek();
+    const config = upcoming.peek();
     const stages = { ...config.stages, [name]: !config.stages[name] };
     if (!canToggle(name) || !STAGES.some((each) => stages[each])) return false;
     return configure({ stages });
@@ -470,6 +545,7 @@ export function createRun(env: RunEnvironment) {
     releaseRun();
     env.finished(null);
     reset();
+    settle();
   }
 
   function end(reason: FailureReason, message: string): void {
@@ -484,6 +560,7 @@ export function createRun(env: RunEnvironment) {
     progress: progress as Read<{ elapsedMs: number; budgetMs: number }>,
     stall: stall as Read<Stall | null>,
     live: live as Read<LiveSample | null>,
+    warmupRtt: warmupRtt as Read<Readonly<Record<string, number>>>,
     stageBytes: stageBytes as Read<number>,
     throughput: throughput as readonly ThroughputSample[],
     throughputVersion: throughputVersion as Read<number>,
@@ -505,6 +582,8 @@ export function createRun(env: RunEnvironment) {
     running,
     preparing,
     canToggle,
+    upcoming: upcoming as Read<TestConfig>,
+    waiting: waiting as Read<Partial<TestConfig>>,
     toggle,
     cancel,
     configure,

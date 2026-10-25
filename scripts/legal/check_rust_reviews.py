@@ -23,8 +23,8 @@ from .rust_platform import check_notice_sources
 REVIEWS = ROOT / "legal/rust-reviewed-components.json"
 FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 # Crates each static Linux binary compiles, its own and build-time crates included.
-BUDGET = {("graphite-meter-server", "x86_64-unknown-linux-musl"): 143,
-          ("graphite-meter-client", "x86_64-unknown-linux-musl"): 150}
+BUDGET = {("graphite-meter-server", "x86_64-unknown-linux-musl"): 121,
+          ("graphite-meter-client", "x86_64-unknown-linux-musl"): 146}
 Crate = tuple[str, str, str]  # name, version, Cargo.lock source
 
 

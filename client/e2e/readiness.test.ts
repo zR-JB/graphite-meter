@@ -37,7 +37,7 @@ test("a verified peer that dies fails its idle recheck, and Start leaves it out"
   }
 });
 
-test("a forced stream count beyond the browser's connections is kept exactly and still measures", async (page) => {
+test("a forced stream count beyond the browser's connections is held to them, says so and measures", async (page) => {
   await open(page, home.url, {
     config: {
       transferStreams: { mode: "forced", count: 12 },
@@ -51,11 +51,15 @@ test("a forced stream count beyond the browser's connections is kept exactly and
   await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({
     timeout: 15_000,
   });
+  await expect(settings).toContainText(
+    /HTTP\/1\.1 allows at most 5 measurement connections to .+ in this browser; 5 will be used\./,
+  );
   await closeSettings(page);
   await page.getByRole("button", { name: "Details" }).click();
-  await expect(page.locator(".infra")).toContainText(/Exact\s*12 per direction/);
+  await expect(page.locator(".infra")).toContainText(
+    /Exact\s*5 per direction \(capped from 12 by the browser\)/,
+  );
   await page.press("Escape");
-  // Lanes past the browser's HTTP/1.1 pool queue; the runnable ones carry the stage.
   const saved = await run(page);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);

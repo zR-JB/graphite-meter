@@ -35,3 +35,5 @@ letsencrypt/
 
 # Populated Tailscale-sidecar Quadlet environment files may contain auth keys.
 container/quadlet/tailscale-sidecar/*.env
+
+/pgo/

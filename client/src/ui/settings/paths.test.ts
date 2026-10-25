@@ -22,6 +22,7 @@ function offer(
     engineVersion: "",
     server: { name: "" },
     maxStageMs: 300_000,
+    maxMeasurements: 32,
     origin,
     protocol: null,
     readAt: 0,
@@ -142,6 +143,22 @@ test("one server offers its own mechanisms, each with why it cannot be chosen", 
     configFor("throughput", "auto", true),
     PAGE,
   );
+  // A saved exact path stays listed before its server answers, so the picker never shows no choice.
+  const exact = "https://a.example::wt";
+  const waiting = view("a", null, "checking");
+  expect(
+    choices(
+      "throughput",
+      [waiting.server],
+      new Map([["a", waiting]]),
+      configFor("throughput", exact),
+      PAGE,
+    ).at(-1),
+  ).toMatchObject({
+    value: exact,
+    label: "Selected origin",
+    unavailable: "Checking server transports…",
+  });
   expect(datagrams.at(-1)).toMatchObject({
     value: `${a}::wtdg`,
     label: "WebTransport datagrams (TLS)",

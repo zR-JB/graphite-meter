@@ -53,7 +53,7 @@ ratatui-core = { version = "0.1.2", features = ["std"] }
 ratatui-crossterm = { version = "0.1.2", default-features = false, features = ["crossterm_0_29"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 ring = "0.17.14"
-rustfs-mimalloc = "=0.5.6"
+rustfs-mimalloc = { version = "=0.7.1", features = ["no_profile"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std"] }
 rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12", "ring"] }
 rustls-platform-verifier = "0.7.1"

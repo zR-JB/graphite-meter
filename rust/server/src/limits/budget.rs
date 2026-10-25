@@ -1,9 +1,12 @@
 //! The buffer budget QUIC and HTTP/2 connection state and the download block draw on (`GM_MAX_BUFFER_BYTES`).
 
 use crate::log::Latch;
-use std::sync::{
-    Arc,
-    atomic::{self, AtomicUsize, Ordering},
+use std::{
+    net::IpAddr,
+    sync::{
+        Arc,
+        atomic::{self, AtomicU64, AtomicUsize, Ordering},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -16,6 +19,7 @@ struct Shared {
     /// Endpoint buffers ever reserved and released, wrapping; those held count within `used`.
     reserved: AtomicUsize,
     released: AtomicUsize,
+    refused_floors: AtomicU64,
     held_back: Latch,
 }
 
@@ -41,6 +45,7 @@ impl Budget {
             used: AtomicUsize::new(0),
             reserved: AtomicUsize::new(0),
             released: AtomicUsize::new(0),
+            refused_floors: AtomicU64::new(0),
             held_back: Latch::default(),
         }))
     }
@@ -52,6 +57,18 @@ impl Budget {
             bytes,
             reserved: false,
         })
+    }
+
+    pub fn floor(&self, bytes: usize, peer: IpAddr) -> Option<Lease> {
+        let floor = self.lease(bytes);
+        if floor.is_none() {
+            self.0.refused_floors.fetch_add(1, Ordering::Relaxed);
+            super::TOTAL_REFUSALS.write(format_args!(
+                "connection from {peer} refused: all GM_MAX_BUFFER_BYTES={} bytes are in use; raise it",
+                self.0.limit
+            ));
+        }
+        floor
     }
 
     /// Charges endpoint buffers, which the pressure thresholds and the clients' half leave out.
@@ -111,6 +128,10 @@ impl Budget {
         }
     }
 
+    pub fn refused_floors(&self) -> u64 {
+        self.0.refused_floors.load(Ordering::Relaxed)
+    }
+
     pub fn noq(&self) -> Arc<dyn noq::SharedBudget> {
         self.0.clone()
     }
@@ -168,6 +189,14 @@ pub struct Lease {
     budget: Budget,
     bytes: usize,
     reserved: bool,
+}
+
+impl Lease {
+    /// Ends the lease but for `bytes`, which stay charged until their holder refunds them.
+    pub fn keep(mut self, bytes: usize) {
+        debug_assert!(!self.reserved);
+        self.bytes -= bytes;
+    }
 }
 
 impl Drop for Lease {

@@ -1,7 +1,7 @@
 //! Reads proxies from `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` and picks one per target.
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_proto::origin::{Host, Origin, Scheme};
-use std::{fmt, net::IpAddr};
+use std::{ffi::OsString, fmt, net::IpAddr};
 
 /// Holds the proxies a process's environment names. `ALL_PROXY` is never read.
 #[derive(Clone, Debug, Default)]
@@ -86,22 +86,28 @@ enum Bypass {
 
 impl Proxy {
     pub fn from_env() -> Self {
-        Self::from_lookup(|name| std::env::var(name).ok())
+        Self::from_lookup(|name| std::env::var_os(name))
     }
 
-    /// Reads each variable before its lowercase spelling and treats empty values as unset.
-    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Self {
+    /// Reads each variable before its lowercase spelling, empty as unset; a non-UTF-8 `NO_PROXY` entry bypasses nothing.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Self {
         let set =
             |name: &'static str| Some((name, lookup(name).filter(|value| !value.is_empty())?));
         let read = |names: [&'static str; 2]| names.into_iter().find_map(set);
         let upstream = |names| {
-            let (variable, raw) = read(names).filter(|(_, raw)| !raw.trim().is_empty())?;
-            Some(upstream(raw.trim()).map_err(|reason| UnusableProxy { variable, reason }))
+            let (variable, raw) = read(names)?;
+            let parsed = match raw.to_str().map(str::trim) {
+                Some("") => return None,
+                Some(raw) => upstream(raw),
+                None => Err("not valid UTF-8"),
+            };
+            Some(parsed.map_err(|reason| UnusableProxy { variable, reason }))
         };
         Self {
             http: upstream(["HTTP_PROXY", "http_proxy"]),
             https: upstream(["HTTPS_PROXY", "https_proxy"]),
-            bypass: read(["NO_PROXY", "no_proxy"]).map_or_else(Vec::new, |(_, list)| rules(&list)),
+            bypass: read(["NO_PROXY", "no_proxy"])
+                .map_or_else(Vec::new, |(_, list)| rules(&list.to_string_lossy())),
         }
     }
 

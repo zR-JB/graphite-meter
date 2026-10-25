@@ -383,3 +383,89 @@ test.chrome(
     await expect(tip).toHaveCount(0);
   },
 );
+
+// A link straight to Settings on a slow mobile network: the catalog and each server's check answer one by one.
+for (const [width, height] of [
+  [412, 823],
+  [1350, 940],
+] as const)
+  test.chrome(
+    `Settings opened by its link on a slow network arrives without moving, at ${width} px`,
+    async (page) => {
+      await page.setViewportSize({ width, height });
+      await page.cdp("Network.enable");
+      await page.cdp("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: 300,
+        downloadThroughput: 200_000,
+        uploadThroughput: 93_750,
+      });
+      await page.addInitScript(() => {
+        const shifts: number[] = ((window as any).shifts = []);
+        new PerformanceObserver((list) => {
+          for (const entry of list.getEntries() as (PerformanceEntry & {
+            value: number;
+            hadRecentInput: boolean;
+          })[])
+            if (!entry.hadRecentInput) shifts.push(entry.value);
+        }).observe({ type: "layout-shift", buffered: true });
+      });
+      await open(page, `${home.url}/#/settings`);
+      const settings = page.locator('dialog[aria-label="Settings"]');
+      await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(settings.locator(".server-preflight")).toHaveCount(4, { timeout: 30_000 });
+      await page.evaluate(settled);
+      const shifts: number[] = await page.evaluate(() => (window as any).shifts);
+      expect(shifts.reduce((sum, value) => sum + value, 0)).toBeLessThan(0.01);
+    },
+  );
+
+test("frames keep their pace through each stage's warmup and window, and nothing shifts as they change", async (page) => {
+  await open(page, home.http, {
+    config: {
+      stages: { ...baseConfig.stages, upload: false },
+      duration: { ...baseConfig.duration, warmupMs: 1500, latencyMs: 1500, downloadMs: 1500 },
+    },
+  });
+  await ready(page);
+  await page.evaluate(() => {
+    const frames: Record<string, number[]> = {};
+    const shifts: number[] = [];
+    let last = 0;
+    const sample = (now: number) => {
+      const phase = document.getElementById("console")!.dataset.phase!;
+      const stage = document.querySelector<HTMLElement>(".gauge-panel")!.dataset.stage ?? "";
+      if (last && (phase === "warmup" || phase === stage))
+        (frames[`${phase}:${stage}`] ??= []).push(now - last);
+      last = now;
+      if (phase !== "complete") requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+    // Layout shift is Chrome's to report; another browser reports none.
+    if (PerformanceObserver.supportedEntryTypes.includes("layout-shift"))
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as (PerformanceEntry & {
+          value: number;
+          hadRecentInput: boolean;
+        })[])
+          if (!entry.hadRecentInput) shifts.push(entry.value);
+      }).observe({ type: "layout-shift" });
+    Object.assign(window, { pacing: { frames, shifts } });
+  });
+  await run(page, 30_000);
+  const { frames, shifts } = await page.evaluate(() => (window as any).pacing);
+  expect(Object.keys(frames).sort()).toEqual([
+    "download:download",
+    "latency:latency",
+    "warmup:download",
+    "warmup:latency",
+  ]);
+  // A long frame is one a 60 Hz display shows three times; a steady phase has almost none.
+  for (const [segment, deltas] of Object.entries(frames) as [string, number[]][]) {
+    const long = deltas.filter((ms) => ms > 50).length;
+    expect(long / deltas.length, segment).toBeLessThan(0.05);
+  }
+  expect(shifts.reduce((sum: number, value: number) => sum + value, 0)).toBeLessThan(0.01);
+});

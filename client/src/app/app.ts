@@ -66,6 +66,7 @@ export function createApp() {
     setTransports: (transports) =>
       preferences.set({ config: { ...preferences.config.peek(), transports } }),
     active: computed(() => booted() && visible() && !leaving() && !busy()()),
+    busy: computed(() => busy()()),
     hidden: computed(() => !visible() && !busy()()),
     online,
     latencyPin,
@@ -115,13 +116,7 @@ export function createApp() {
     streams: (prepared, activity) =>
       new Map(
         [...planStreams(prepared, activity, preferences.config.peek().transferStreams)].map(
-          ([id, { down, up }]) => [
-            id,
-            {
-              streams: { down: down.planned, up: up.planned },
-              gating: { down: down.gating, up: up.gating },
-            },
-          ],
+          ([id, { down, up }]) => [id, { streams: { down: down.planned, up: up.planned } }],
         ),
       ),
   });
@@ -129,7 +124,7 @@ export function createApp() {
   const plannedMs = computed(() => {
     const plan = run.running() ? run.plan() : null;
     const rttMs = servers.views().get(servers.latencyServer() ?? "")?.latency.path?.rttMs ?? 0;
-    return totalMs(plan ?? adaptWarmup(preferences.config(), rttMs));
+    return totalMs(plan ?? adaptWarmup(run.upcoming(), rttMs));
   });
   // A run's latency replaces the idle series, and a newly shown server starts its own.
   const stopIdle = effect(() => {

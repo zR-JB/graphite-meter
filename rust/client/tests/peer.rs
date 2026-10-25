@@ -2,9 +2,9 @@
 use graphite_meter_client::{
     config::{Config, PathChoice},
     controller::{Command, Controller},
-    events::Events,
+    events::{Event, Events},
     model::Stage,
-    net::{Client, Fault, ReadBuffer, Request, ThroughputPath},
+    net::{Class, Client, Fault, ReadBuffer, Request, ThroughputPath},
     run::{prepare::prepare, upload::UploadSession},
 };
 use graphite_meter_net::{ConnectError, Pool, Proxy, Trust, Verify};
@@ -13,6 +13,7 @@ use graphite_meter_proto::{
     json,
     lease::LeaseRequest,
     origin::Origin,
+    reason::FailureReason,
     route::Route,
 };
 use graphite_meter_testkit::{Identity, Scratch, read_head};
@@ -24,7 +25,7 @@ use std::{
     net::SocketAddr,
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -169,7 +170,7 @@ async fn all_proxy_is_not_read() {
         Origin::parse("http://meter.invalid").unwrap(),
     );
     let through = |names: &'static [&'static str]| {
-        let proxy = Proxy::from_lookup(|name| names.contains(&name).then(|| proxy.clone()));
+        let proxy = Proxy::from_lookup(|name| names.contains(&name).then(|| proxy.clone().into()));
         Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()))
     };
     let probed = probe(
@@ -555,7 +556,7 @@ async fn a_check_or_run_cut_short_ends_its_lease() {
         probed(&mut seen).await;
     }
     controller.command(Command::Stop);
-    controller.settled().await;
+    controller.close().await;
     let leases = |seen: &[String]| {
         let leases = seen.iter().filter(|head| target(head) == "/lease");
         leases
@@ -572,5 +573,123 @@ async fn a_check_or_run_cut_short_ends_its_lease() {
         leases(&seen),
         [false, true].repeat(3),
         "each lease taken, then ended with its token"
+    );
+}
+
+#[tokio::test]
+async fn a_proxy_that_refuses_fails_the_path_and_one_that_reaches_no_target_is_retried() {
+    for (answer, reason, class) in [
+        (
+            "407 Proxy Authentication Required",
+            FailureReason::PathFailed,
+            Class::Final,
+        ),
+        (
+            "502 Bad Gateway",
+            FailureReason::ConnectionLost,
+            Class::Redial,
+        ),
+    ] {
+        let (listener, address) = local().await;
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_head(&mut stream).await;
+            let refusal = format!("HTTP/1.1 {answer}\r\ncontent-length: 0\r\n\r\n");
+            stream.write_all(refusal.as_bytes()).await.unwrap();
+        });
+        let proxy = format!("http://{address}");
+        let proxy =
+            Proxy::from_lookup(|name| (name == "HTTPS_PROXY").then(|| proxy.clone().into()));
+        let client = Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()));
+        let origin = Origin::parse("https://meter.example").unwrap();
+        let fault = probe(&client, Protocol::Negotiated, &origin)
+            .await
+            .unwrap_err();
+        assert_eq!((fault.reason(), fault.class()), (reason, class), "{fault}");
+        assert_eq!(
+            fault.to_string(),
+            format!("Could not connect: proxy refused CONNECT with {answer}")
+        );
+    }
+}
+
+async fn deleted_lease(heads: &mut mpsc::UnboundedReceiver<(usize, String)>) -> Option<String> {
+    let deleted = async {
+        while let Some((_, head)) = heads.recv().await {
+            if head.starts_with("DELETE ") && target(&head) == "/lease" {
+                return Some(head);
+            }
+        }
+        None
+    };
+    tokio::time::timeout(Duration::from_secs(2), deleted)
+        .await
+        .ok()
+        .flatten()
+}
+
+#[test]
+fn quitting_ends_the_lease_of_the_idle_check() {
+    let peers = tokio::runtime::Runtime::new().unwrap();
+    let (served, mut heads) = peers.block_on(async {
+        let (listener, served) = local().await;
+        let heads = peer(listener, None, |_, head| match target(head) {
+            "/probe" => Some(ok(include_str!("../../../api/probe.golden.json"))),
+            _ => discovery(head, false, ""),
+        });
+        (served, heads)
+    });
+    let process = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    process.block_on(async {
+        let (events, mut received) = Events::channel();
+        let mut controller = Controller::new(true, Arc::new(Pool::inline()), events);
+        controller.command(Command::Check(downloads(
+            &origin("http", served),
+            Stage::Download,
+        )));
+        while !matches!(received.recv().await, Some(Event::Prepared { .. })) {}
+        controller.close().await;
+    });
+    drop(process);
+    let ended = peers.block_on(deleted_lease(&mut heads));
+    assert!(
+        ended.is_some_and(|head| head.contains("graphite-meter-lease: t\r\n")),
+        "the idle check's lease ended before the exit"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lease_answered_after_a_stop_is_ended() {
+    let (listener, served) = local().await;
+    let (answer, held) = std::sync::mpsc::channel::<()>();
+    let held = Mutex::new(held);
+    let mut heads = peer(listener, None, move |_, head| {
+        if head.starts_with("POST ") && target(head) == "/lease" {
+            let _ = tokio::task::block_in_place(|| held.lock().unwrap().recv());
+        }
+        discovery(head, false, "")
+    });
+    let (events, _received) = Events::channel();
+    let mut controller = Controller::new(true, Arc::new(Pool::inline()), events);
+    controller.command(Command::Check(downloads(
+        &origin("http", served),
+        Stage::Download,
+    )));
+    while let Some((_, head)) = heads.recv().await {
+        if target(&head) == "/lease" {
+            break;
+        }
+    }
+    controller.command(Command::Stop);
+    let stop_lands = Duration::from_millis(100);
+    tokio::time::sleep(stop_lands).await;
+    answer.send(()).unwrap();
+    let ended = deleted_lease(&mut heads).await;
+    assert!(
+        ended.is_some_and(|head| head.contains("graphite-meter-lease: t\r\n")),
+        "the lease answered after the stop ended with its token"
     );
 }

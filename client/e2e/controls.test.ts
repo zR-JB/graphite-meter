@@ -149,18 +149,30 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
 });
 
-test("Escape closes the docked panel holding focus and never stops a running test", async (page) => {
+test("Escape closes the docked panel holding focus, and stops a running test once none is open", async (page) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
   });
   await ready(page);
+  const hint = page.locator(".command-hints .stop-hint");
+  const hinted = (shown: boolean) =>
+    expect
+      .poll(() =>
+        hint.evaluate((el: HTMLElement) => el.checkVisibility({ visibilityProperty: true })),
+      )
+      .toBe(shown);
+  // A focused control's tip takes Escape first; with focus nowhere, the page has it.
+  const unfocus = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await hinted(false);
   await runButton(page, "Start test").click();
   // Escape cancels a start still proving its paths, so the panels open once the run is under way.
   await expect(phase(page, "idle")).toHaveCount(0);
+  await hinted(true);
   const settings = await openSettings(page);
   const details = page.locator('dialog[aria-label="Details"]');
   await page.getByRole("button", { name: "Details", exact: true }).click();
+  await hinted(false);
   const closed = (panel: typeof settings) =>
     expect.poll(() => panel.all((els: HTMLElement[]) => els.every((el) => el.inert))).toBe(true);
   await settings
@@ -169,14 +181,15 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await page.press("Escape");
   await closed(settings);
   expect(await details.all((els: HTMLElement[]) => els.some((el) => !el.inert))).toBe(true);
-  // Focus returns to the Settings button, whose tip takes the first Escape.
-  await page.press("Escape");
+  await unfocus();
   await page.press("Escape");
   await closed(details);
-  await page.press("Escape");
   await expect(runButton(page, "Stop test")).toBeVisible();
-  await runButton(page, "Stop test").click();
+  await hinted(true);
+  await unfocus();
+  await page.press("Escape");
   await expect(phase(page, "aborted")).toHaveCount(1);
+  await hinted(false);
 });
 
 test("a docked panel's edge steps 16 px from the keyboard, within its limits", async (page) => {

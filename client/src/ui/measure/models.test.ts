@@ -224,7 +224,7 @@ test("a running card follows its own stage only, says when replies stop, and a s
   const warming = liveCard("upload", "warmup", evidence({ own: false }), BITS);
   expect([warming.status, warming.word, warming.figure, warming.live]).toEqual([
     "active",
-    STAGE_STATE.running,
+    STAGE_STATE.warmup,
     MISSING,
     null,
   ]);
