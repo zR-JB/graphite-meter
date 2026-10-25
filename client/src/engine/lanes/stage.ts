@@ -235,6 +235,7 @@ class Stage implements StageResources {
         this.#notify();
       },
       outcomes: (outcomes) => events.probes(outcomes),
+      unmeasured: (rtts) => events.warmupReplies(rtts),
       interrupted: (count, reason) => events.probesInterrupted(count, reason),
       stalled: (detail) => {
         this.#probesReady = false;
@@ -259,6 +260,8 @@ class Stage implements StageResources {
         { target, auth: server.auth, control: server.server.url, intervalMs, maxInFlight },
         own,
       );
+    // The latency warmup shows its replies before its window counts any.
+    if (activity.stage === "latency") this.#probes.warm();
   }
 
   /** Mints an upload id and opens its receiver; HTTP lanes write only once the feed is open, so it reports from the first byte. */

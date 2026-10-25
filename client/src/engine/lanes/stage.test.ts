@@ -622,6 +622,8 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
       intervalMs: 80,
       maxInFlight: 16,
     },
+    // The latency stage shows its warmup's replies.
+    { type: "warm" },
   ]);
   probe!.report({ type: "ready" });
   await elapse(0);

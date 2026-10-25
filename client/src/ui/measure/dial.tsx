@@ -434,8 +434,10 @@ export function Dial(props: {
   const reply = computed(() => {
     if (phase() === "latency")
       return live.buckets().findLast((bucket) => bucket.medianRttMs !== null)?.startT ?? null;
-    // The latency warmup answers too, muted with the needle.
-    return warming() && run.stage() === "latency" && !live.replies().lost ? run.warmupRtt() : null;
+    // The latency warmup answers too, muted with the needle: one ring per new median of the shown server.
+    return warming() && run.stage() === "latency"
+      ? (run.warmupRtt()[live.focus() ?? ""] ?? null)
+      : null;
   });
   effect(() => {
     if (reply() === null || beating || !motion.peek()) return;

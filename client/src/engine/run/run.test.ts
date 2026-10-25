@@ -165,9 +165,9 @@ test("warmup replies move the live round trip and never enter a bucket, a summar
       {
         id: "self",
         prepare: (_, events) => {
-          later(50, () => probe(900, 5)(events));
-          later(100, () => probe(700, 3)(events));
-          later(300, () => probe(500, 1)(events));
+          later(50, () => events.warmupReplies([900, 900, 900, 900, 900]));
+          later(100, () => events.warmupReplies([700, 700, 700]));
+          later(300, () => events.warmupReplies([500]));
         },
         measure: probe(10, 4),
       },

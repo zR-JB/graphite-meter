@@ -223,7 +223,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     const settled = looks === "failed" || looks === "complete" || looks === "partial";
     // Reduced motion draws the warmup's lead at its length, without the fill.
     const lit = warming.peek()
-      ? reducedMotion.peek() && looks === "warmup"
+      ? reducedMotion.peek() && looks === "warmup" && length > 0
         ? 1
         : share
       : settled || clocked.peek()

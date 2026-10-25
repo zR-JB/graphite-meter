@@ -99,8 +99,8 @@ export function createRun(env: RunEnvironment) {
   const progress = signal({ elapsedMs: 0, budgetMs: 0 });
   const stall = signal<Stall | null>(null);
   const live = signal<LiveSample | null>(null);
-  /** Each server's latest latency-warmup median; null when its replies timed out. */
-  const warmupRtt = signal<Readonly<Record<string, number | null>>>({});
+  /** Each server's latest latency-warmup median. */
+  const warmupRtt = signal<Readonly<Record<string, number>>>({});
   const stageBytes = signal(0);
   const throughput: ThroughputSample[] = [];
   const throughputVersion = signal(0);
@@ -490,7 +490,7 @@ export function createRun(env: RunEnvironment) {
     progress: progress as Read<{ elapsedMs: number; budgetMs: number }>,
     stall: stall as Read<Stall | null>,
     live: live as Read<LiveSample | null>,
-    warmupRtt: warmupRtt as Read<Readonly<Record<string, number | null>>>,
+    warmupRtt: warmupRtt as Read<Readonly<Record<string, number>>>,
     stageBytes: stageBytes as Read<number>,
     throughput: throughput as readonly ThroughputSample[],
     throughputVersion: throughputVersion as Read<number>,

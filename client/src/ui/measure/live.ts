@@ -186,7 +186,7 @@ function createLive(app: App) {
     const view = servers.views().get(servers.latencyServer() ?? "");
     return {
       rttMs: newest?.medianRttMs ?? warm ?? view?.latency.path?.rttMs ?? 0,
-      lost: newest ? newest.pingCount > 0 && newest.medianRttMs === null : warm === null,
+      lost: !!newest && newest.pingCount > 0 && newest.medianRttMs === null,
     };
   });
   /** The dial reads the finished run's own latency when it measured no transfer. */
