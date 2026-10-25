@@ -112,9 +112,12 @@ test("a peer stopped mid-download leaves as Server stopped and the others carry 
     const saved = await savedResult(page, startedAt, 30_000);
     expect(saved.result.outcome).toBe("partial");
     expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
-    expect(
-      saved.result.multiServer.failures.find((candidate) => candidate.serverId === "oslo"),
-    ).toMatchObject({ stage: "download", reason: "server-stopped" });
+    const stopped = saved.result.multiServer.failures.filter(({ serverId }) => serverId === "oslo");
+    for (const scope of ["latency", "throughput"])
+      expect(stopped.find((failure) => failure.scope === scope)).toMatchObject({
+        stage: "download",
+        reason: "server-stopped",
+      });
     await expect(page.locator(".results .server-grid .causes li")).toHaveText([
       "Oslo stopped during the download. Upload was not reached.",
     ]);

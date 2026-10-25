@@ -1161,6 +1161,13 @@ export class Run {
       return;
     }
     server.removed = true;
+    if (
+      reason === "server-stopped" &&
+      stage.measured &&
+      stage.activity.loadedLatency &&
+      server.prepared.latency
+    )
+      this.#failure(server, "latency", reason, message);
     if (seat) {
       seat.recovery?.abort.abort();
       seat.recovery = seat.latencyStall = null;
