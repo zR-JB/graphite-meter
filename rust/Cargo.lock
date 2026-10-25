@@ -1170,8 +1170,8 @@ dependencies = [
 
 [[package]]
 name = "noq"
-version = "1.3.0"
-source = "git+https://github.com/zR-JB/noq?rev=54b63742f3fe286d97f98386db823bd8ed2eb6be#54b63742f3fe286d97f98386db823bd8ed2eb6be"
+version = "1.4.0"
+source = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -1191,8 +1191,8 @@ dependencies = [
 
 [[package]]
 name = "noq-proto"
-version = "1.3.0"
-source = "git+https://github.com/zR-JB/noq?rev=54b63742f3fe286d97f98386db823bd8ed2eb6be#54b63742f3fe286d97f98386db823bd8ed2eb6be"
+version = "1.4.0"
+source = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1216,8 +1216,8 @@ dependencies = [
 
 [[package]]
 name = "noq-udp"
-version = "1.3.0"
-source = "git+https://github.com/zR-JB/noq?rev=54b63742f3fe286d97f98386db823bd8ed2eb6be#54b63742f3fe286d97f98386db823bd8ed2eb6be"
+version = "1.4.0"
+source = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
 dependencies = [
  "cfg_aliases",
  "libc",
