@@ -420,6 +420,12 @@ fn only_an_address_out_of_reach_opens_the_address_and_another_cause_is_said_on_t
     assert!(rows.last().unwrap().starts_with("Could not start the test"));
     let (mut app, now) = self::app();
     app.event(&Event::Checking(Kind::Check), now);
+    app.event(&failed("Server stopped", FailureReason::ServerStopped), now);
+    let rows = frame(&mut app, now);
+    let stopped = "A stopped during the path check;";
+    assert!(shows(&mut app, now, stopped), "{rows:#?}");
+    let (mut app, now) = self::app();
+    app.event(&Event::Checking(Kind::Check), now);
     app.event(
         &failed(
             graphite_meter_client::net::UNREACHABLE,

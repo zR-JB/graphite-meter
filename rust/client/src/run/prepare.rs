@@ -16,6 +16,7 @@ use graphite_meter_proto::{
         Capabilities, IpFamily, LatencyTransport, Preflight, Protocol, ThroughputTransport,
     },
     envelope::Envelope,
+    lane::LaneEnding,
     lease::{LeaseRequest, UNUSED_BOUND},
     origin::Origin,
     reason::FailureReason,
@@ -204,8 +205,8 @@ async fn check(
     })
 }
 
-/// The first of `candidates` whose check passes, moving on unless a server asks for sign-in; else the first port of
-/// another API version, which only an update clears, or the last fault.
+/// The first of `candidates` whose check passes, moving on unless a server asks for sign-in or stopped; else the first
+/// port of another API version, which only an update clears, or the last fault.
 async fn first<P: Clone, T, F>(candidates: &[P], check: impl Fn(P) -> F) -> Result<T, Fault>
 where
     F: Future<Output = Result<T, Fault>>,
@@ -214,7 +215,9 @@ where
     for candidate in candidates {
         match check(candidate.clone()).await {
             Err(Fault::Incompatible(text)) if incompatible.is_none() => incompatible = Some(text),
-            Err(fault @ Fault::SignIn(_)) => return Err(fault),
+            Err(fault @ (Fault::SignIn(_) | Fault::Ended(LaneEnding::Shutdown))) => {
+                return Err(fault);
+            }
             Err(fault) => last = fault,
             passed => return passed,
         }
@@ -341,5 +344,17 @@ mod tests {
                 "{order:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_server_that_stopped_ends_its_check_before_another_candidate_is_dialed() {
+        let found = first(&[true, false], |stopped| async move {
+            assert!(stopped, "no candidate after a stop");
+            Err::<(), _>(Fault::Ended(LaneEnding::Shutdown))
+        });
+        assert!(matches!(
+            found.await,
+            Err(Fault::Ended(LaneEnding::Shutdown))
+        ));
     }
 }
