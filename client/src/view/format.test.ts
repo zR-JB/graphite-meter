@@ -34,6 +34,16 @@ test("numbers read as the vectors the terminal clients share", async () => {
     expect(fmtRate(bytesPerSec, { base: "base10", kind: "bits" })).toBe(out);
   for (const { in: bytes, out } of vectors.bytes) expect(fmtBytes(bytes, "base10")).toBe(out);
   for (const { in: ms, out } of vectors.added) expect(fmtAddedMs(ms)).toBe(out);
+  for (const { ms, out } of vectors.duration) expect(fmtDuration(ms), `${ms}`).toBe(out);
+  for (const { ms, out } of vectors.stageTime) expect(fmtStageTime(ms), `${ms}`).toBe(out);
+  for (const { elapsedMs, totalMs, out } of vectors.progress)
+    expect(fmtProgress(elapsedMs, totalMs), `${elapsedMs}`).toBe(out);
+  for (const { fastestMs, slowestMs, out } of vectors.latencyRange)
+    expect(fmtLatencyRange(fastestMs, slowestMs)).toBe(out);
+  for (const { ratio, out } of vectors.percent)
+    expect(fmtPercent(ratio * 100), `${ratio}`).toBe(out);
+  for (const { in: count, out } of vectors.count) expect(fmtCount(count)).toBe(out);
+  for (const { in: value, out } of vectors.tick) expect(fmtTick(value), `${value}`).toBe(out);
   expect(fmtRate(1_048_576, { base: "base2", kind: "bytes" })).toBe("1024 KiB/s");
 });
 
@@ -99,40 +109,21 @@ test("a prefix is promoted only from 1.2× its step, as the terminal clients jud
   ]);
 });
 
-test("durations read in seconds while they round below a minute, then in minutes and hours", () => {
+test("durations in whole seconds round to a minute as soon as they read 60 s", () => {
   const cases = [
-    [999, "1.0 s", "1 s"],
-    [59_499, "59.5 s", "59 s"],
-    [59_949, "59.9 s", "1 min"],
-    [59_950, "1 min", "1 min"],
-    [65_000, "1 min 5 s", "1 min 5 s"],
-    [3_569_500, "59 min 30 s", "59 min 30 s"],
-    [3_599_600, "1 h", "1 h"],
-    [3_690_000, "1 h 2 min", "1 h 2 min"],
-    [7_170_000, "2 h", "2 h"],
-    [-5, "0.0 s", "0 s"],
+    [999, "1 s"],
+    [59_499, "59 s"],
+    [59_949, "1 min"],
+    [3_599_600, "1 h"],
+    [-5, "0 s"],
   ] as const;
-  for (const [ms, tenths, whole] of cases)
-    expect([fmtDuration(ms), fmtDuration(ms, 0)], `${ms}`).toEqual([tenths, whole]);
+  for (const [ms, whole] of cases) expect(fmtDuration(ms, 0), `${ms}`).toBe(whole);
+  expect(fmtDuration(-5)).toBe("0.0 s");
 });
 
-test("a typed stage time snaps to the time the stepper shows, and stays there", () => {
-  const shown = [500, 2_500, 4_000, 45_000, 59_900, 90_000, 5_400_000, 7_200_000].map((ms) =>
-    fmtStageTime(ms),
-  );
-  expect(shown).toEqual([
-    "0.5 s",
-    "2.5 s",
-    "4 s",
-    "45 s",
-    "59.9 s",
-    "1 min 30 s",
-    "1 h 30 min",
-    "2 h",
-  ]);
-  expect(shown.map(parseDuration)).toEqual([
-    500, 2_500, 4_000, 45_000, 59_900, 90_000, 5_400_000, 7_200_000,
-  ]);
+test("a typed stage time snaps to the time the stepper shows, and stays there", async () => {
+  const shown = (await json("format.testvectors.json")).stageTime;
+  for (const { out } of shown) expect(fmtStageTime(parseDuration(out)), out).toBe(out);
   const snap = (ms: number) => parseDuration(fmtStageTime(ms))!;
   const typed = [
     0, 450, 2_250, 12_340, 59_940, 59_960, 61_500, 599_990, 3_599_400, 3_599_700, 5_429_000,
@@ -183,52 +174,8 @@ test("typed times are seconds unless they name a unit or read as a clock", () =>
     expect(parseDuration(text), text).toBeNull();
 });
 
-test("a share reads as the terminal clients show it: two decimals below 1%, one from there", () => {
-  const cases = [
-    [0, "0.0%"],
-    [0.004, "0.00%"],
-    [0.25, "0.25%"],
-    [0.999, "1.00%"],
-    [1, "1.0%"],
-    [12.5, "12.5%"],
-    [25, "25.0%"],
-    [100, "100.0%"],
-  ] as const;
-  for (const [pct, text] of cases) expect(fmtPercent(pct), `${pct}`).toBe(text);
-});
-
-test("progress, ticks, ranges and counts read as documented", () => {
-  const progress = [
-    [1_900, 4_000, "1.9 / 4 s"],
-    [1_000, 2_500, "1.0 / 2.5 s"],
-    [300, 500, "0.3 / 0.5 s"],
-    [30_000, 59_400, "30.0 / 59.4 s"],
-    [30_000, 59_960, "30.0 / 1 min"],
-    [-5, 90_000, "0.0 / 1 min 30 s"],
-    // The time into a long stage keeps counting seconds, so its text never jumps at a whole minute.
-    [119_900, 300_000, "119.9 / 5 min"],
-    [120_000, 300_000, "120.0 / 5 min"],
-    [121_000, 300_000, "121.0 / 5 min"],
-  ] as const;
-  for (const [elapsed, total, text] of progress)
-    expect(fmtProgress(elapsed, total), `${elapsed}`).toBe(text);
-  const ticks = [
-    [0.25, "0.25"],
-    [2.5, "2.5"],
-    [1000, "1000"],
-    [10.24, "10.2"],
-    [0.005, "0.005"],
-    [0.1 + 0.2, "0.3"],
-    [12_345.6, "12346"],
-    [1e-7, "0.0000001"],
-    [-1e-9, "-0.000000001"],
-  ] as const;
-  for (const [value, text] of ticks) expect(fmtTick(value), `${value}`).toBe(text);
-  expect([
-    fmtLatencyRange(0.04, 12.34),
-    fmtLatencyRange(12.31, 12.34),
-    fmtLatencyRange(12, 250),
-  ]).toEqual(["< 0.1 to 12.3 ms", "12.3 to 12.3 ms", "12.0 to 250 ms"]);
+test("progress from before its start, and counts with a fraction, read as documented", () => {
+  expect(fmtProgress(-5, 90_000)).toBe("0.0 / 1 min 30 s");
   const counted = [0, 1, 2, 1_204, 1_234_567.891].map((count) =>
     fmtCounted(count, "reply", "replies"),
   );
