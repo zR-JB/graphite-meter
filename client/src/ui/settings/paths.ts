@@ -154,6 +154,9 @@ export function choices(
         group: groupOf(target),
       })),
     ];
+    // A saved exact path stays listed while its server is unchecked or unreachable.
+    if (!rows.some((row) => row.value === selected))
+      rows.push({ value: selected, label: "Selected origin", group: selected });
     return rows.map((row) => ({ ...row, unavailable: unavailable(known, role, row.value, page) }));
   }
   const offered = groups.some(([value]) => value === selected)

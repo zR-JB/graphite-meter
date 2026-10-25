@@ -1,4 +1,4 @@
-// A path picker: the role's choices on the selected servers, unavailable ones folded, and the role's check.
+// A path picker: the chosen path on the selected servers, the others behind one fold, and the role's check.
 import type { App } from "../../app/app";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
@@ -33,12 +33,13 @@ export function ConnectionPicker(props: {
       app.page,
     );
   });
-  // Unavailable choices fold into one line after the available ones. The chosen one always shows.
-  const unfolded = signal(false);
-  const folded = computed(() =>
-    options().filter((option) => option.unavailable !== null && option.value !== selected()),
-  );
-  const listed = computed(() => options().filter((option) => !folded().includes(option)));
+  // The chosen path shows alone, so the picker keeps its height however many paths the checks find. Opened, the
+  // others follow in their order, unavailable ones with their reason; the one chosen at opening stays first.
+  const opened = signal(false);
+  let first = selected.peek();
+  const lead = computed(() => (opened() ? first : selected()));
+  const chosen = computed(() => options().filter((option) => option.value === lead()));
+  const others = computed(() => options().filter((option) => option.value !== lead()));
   let picker: HTMLDivElement;
 
   const choose = (value: string) =>
@@ -120,35 +121,28 @@ export function ConnectionPicker(props: {
         </span>
       </div>
       <div class="kv choices">
-        {/* The list follows the servers and their checks at once. Only rows a person unfolds unfold. */}
-        <For each={listed} by={(option) => option.value}>
+        <For each={chosen} by={(option) => option.value}>
           {row}
         </For>
-        <Unfold when={unfolded}>
+        <Unfold when={opened}>
           {() => (
-            <For each={folded} by={(option) => option.value}>
+            <For each={others} by={(option) => option.value}>
               {row}
             </For>
           )}
         </Unfold>
-        <Show when={() => folded().length > 0}>
-          {() => (
-            <button
-              class="fold"
-              type="button"
-              aria-expanded={() => String(unfolded())}
-              ref={tip(() =>
-                [
-                  "Unavailable paths",
-                  ...folded().map((option) => `${option.label}: ${option.unavailable}`),
-                ].join("\n"),
-              )}
-              onclick={() => unfolded.set(!unfolded.peek())}
-            >
-              {() => (unfolded() ? "Hide unavailable" : `${folded().length} more unavailable`)}
-            </button>
-          )}
-        </Show>
+        <button
+          class="fold"
+          type="button"
+          aria-expanded={() => String(opened())}
+          disabled={() => !opened() && !others().length}
+          onclick={() => {
+            first = selected.peek();
+            opened.set(!opened.peek());
+          }}
+        >
+          {() => (opened() ? "Hide other paths" : "Other paths")}
+        </button>
       </div>
       {/* The line keeps its slot from the start, though until the server list loads there is nothing to check or retry. */}
       <div class="validation">

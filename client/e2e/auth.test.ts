@@ -1,6 +1,7 @@
 import {
   amsterdam,
   baseConfig,
+  choosePath,
   closeSettings,
   frankfurt,
   home,
@@ -37,10 +38,7 @@ test.chrome(
       [/^WebTransport/, "webtransport", "h3"],
     ] as const) {
       const settings = await openSettings(page);
-      await settings
-        .getByRole("group", { name: "Throughput path" })
-        .getByRole("radio", { name: path })
-        .click();
+      await choosePath(settings, "Throughput path", path);
       await closeSettings(page);
       await ready(page);
       const saved = await run(page);

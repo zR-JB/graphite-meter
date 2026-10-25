@@ -205,9 +205,13 @@
       color: var(--text-soft);
       font: var(--role-caption);
       @media (hover: hover) {
-        &:hover {
+        &:hover:not(:disabled) {
           color: var(--text);
         }
+      }
+      /* Before the server answers there is nothing to open. */
+      &:disabled {
+        opacity: 0.5;
       }
     }
     /* The line keeps a control's height with or without a key, so a re-check never moves the rows below. */
