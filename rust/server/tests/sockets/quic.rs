@@ -14,6 +14,10 @@ const RETRY: u8 = 3;
 async fn initial(h3: &H3) -> Vec<u8> {
     let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let endpoint = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+    silent
+        .connect(endpoint.local_addr().unwrap())
+        .await
+        .unwrap();
     let connecting = endpoint.connect_with(
         h3.client(transport(None)),
         silent.local_addr().unwrap(),
@@ -26,19 +30,33 @@ async fn initial(h3: &H3) -> Vec<u8> {
     packet
 }
 
+fn connection_ids(packet: &[u8]) -> (&[u8], &[u8]) {
+    let destination = 6..6 + usize::from(packet[5]);
+    let source = destination.end + 1..destination.end + 1 + usize::from(packet[destination.end]);
+    (&packet[destination], &packet[source])
+}
+
 pub(super) async fn retried(h3: &H3, source: &str) -> bool {
-    let socket = UdpSocket::bind(format!("{source}:0")).await.unwrap();
-    socket
-        .send_to(&initial(h3).await, h3.server.quic.unwrap())
-        .await
-        .unwrap();
+    let (socket, server) = (
+        UdpSocket::bind(format!("{source}:0")).await.unwrap(),
+        h3.server.quic.unwrap(),
+    );
+    socket.connect(server).await.unwrap();
+    let initial = initial(h3).await;
+    socket.send(&initial).await.unwrap();
     let mut packet = [0; 2048];
-    tokio::time::timeout(Duration::from_secs(2), socket.recv(&mut packet))
+    let answer = async {
+        loop {
+            socket.recv(&mut packet).await.unwrap();
+            if packet[0] & 0x80 != 0 && connection_ids(&packet).0 == connection_ids(&initial).1 {
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(2), answer)
         .await
-        .unwrap()
-        .unwrap();
+        .expect("an answer to this Initial");
     // A long header names its type in bits 4 and 5; the fixed bit beside them may be greased.
-    assert_ne!(packet[0] & 0x80, 0, "a long header");
     match packet[0] >> 4 & 0x3 {
         RETRY => true,
         INITIAL => false,
@@ -124,7 +142,8 @@ async fn a_late_packet_for_an_ended_connection_gets_no_answer() {
     // Past the server's draining period, it no longer knows the connection's IDs.
     advance_clock(Duration::from_secs(5)).await;
     let late = late.lock().unwrap().clone();
-    relay.send_to(&late, server).await.unwrap();
+    relay.connect(server).await.unwrap();
+    relay.send(&late).await.unwrap();
     let mut answer = [0; 2048];
     let answered = tokio::time::timeout(Duration::from_millis(300), relay.recv(&mut answer)).await;
     assert!(answered.is_err(), "a late packet is dropped");
@@ -340,12 +359,16 @@ async fn the_admission_line_counts_connections_whose_floor_the_budget_refuses() 
         close.error_code,
         noq::TransportErrorCode::CONNECTION_REFUSED
     );
+    // After Retry measured the loopback round trip, the client may probe again before the refusal arrives.
+    let mut quic = 0;
+    while quic != budget.refused_floors() {
+        quic = budget.refused_floors();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let mut h2 = TcpStream::connect(h3.server.h2.unwrap()).await.unwrap();
     assert_eq!(h2.read(&mut [0; 1]).await.unwrap(), 0, "closed at accept");
     drop(exhausted);
     let admission = h3.server.app.quotas().admission(&budget);
-    assert!(
-        admission.contains("rejected 0 global + 2 budget"),
-        "{admission}"
-    );
+    let counted = format!("rejected 0 global + {} budget", quic + 1);
+    assert!(admission.contains(&counted), "{admission}");
 }
