@@ -16,3 +16,5 @@ client-limit | Limit reached for your address or sign-in
 server-capacity | Server at capacity
 protocol-error | Unexpected server response
 insufficient-evidence | Too little measured time
+server-stopped | Server stopped
+internal-error | Internal error

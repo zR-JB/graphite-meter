@@ -91,7 +91,7 @@ export function openProbeChannel(
       case "stalled":
         answering = false;
         stall = data.detail;
-        events.stalled(data.detail);
+        events.stalled(data.detail, data.stopped);
         void redial();
         // A refused WebSocket upgrade looks like any break, so each outage asks whether the sign-in ended.
         return void auth.ended(released.signal).then(

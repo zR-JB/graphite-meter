@@ -1,4 +1,4 @@
-// Names the eight reasons any failure carries (api/failurereasons.txt), with the words every view shows for them.
+// Names the ten reasons any failure carries (api/failurereasons.txt), with the words every view shows for them.
 export const FAILURE_REASONS = {
   "path-failed": "Path unavailable",
   "connection-lost": "Connection lost",
@@ -8,6 +8,8 @@ export const FAILURE_REASONS = {
   "server-capacity": "Server at capacity",
   "protocol-error": "Unexpected server response",
   "insufficient-evidence": "Too little measured time",
+  "server-stopped": "Server stopped",
+  "internal-error": "Internal error",
 } as const;
 
 export type FailureReason = keyof typeof FAILURE_REASONS;

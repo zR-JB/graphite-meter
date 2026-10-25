@@ -1151,11 +1151,12 @@ export class Run {
       if (seat) seat.latencyStall = null;
       this.#failure(server, "latency", reason, message);
       // An unreachable server would hold each later stage's preparation until it timed out.
-      if (unreached(reason) && this.#participants().length > 1) {
+      if ((unreached(reason) && this.#participants().length > 1) || reason === "server-stopped") {
         server.removed = true;
         seat?.resources.discard(true);
       }
       this.#updateStalled();
+      if (!this.#participants().length) return this.#finish();
       if (!this.#latencyParticipants().length) this.#skip(stage);
       return;
     }
@@ -1173,7 +1174,9 @@ export class Run {
     const survivors = this.#participants();
     // A sole server that measured something skips to its next stage; otherwise the run ends with what it has.
     if (!survivors.length)
-      return this.#servers.length === 1 && this.#measured() ? this.#skip(stage) : this.#finish();
+      return this.#servers.length === 1 && this.#measured() && reason !== "server-stopped"
+        ? this.#skip(stage)
+        : this.#finish();
     if (stage.phase === "measuring" && stage.activity.transfer.length)
       this.#aggregate.dropout(
         survivors.map(({ id }) => id),

@@ -1,7 +1,15 @@
 import { expect, test } from "bun:test";
 import { rows } from "../../protocol/pins.testutil";
 import type { Ending, FailureReason } from "../types";
-import { downloadRefused, REVOKED, refusal, restartMs, sessionClosed } from "./endings";
+import {
+  downloadRefused,
+  REVOKED,
+  refusal,
+  restartMs,
+  sessionClosed,
+  SHUTDOWN,
+  socketClosed,
+} from "./endings";
 
 test("every pinned refusal ends with its pinned reason, by code over HTTP and on a stream", async () => {
   const refusals = (await rows("refusals.txt")) as [string, string, string, FailureReason][];
@@ -46,7 +54,7 @@ test("without a known code the status decides, and a stream refusal without one 
   expect(downloadRefused(new Response(null, { status: 502 })).reason).toBe("protocol-error");
 });
 
-test("the session endings the browser acts on match the lane ending pin", async () => {
+test("the session and socket endings the browser acts on match the lane ending pin", async () => {
   const endings = Object.fromEntries(
     (await rows("laneendings.txt")).map(([name, socket, session, reason]) => [
       name,
@@ -57,8 +65,13 @@ test("the session endings the browser acts on match the lane ending pin", async 
   expect(sessionClosed(endings.revoked!.session)?.reason).toBe("sign-in-required");
   for (const bound of [endings.idle!, endings.lifetime!])
     expect(sessionClosed(bound.session)).toMatchObject({ reason: "timeout", retry: true });
-  for (const other of [endings.finished!, endings.shutdown!])
-    expect(sessionClosed(other.session)).toBeNull();
+  expect(SHUTDOWN).toEqual(endings.shutdown!);
+  const stopped = { reason: "server-stopped", retry: false };
+  expect(sessionClosed(SHUTDOWN.session)).toMatchObject(stopped);
+  expect(socketClosed(SHUTDOWN.socket, SHUTDOWN.reason, "bus")).toMatchObject(stopped);
+  expect(socketClosed(SHUTDOWN.socket, "", "bus")).toBeNull();
+  expect(sessionClosed(endings.finished!.session)).toBeNull();
+  expect(socketClosed(endings.finished!.socket, "", "bus")).toBeNull();
 });
 
 test("a restart pauses 300 ms, and a Retry-After raises it within 1.2 s", () => {

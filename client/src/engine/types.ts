@@ -286,8 +286,8 @@ export interface ProbeChannelEvents {
   /** Round trips of probes sent outside a measured window; only a warmup reads them. */
   unmeasured?(rttsMs: readonly number[]): void;
   interrupted(count: number, reason: "unresolved" | "send-failed"): void;
-  /** The connection was lost, once per outage; its owner may redial it once; `resumed` when replies flow again. */
-  stalled(detail: string): void;
+  /** The connection was lost, once per outage, or `stopped` at the server's shutdown; its owner may redial it once; `resumed` when replies flow again. */
+  stalled(detail: string, stopped?: boolean): void;
   resumed(): void;
   signInRequired(): void;
   /** Outcomes were lost uncounted: a population can no longer be complete. */

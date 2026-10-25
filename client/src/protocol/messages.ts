@@ -144,7 +144,7 @@ export type ProbeReport =
   /** Round trips of probes outside a measured window, as a warmup's live reading; no population counts them. */
   | { type: "unmeasured"; rtts: number[] }
   | { type: "interrupted"; count: number; reason: "unresolved" | "send-failed" }
-  | { type: "stalled"; detail: string }
+  | { type: "stalled"; detail: string; stopped?: boolean }
   | { type: "resumed" }
   | { type: "sign-in" }
   | Handshake

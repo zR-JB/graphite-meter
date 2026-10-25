@@ -379,6 +379,25 @@ fn latency_failures_are_announced_as_they_happen_and_only_once() {
 }
 
 #[test]
+fn a_server_whose_bus_closed_at_its_shutdown_leaves_in_any_stage() {
+    for stage in [Stage::Latency, Stage::Download] {
+        let mut script = Script::new(plan(stage, &["a", "b"], true));
+        let ups = [(id("a"), ProberEvent::Up), (id("b"), ProberEvent::Up)];
+        script.step(Duration::ZERO, &[], &ups);
+        let stopped = ProberEvent::Down {
+            at: script.base + ms(1000),
+            failure: Failure::new(FailureReason::ServerStopped, "Server stopped"),
+        };
+        script.step(ms(1000), &[], &[(id("b"), stopped)]);
+        assert_eq!(
+            script.removed(),
+            [(ms(1000), "b", FailureReason::ServerStopped)],
+            "{stage:?}"
+        );
+    }
+}
+
+#[test]
 fn a_member_whose_participant_cannot_open_leaves() {
     let mut script = Script::new(plan(Stage::Download, &["a", "b"], false));
     script

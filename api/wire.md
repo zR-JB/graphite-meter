@@ -128,8 +128,9 @@ close as a reconnect, not a stage failure, and redials with the same upload `id`
 id, so the counters carry across.
 
 A server-ended bus or session names its cause ([laneendings.txt](laneendings.txt)); clients may treat any close as a
-reconnect. On `authentication required` both clients record sign-in required for that server, and both redial
-idle and lifetime endings. The server ends a session with its `WT_CLOSE_SESSION` capsule and FIN, and stops reading
+reconnect. On `authentication required` both clients record sign-in required for that server, on `shutdown` (a
+WebSocket 1001 only with that reason) server stopped, which takes that server out of the run, and both redial idle and
+lifetime endings. The server ends a session with its `WT_CLOSE_SESSION` capsule and FIN, and stops reading
 the CONNECT stream (`STOP_SENDING` `WT_SESSION_GONE`) only after the peer's FIN or a second without it: Chromium and
 Firefox drop the code of a close whose `STOP_SENDING` arrives first. The server answers no packet for a QUIC
 connection it has forgotten, and a quiet idle connection, retired or not, ends silently at the 30 s QUIC idle timeout, because Firefox

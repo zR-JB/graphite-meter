@@ -237,8 +237,9 @@ class Stage implements StageResources {
       outcomes: (outcomes) => events.probes(outcomes),
       unmeasured: (rtts) => events.warmupReplies(rtts),
       interrupted: (count, reason) => events.probesInterrupted(count, reason),
-      stalled: (detail) => {
+      stalled: (detail, stopped) => {
         this.#probesReady = false;
+        if (stopped) return this.#fail("server-stopped", `Latency bus failed: ${detail}`);
         events.latencyStalled(detail);
       },
       resumed: () => events.latencyResumed(),

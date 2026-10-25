@@ -19,11 +19,15 @@ const long = {
 };
 
 async function killDuringDownload(page: Page, ...peers: Subprocess[]) {
+  await stopDuringDownload(page, "SIGKILL", ...peers);
+}
+
+async function stopDuringDownload(page: Page, signal: NodeJS.Signals, ...peers: Subprocess[]) {
   await runButton(page, "Start test").click();
   await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
   // Measured evidence exists once the readout shows a rate.
   await expect(page.locator(".gauge-value")).toHaveText(/\d/);
-  for (const peer of peers) peer.kill("SIGKILL");
+  for (const peer of peers) peer.kill(signal);
 }
 
 test("a peer dropout keeps healthy transfers and persists its failure", async (page) => {
@@ -88,6 +92,33 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
       page.getByRole("combobox", { name: "Servers shown in this result" }),
     ).toContainText("2 of 3 servers");
     expect((await savedResult(page)).result.multiServer).toEqual(saved.result.multiServer);
+  } finally {
+    oslo.kill();
+    bergen.kill();
+  }
+});
+
+test("a peer stopped mid-download leaves as Server stopped and the others carry on", async (page) => {
+  const oslo = await spawnPeer("Oslo");
+  const bergen = await spawnPeer("Bergen", catalog(frankfurt, oslo.server));
+  try {
+    await open(page, bergen.server.url, {
+      servers: [{ id: "self", url: bergen.server.url }, frankfurt, oslo.server],
+      config: long,
+    });
+    await ready(page);
+    const startedAt = Date.now();
+    await stopDuringDownload(page, "SIGTERM", oslo);
+    const saved = await savedResult(page, startedAt, 30_000);
+    expect(saved.result.outcome).toBe("partial");
+    expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
+    expect(saved.result.multiServer.failures).toContainEqual(
+      expect.objectContaining({ serverId: "oslo", stage: "download", reason: "server-stopped" }),
+    );
+    await expect(page.locator(".results .server-grid .causes li")).toHaveText([
+      "Oslo stopped during the download. Upload was not reached.",
+    ]);
+    expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
   } finally {
     oslo.kill();
     bergen.kill();

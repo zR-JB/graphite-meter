@@ -91,15 +91,15 @@ export class Prober {
     this.#settle(now);
   }
 
-  closed(detail: string): void {
+  closed(detail: string, stopped = false): void {
     if (this.#state === "stopped") return;
     if (this.#state === "open") this.#state = "connecting";
     const now = this.clock.now();
     // A deadline that passed before the gap stays a timeout; the others are unfinished, never timeouts.
     this.#sweep(now);
     this.#interrupt();
-    // Once per outage, until replies flow again.
-    if (!this.#stalled) this.io.post({ type: "stalled", detail });
+    // Once per outage, until replies flow again; a shutdown always, as it ends the server's stage.
+    if (!this.#stalled || stopped) this.io.post({ type: "stalled", detail, stopped });
     this.#stalled = true;
     this.#settle(now);
   }
