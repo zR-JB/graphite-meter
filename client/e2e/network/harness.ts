@@ -136,6 +136,9 @@ export async function shapedFleet(
         {
           GM_VERBOSE: "true",
           GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls,http2,http3",
+          // No bus or lane meets its lifetime inside a run, whose budget allows one bus.
+          GM_MAX_OPERATION_DURATION: "5m",
+          GM_MAX_SESSION_DURATION: "5m",
           ...(i === 0 && servers.length > 1 && catalog(...servers.slice(1))),
           ...(i === 0 &&
             signIn && {
