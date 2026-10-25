@@ -10,6 +10,7 @@ const BATCH_MAX = 128;
 /** Evicted probes a late reply may still name: the only way the estimator learns a jump from fast to slow. */
 const GRAVEYARD_MAX = 64;
 const BACKUP_FLOOR_MS = 8;
+const CHAIN_SPACING_MS = 1;
 const BACKUP_CEILING_MS = 1_000;
 
 interface ProberClock {
@@ -176,7 +177,7 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain at once. */
+  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain 1 ms after it. */
   pace(intervalMs: number | null, maxInFlight = this.#pace.maxInFlight): void {
     this.#pace = { intervalMs, maxInFlight };
     this.#backupAt = intervalMs === null ? this.clock.now() : Infinity;
@@ -214,6 +215,8 @@ export class Prober {
     const { intervalMs, maxInFlight } = this.#pace;
     if (intervalMs === null) {
       if (!chained) return;
+      this.#backupAt = this.#sentAt + CHAIN_SPACING_MS;
+      if (now < this.#backupAt) return;
       this.#backupAt = Infinity;
     } else if (now < this.#sentAt + intervalMs) return;
     if (this.#state !== "open" || this.#pending.size >= maxInFlight) return;
@@ -350,7 +353,7 @@ export class Prober {
     this.io.post({ type: "drained", id: this.#stopId });
   }
 
-  /** Ends a finished drain, or arms the timer for the earliest thing due; an early firing just re-arms. */
+  /** Ends a finished drain, or arms the timer for the earliest thing due, rounded up: browsers clamp nested early re-arms. */
   #settle(now: number): void {
     if (this.#state === "stopped") return;
     let drainAt = Infinity;
@@ -378,6 +381,6 @@ export class Prober {
       );
     if (at >= this.#timerAt) return;
     this.#timerAt = at;
-    this.clock.arm(Math.max(0, at - now));
+    this.clock.arm(Math.max(0, Math.ceil(at - now)));
   }
 }
