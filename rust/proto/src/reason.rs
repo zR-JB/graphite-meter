@@ -14,5 +14,7 @@ table! {
         ServerCapacity => ("server-capacity", "Server at capacity"),
         ProtocolError => ("protocol-error", "Unexpected server response"),
         InsufficientEvidence => ("insufficient-evidence", "Too little measured time"),
+        ServerStopped => ("server-stopped", "Server stopped"),
+        InternalError => ("internal-error", "Internal error"),
     }
 }

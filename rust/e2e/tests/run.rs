@@ -239,6 +239,50 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_stopped_mid_download_leaves_as_stopped_and_the_other_completes_partial() {
+    let stopping = Server::start().await;
+    let catalog = format!(
+        r#"{{"servers": [{{"id": "stopping", "url": "{}", "name": "Stopping"}}]}}"#,
+        stopping.http1
+    );
+    let server = Server::with(&[("GM_SERVER_CATALOG", &catalog)]).await;
+    let args = [
+        "-server",
+        "self",
+        "-server",
+        "stopping",
+        "-stages",
+        "download",
+        "-download-duration",
+        "4s",
+        "-insecure",
+        "-skip-loaded-latency=false",
+    ];
+    let config = config(&server.http1, &args);
+    let mut stopping = Some(stopping);
+    let stop = async |event: &Event| {
+        if matches!(event, Event::Sample { rates, .. } if rates.down.is_some_and(|rate| rate > 0.0))
+        {
+            drop(stopping.take());
+        }
+    };
+    let (outcome, events) = run(&config, stop).await;
+    let [result] = results(&events)[..] else {
+        panic!("one stage: {events:?}")
+    };
+    assert_eq!(outcome, Outcome::Partial, "{result:#?}");
+    let stopped = ServerId::parse("stopping").unwrap();
+    let failure = &result.failures[0];
+    assert_eq!(
+        (&failure.server, failure.scope, failure.failure.reason),
+        (&stopped, Scope::Throughput, FailureReason::ServerStopped),
+        "{result:#?}"
+    );
+    assert_eq!(failure.failure.text, "Server stopped");
+    assert!(result.throughput[Direction::Down].unwrap().rate.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stop_while_an_upload_finishes_cuts_the_wait_and_keeps_the_measured_result() {
     let (_relayed, link) = relayed().await;
     let url = Origin::parse(&format!("http://{}", link.address)).unwrap();

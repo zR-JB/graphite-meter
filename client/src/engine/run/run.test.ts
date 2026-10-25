@@ -517,6 +517,29 @@ test("several servers that all fail end the run; a sole server skips to its next
   expect(skipped.outcome).toBe("incomplete");
 });
 
+test("a sole server that stopped ends the run, its loaded latency stopped with it", async () => {
+  const stop = {
+    measure: (events: StageEvents, { stage }: Activity) => {
+      if (stage === "download") later(400, () => events.failed("server-stopped", "x"));
+    },
+    discard: (events: StageEvents, incomplete: boolean) => incomplete && events.probesIncomplete(),
+  };
+  const sole = setup(
+    [{ id: "self", ...stop }],
+    { download: true, upload: true },
+    { downloadMs: 1_400, uploadMs: 1_400 },
+    { loadedLatency: true },
+  );
+  sole.start();
+  const result = await sole.result();
+  expect(sole.phases()).not.toContain("upload");
+  const stopped = { serverId: "self", stage: "download", reason: "server-stopped" };
+  expect(result.multiServer.failures).toMatchObject([
+    { ...stopped, scope: "latency", message: "self stopped during the download." },
+    { ...stopped, scope: "throughput", message: "self stopped during the download." },
+  ]);
+});
+
 test("a latency-only failure keeps both throughput participants", async () => {
   const h = setup(
     two({ measure: (events) => later(200, () => events.probesIncomplete()) }),

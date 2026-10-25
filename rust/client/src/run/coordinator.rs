@@ -137,7 +137,7 @@ pub async fn run(
     outcome
 }
 
-/// Whether a sole departed server stays for the next stage: once measured, unless it needs sign-in; else why it ends.
+/// Whether a sole departed server stays for the next stage: once measured, unless it needs sign-in or stopped; else why it ends.
 fn survivor(results: &[StageResult], servers: &[ServerPath], sole: bool) -> Result<(), Failure> {
     let mut failures = results.iter().flat_map(|result| &result.failures);
     let last =
@@ -152,7 +152,12 @@ fn survivor(results: &[StageResult], servers: &[ServerPath], sole: bool) -> Resu
     match last {
         _ if sole
             && measured
-            && last.is_none_or(|last| last.failure.reason != FailureReason::SignInRequired) =>
+            && last.is_none_or(|last| {
+                !matches!(
+                    last.failure.reason,
+                    FailureReason::SignInRequired | FailureReason::ServerStopped
+                )
+            }) =>
         {
             Ok(())
         }

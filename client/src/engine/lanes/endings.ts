@@ -1,4 +1,4 @@
-// How lanes, feeds and buses end, in the eight failure reasons; workers classify, owners decide.
+// How lanes, feeds and buses end, in the failure reasons; workers classify, owners decide.
 import { release, signInMarker } from "../../protocol/documents";
 import { ROUTES } from "../../protocol/routes";
 import type { Ending, ServerAuth } from "../types";
@@ -16,6 +16,7 @@ const LIMITED: Disposition = { reason: "client-limit", retry: true };
 const BUSY: Disposition = { reason: "server-capacity", retry: true };
 const SIGN_IN: Disposition = { reason: "sign-in-required", retry: false };
 const UNEXPECTED: Disposition = { reason: "protocol-error", retry: false };
+const STOPPED: Disposition = { reason: "server-stopped", retry: false };
 /** Refusals by code (api/refusals.txt); `invalid` means the server forgot the upload id, which may be replaced once. */
 const REFUSALS: Record<string, Disposition> = {
   invalid: { ...UNEXPECTED, rotate: true },
@@ -80,8 +81,9 @@ export const downloadRefused = (response: Response): Ending => ({
   retryAfterMs: retryAfterMs(response),
 });
 
-/** Close codes of api/laneendings.txt: revocation ends, idle and lifetime bounds reconnect, others are breaks. */
+/** Close codes of api/laneendings.txt: revocation and shutdown end, idle and lifetime bounds reconnect, others are breaks. */
 export const REVOKED = { socket: 1008, session: 3, reason: "authentication required" } as const;
+export const SHUTDOWN = { socket: 1001, session: 4, reason: "shutdown" } as const;
 const SESSION_BOUNDS = [1, 2];
 const SOCKET_BOUNDS = [4001, 4002];
 /** A server resets a session's streams just before closing it; a broken stream waits this long for the code. */
@@ -91,20 +93,24 @@ export const CLOSE_GRACE_MS = 250;
 export const sessionClosed = (code: number | undefined): Ending | null =>
   code === REVOKED.session
     ? { ...SIGN_IN, detail: "webtransport session revoked" }
-    : SESSION_BOUNDS.includes(code ?? -1)
-      ? {
-          reason: "timeout",
-          retry: true,
-          bound: true,
-          detail: "webtransport session reached its bound",
-        }
-      : null;
+    : code === SHUTDOWN.session
+      ? { ...STOPPED, detail: "webtransport session closed at the server's shutdown" }
+      : SESSION_BOUNDS.includes(code ?? -1)
+        ? {
+            reason: "timeout",
+            retry: true,
+            bound: true,
+            detail: "webtransport session reached its bound",
+          }
+        : null;
 
-/** A WebSocket closed at the server's idle or lifetime bound, as an ending, or null. */
-export const socketBound = (code: number, label: string): Ending | null =>
-  SOCKET_BOUNDS.includes(code)
-    ? { reason: "timeout", retry: true, bound: true, detail: `${label} reached its bound` }
-    : null;
+/** A WebSocket closed at the server's idle or lifetime bound or its shutdown, as an ending, or null; a proxy's own 1001 says no shutdown. */
+export const socketClosed = (code: number, reason: string, label: string): Ending | null =>
+  code === SHUTDOWN.socket && reason === SHUTDOWN.reason
+    ? { ...STOPPED, detail: `${label} closed at the server's shutdown` }
+    : SOCKET_BOUNDS.includes(code)
+      ? { reason: "timeout", retry: true, bound: true, detail: `${label} reached its bound` }
+      : null;
 
 /** One lane's or feed's restart pause: 300 ms, raised by Retry-After within 1.2 s. */
 export const restartMs = (ending: Ending) =>

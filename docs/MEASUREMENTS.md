@@ -72,9 +72,10 @@ contributions share the client's connection and are not independent capacity tes
   there. In a bidirectional stage that boundary is where its first direction stopped. If its bytes never moved, the
   interval ends at its first boundary without a window. A server that cannot prepare a stage leaves the same way, and
   the run fails only when none survives. A removed server stays out for the rest of the run, except that a sole
-  server retries at the next stage. Its own statuses show the stages it never began as not run. A latency-only
-  failure keeps throughput, except in the latency stage. A server whose connection is lost or times out there leaves
-  the run while another remains; in the browser, so does one whose path failed.
+  server retries at the next stage, unless it stopped. Its own statuses show the stages it never began as not run. A
+  latency-only failure keeps throughput, except in the latency stage and for a stopped server, which leaves in any
+  stage. A server whose connection is lost or times out in the latency stage leaves the run while another remains; in
+  the browser, so does one whose path failed.
 - The headline is the mean of the latest interval whose window moved bytes and that has at least 800 ms of client
   time and, for upload, 800 ms in every receiver clock. Time in it when no bytes moved lowers the mean. After a late
   dropout the interval before it can hold the headline and the stage is Partial. With no such interval the stage
@@ -186,19 +187,21 @@ failures on other servers make the run Partial. A population or stage that ends 
 
 ### Failure reasons
 
-Both clients name a failure with one of eight reasons, whose labels [`api/failurereasons.txt`](../api/failurereasons.txt)
+Both clients name a failure with one of ten reasons, whose labels [`api/failurereasons.txt`](../api/failurereasons.txt)
 pins:
 
 | Reason                  | Label                                     | Typical cause                                                                                                                                                                                                                                                                         |
 | ----------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `path-failed`           | Path unavailable                          | A path check or stage preparation failed: nothing arrived within 3.5 s in the browser, the server speaks another API version, a WebTransport session or upload id did not open, TLS or a proxy refused the connection, a lane reached the HTTP/3 port over TCP (`409 wrong-protocol`), or WebTransport is paused after 4 failed handshakes. |
-| `connection-lost`       | Connection lost                           | Network error, offline device or server shutdown, or a channel that worked whose one redial did not open.                                                                                                                                                                             |
+| `connection-lost`       | Connection lost                           | Network error, offline device or a server shutdown seen only by HTTP lanes, or a channel that worked whose one redial did not open.                                                                                                                                                                                             |
 | `timeout`               | Stopped delivering data                   | A channel that worked went quiet: the silence limit, a lane that moves nothing for 2 s, or an idle or lifetime lane ending; in the terminal also a stage not ready within 10 s.                                                                                                                                                           |
 | `sign-in-required`      | Sign-in required                          | Sign-out or a revoked grant.                                                                                                                                                                                                                                                          |
 | `client-limit`          | Limit reached for your address or sign-in | Refused with `429 client-limit`: this address or sign-in already holds its share of the server, named at the start when its lease does not fit; past the lease, the browser retries once after 300 ms, or Retry-After up to 1.2 s, and the terminal for 2 s.                                                                                                                                   |
 | `server-capacity`       | Server at capacity                        | Refused with `503 server-capacity`: the server holds all the measurements it admits, named at the start when its lease does not fit; past the lease, retries wait as for `client-limit`.                                                                                                                                                               |
 | `protocol-error`        | Unexpected server response                | An unexpected status, a refused upload owner, or an upload id the server still does not know after one replacement receiver.                                                                                                                                                          |
 | `insufficient-evidence` | Too little measured time                  | No interval with 800 ms of evidence or moved bytes; in the browser, also intervals spanning too little of the planned time.                                                                                                                                                           |
+| `server-stopped`        | Server stopped                            | The server announced its shutdown: its latency bus, a WebTransport lane or a progress socket closed with `shutdown` (WebSocket 1001, WebTransport code 4). Final for the run, which continues with the other servers.                                                                                           |
+| `internal-error`        | Internal error                            | The client's own bug: a lane, dial or check that panicked in the terminal.                                                                                                                                                                                                            |
 
 ## Saved history
 
@@ -211,9 +214,10 @@ totals, and the headline with its peak, stability and wire estimate. Missing mea
 leases are never saved. Records that earlier releases saved at schemas 4 and 5 are upgraded to the current schema 6
 once when the database opens, and records that cannot be read stay in storage, are skipped and are reported. A
 failure earlier releases saved as `preparation-failed` reads as `path-failed`, and one saved as `server-busy` as
-`server-capacity`.
+`server-capacity`. A reason a build does not know, such as `server-stopped` read by an earlier release, reads as
+Measurement issue.
 
-Before saving, a result must be coherent: every failure has one of the eight reasons; every selected server that
+Before saving, a result must be coherent: every failure has one of the ten reasons; every selected server that
 did not complete a stage names why, by its own failure in the stage's scope or by the failure that took it out in
 an earlier stage or at Start; a complete stage has no failure and every lane; a skipped stage has no evidence; some
 stage ran; a transfer stage whose servers all measured it in full has an interval with 800 ms of evidence, and

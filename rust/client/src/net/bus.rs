@@ -184,10 +184,13 @@ impl Bus {
     }
 }
 
-/// The fault a close frame names: its lane ending, else a lost bus.
+/// The fault a close frame names: its lane ending, else a lost bus; a proxy's own 1001 says no shutdown.
 fn closed(client: &Client, origin: &Origin, frame: Option<CloseFrame>) -> Fault {
-    match frame.and_then(|frame| LaneEnding::find_by(LaneEnding::websocket_code, frame.code.into()))
-    {
+    let ending = frame.and_then(|frame| {
+        LaneEnding::find_by(LaneEnding::websocket_code, frame.code.into())
+            .filter(|ending| *ending != LaneEnding::Shutdown || frame.reason == ending.reason())
+    });
+    match ending {
         Some(ending) => client.ending(origin, ending),
         None => Fault::Lost,
     }

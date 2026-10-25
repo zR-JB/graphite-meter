@@ -256,6 +256,28 @@ test("a broken lane reopens once, stalling once and checking the sign-in once; i
   expect(lanes.every(stopped)).toBe(true);
 });
 
+test("a bus closed at the server's shutdown fails the stage as stopped, also while its broken lanes wait to reopen", async () => {
+  const shutdown = stage({ stage: "download", transfer: ["down"], loadedLatency: true });
+  const prepared = outcome(shutdown.resources.prepare(new AbortController().signal));
+  const [probe] = shutdown.probes();
+  probe!.report({ type: "ready" });
+  await elapse(150);
+  const lanes = shutdown.lanes();
+  for (const lane of lanes) bytes(lane, 0);
+  await elapse(5);
+  expect(prepared.error).toBeUndefined();
+  shutdown.resources.measure(1_000);
+  lanes[0]!.report({ type: "broken", detail: "TypeError: network error" });
+  probe!.report({ type: "stalled", detail: "bus closed at the server's shutdown", stopped: true });
+  await elapse(300);
+  expect(
+    shutdown.events.filter(([type]) => type === "failed" || type === "latencyStalled"),
+  ).toEqual([
+    ["failed", "server-stopped", "Latency bus failed: bus closed at the server's shutdown"],
+  ]);
+  expect(lanes.every(stopped)).toBe(true);
+});
+
 test("a broken lane reopens after its pause while a slow sign-in check runs, which releases it if signed out", async () => {
   for (const signedOut of [false, true]) {
     const blip = stage(DOWNLOAD, {

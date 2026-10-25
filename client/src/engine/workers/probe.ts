@@ -1,19 +1,19 @@
 // One latency bus (api/wire.md); each connection has its own controller, so a replaced one cannot act.
-import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
+import type { Ending, ProbeCommand, ProbeReport } from "../../protocol/messages";
 import { abortable } from "../run/clock";
 import {
   CLOSE_GRACE_MS,
   ESTABLISH_MS,
   REVOKED,
   sessionClosed,
-  socketBound,
+  socketClosed,
 } from "../lanes/endings";
 import { Prober } from "../lanes/prober";
 
 type Start = Extract<ProbeCommand, { type: "start" }>;
 type Send = (text: string) => void | Promise<void>;
 /** Says how a connection ended, with a detail for a reconnect, or null when the server revoked the sign-in; at the server's idle or lifetime bound it dials again at once. */
-type End = (detail: string | null, bound?: boolean) => void;
+type End = (detail: string | null, ending?: Ending | null) => void;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -80,13 +80,15 @@ function dial({ url, transport }: Start): void {
   const expired = AbortSignal.timeout(ESTABLISH_MS);
   const budget = AbortSignal.any([own.signal, expired]);
   let openedAt = Infinity;
-  const end: End = (detail, bound = false) => {
+  const end: End = (detail, ending) => {
     if (own.signal.aborted) return;
     own.abort();
     if (connection === own) connection = send = null;
     if (detail === null) return prober.signIn();
-    if (bound && !connection && performance.now() - openedAt >= ESTABLISH_MS) return redial();
-    prober.closed(detail);
+    if (ending?.bound && !connection && performance.now() - openedAt >= ESTABLISH_MS)
+      return redial();
+    const stopped = ending?.reason === "server-stopped";
+    prober.closed(stopped ? ending.detail : detail, stopped);
     if (queued && !connection) {
       queued = false;
       dial(command);
@@ -131,7 +133,7 @@ function socket(
   ws.onclose = ({ code, reason }) =>
     end(
       code === REVOKED.socket && reason === REVOKED.reason ? null : "websocket closed",
-      socketBound(code, "bus") !== null,
+      socketClosed(code, reason, "bus"),
     );
 }
 
@@ -147,11 +149,11 @@ function session(
   let established = false;
   let settled = false;
   // A dial that ends before it opened failed its handshake, at its budget or hung up too, as Chrome counts it.
-  const ended: End = (detail, bound) => {
+  const ended: End = (detail, ending) => {
     if (!established && !settled)
       postMessage({ type: "handshake", opened: false } satisfies ProbeReport);
     settled = true;
-    end(detail, bound);
+    end(detail, ending);
   };
   let grace: ReturnType<typeof setTimeout> | undefined;
   closed.addEventListener("abort", () => {
@@ -162,10 +164,7 @@ function session(
   });
   wt.closed.then(
     ({ closeCode }) =>
-      ended(
-        closeCode === REVOKED.session ? null : "webtransport closed",
-        !!sessionClosed(closeCode)?.bound,
-      ),
+      ended(closeCode === REVOKED.session ? null : "webtransport closed", sessionClosed(closeCode)),
     (error) => ended(String(error)),
   );
   // Failing datagrams may be the session closing, whose code then names the ending.

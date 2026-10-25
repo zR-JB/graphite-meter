@@ -481,7 +481,7 @@ impl Engine {
         }
     }
 
-    /// A lost latency population; in the latency stage a server lost beside another leaves the run.
+    /// A lost latency population; in the latency stage a server lost beside another leaves the run, and a stopped one always.
     fn latency_failed(
         &mut self,
         index: usize,
@@ -496,7 +496,16 @@ impl Engine {
             failure.reason,
             FailureReason::ConnectionLost | FailureReason::Timeout
         );
-        let leaves = self.plan.stage == Stage::Latency && lost && self.present().count() > 1;
+        let latency = self.plan.stage == Stage::Latency;
+        if failure.reason == FailureReason::ServerStopped {
+            let scope = if latency {
+                Scope::Latency
+            } else {
+                Scope::Throughput
+            };
+            return self.fail(index, scope, failure, at, true, out);
+        }
+        let leaves = latency && lost && self.present().count() > 1;
         self.fail(index, Scope::Latency, failure, at, leaves, out);
     }
 

@@ -5,7 +5,7 @@ import type { FeedRecord } from "../../protocol/messages";
 import { checkpoint as counters } from "../../protocol/progress";
 import { ROUTES } from "../../protocol/routes";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
-import { lost, refusal, refused, restartMs, REVOKED, socketBound } from "./endings";
+import { lost, refusal, refused, restartMs, REVOKED, socketClosed } from "./endings";
 import { FINAL_GRACE_MS, parse, readRecords } from "./records";
 import { abortable, delay } from "../run/clock";
 
@@ -276,10 +276,10 @@ export class Receiver {
         if (record.type === "complete") done(null);
       };
       socket.onclose = ({ code, reason }) => {
-        const bound = socketBound(code, "progress socket");
+        const ending = socketClosed(code, reason, "progress socket");
         done(
-          bound
-            ? { ending: bound, broken: false }
+          ending
+            ? { ending, broken: false }
             : {
                 ending:
                   code === REVOKED.socket && reason === REVOKED.reason

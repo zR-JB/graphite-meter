@@ -51,11 +51,10 @@ impl Fault {
             Self::Connect(
                 ConnectError::Proxy(_) | ConnectError::Refused(_) | ConnectError::Tls(_),
             ) => FailureReason::PathFailed,
-            Self::Connect(_)
-            | Self::Lost
-            | Self::Ended(LaneEnding::Finished | LaneEnding::Shutdown) => {
+            Self::Connect(_) | Self::Lost | Self::Ended(LaneEnding::Finished) => {
                 FailureReason::ConnectionLost
             }
+            Self::Ended(LaneEnding::Shutdown) => FailureReason::ServerStopped,
             Self::SignIn(_) | Self::Ended(LaneEnding::Revoked) => FailureReason::SignInRequired,
             Self::SignInAnswer(StatusCode::GONE) => FailureReason::SignInRequired,
             Self::TimedOut(_) | Self::Ended(_) => FailureReason::Timeout,
@@ -70,7 +69,8 @@ impl Fault {
             Self::Status { .. } | Self::SignInAnswer(_) | Self::Malformed(_) => {
                 FailureReason::ProtocolError
             }
-            Self::Incompatible(_) | Self::Internal => FailureReason::PathFailed,
+            Self::Incompatible(_) => FailureReason::PathFailed,
+            Self::Internal => FailureReason::InternalError,
             Self::Refused(refusal) => refusal.failure_reason(),
         }
     }
@@ -100,7 +100,7 @@ impl Fault {
             | Self::SignInAnswer(_)
             | Self::Refused(_)
             | Self::SignIn(_)
-            | Self::Ended(LaneEnding::Revoked)
+            | Self::Ended(LaneEnding::Revoked | LaneEnding::Shutdown)
             | Self::Malformed(_)
             | Self::Incompatible(_)
             | Self::Internal => Class::Final,
@@ -216,9 +216,6 @@ impl fmt::Display for Fault {
                 refusal.message(),
                 refusal.status().as_u16()
             ),
-            Self::Ended(ending) => {
-                write!(formatter, "The server ended the stream: {}", ending.name())
-            }
             Self::SignIn(_) => formatter.write_str(self.reason().label()),
             Self::Malformed(detail) => formatter.write_str(&text::clean(
                 &format!("Unexpected server response: {detail}"),
@@ -226,8 +223,12 @@ impl fmt::Display for Fault {
             )),
             Self::TimedOut(what) => write!(formatter, "{} timed out", capitalized(what)),
             Self::Incompatible(text) => formatter.write_str(text),
-            Self::Internal => formatter.write_str("Internal error"),
-            Self::Lost => formatter.write_str(self.reason().label()),
+            Self::Ended(LaneEnding::Shutdown) | Self::Internal | Self::Lost => {
+                formatter.write_str(self.reason().label())
+            }
+            Self::Ended(ending) => {
+                write!(formatter, "The server ended the stream: {}", ending.name())
+            }
         }
     }
 }
@@ -440,20 +441,23 @@ mod tests {
                 super::super::UNREACHABLE,
             ),
             (Fault::Lost, "Connection lost"),
+            (Fault::Ended(LaneEnding::Shutdown), "Server stopped"),
+            (Fault::Internal, "Internal error"),
         ] {
             assert_eq!(fault.to_string(), text, "{fault:?}");
         }
+        assert_eq!(Fault::Internal.reason(), FailureReason::InternalError);
     }
 
     #[test]
-    fn endings_redial_except_a_revoked_grant() {
+    fn endings_redial_except_a_revoked_grant_or_a_stopped_server() {
         for (ending, reason, class) in [
             (LaneEnding::Idle, FailureReason::Timeout, Class::Redial),
             (LaneEnding::Lifetime, FailureReason::Timeout, Class::Redial),
             (
                 LaneEnding::Shutdown,
-                FailureReason::ConnectionLost,
-                Class::Redial,
+                FailureReason::ServerStopped,
+                Class::Final,
             ),
             (
                 LaneEnding::Finished,

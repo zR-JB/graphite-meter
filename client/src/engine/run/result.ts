@@ -140,6 +140,8 @@ export function failureSentence(
       case "connection-lost":
       case "timeout":
         return `${server} stopped answering as this test started.`;
+      case "server-stopped":
+        return `${server} stopped as this test started; try again when it is back.`;
       default:
         return `${server} could not be reached on its selected paths when this test started.`;
     }
@@ -155,6 +157,8 @@ export function failureSentence(
         return `Latency probes could not reach ${server}${loaded}.`;
       case "sign-in-required":
         return `Latency probes to ${server} stopped when its sign-in ended ${during}.`;
+      case "server-stopped":
+        return `${server} stopped ${during}.`;
       case "client-limit":
         return `${server} refused latency probes for your address or sign-in ${during}.`;
       case "server-capacity":
@@ -183,6 +187,8 @@ export function failureSentence(
       return `${TRANSFER[transfer](server)} could not start.`;
     case "sign-in-required":
       return `The sign-in to ${server} ended ${during}.`;
+    case "server-stopped":
+      return `${server} stopped ${during}.`;
     case "client-limit":
       return `${server} refused more connections for your address or sign-in ${during}.`;
     case "server-capacity":
