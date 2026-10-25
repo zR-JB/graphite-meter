@@ -149,7 +149,7 @@ class Server:
         deadline = time.monotonic() + 15
         while True:
             if self.process.poll() is not None:
-                if retries and re.search(r"listen (?:tcp|udp) .*in use", self.output(), re.IGNORECASE):
+                if retries and re.search(r"listen on \S+/(?:tcp|udp): address (?:already )?in use", self.output()):
                     self.listen()
                     return self.start(retries - 1)
                 raise RuntimeError(f"server exited {self.process.returncode}:\n{self.output()}")
