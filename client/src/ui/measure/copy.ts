@@ -68,7 +68,4 @@ export const LENS = "Servers shown in the results";
 
 export const TOAST = {
   unsaved: "Not saved",
-  /** Several causes at once: each card says its own. */
-  several: "Several causes",
-  marked: "Each is marked on its card",
 } as const;

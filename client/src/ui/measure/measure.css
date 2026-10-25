@@ -1577,19 +1577,25 @@
       translate: 0 4px;
     }
   }
-  /* A phone has no status strip: the toast docks on the bottom edge, and a stall shows for its reading time too. */
+  /* A narrow page docks the toast across its width on the status strip, so it covers no card; a stall shows for its reading time too. */
   @media (max-width: 759px) {
     .phase-toast {
       inset-inline: 0;
-      bottom: 0;
+      bottom: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
       min-width: 0;
       max-width: none;
-      padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
       border-width: var(--hairline) 0 0;
       border-radius: 0;
       &.stall {
         animation: linger var(--leave) var(--ease-out) var(--linger) forwards;
       }
+    }
+  }
+  /* A phone hides the strip, so the toast docks on the bottom edge. */
+  @media (max-width: 520px), (max-height: 520px) and (pointer: coarse) {
+    .phase-toast {
+      bottom: 0;
+      padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
     }
   }
 

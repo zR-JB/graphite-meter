@@ -2,7 +2,7 @@
 import type { App } from "../../app/app";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import { needsPings } from "../../engine/net/streams";
-import { movedBytes } from "../../engine/run/result";
+import { type Cause, movedBytes } from "../../engine/run/result";
 import { activities } from "../../engine/run/schedule";
 import { Show } from "../../lib/dom";
 import { handoff } from "../../lib/motion";
@@ -22,7 +22,7 @@ import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
 import type { Shell } from "../shell/api";
-import { serverIssues } from "./cards-model";
+import { causePlace } from "./cards-model";
 import { TOAST } from "./copy";
 import { liveOf } from "./live";
 import { Figure, painter, setText } from "./paint";
@@ -136,21 +136,20 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     message: reasonLabel(run.stall()?.reason ?? "connection-lost"),
     tone: CONNECTIVITY.recovering.tone as Tone,
   }));
-  const issues = computed(() => {
-    const table = run.table();
-    return table ? serverIssues(table) : [];
-  });
+  const causes = computed(() => run.table()?.causes ?? []);
+  // A toast notes the newest cause, where it happened first, as the card it marks names its stage: "Bergen · Start".
   const issue = computed(() => {
-    const all = issues();
+    const cause = causes().reduce<Cause | null>(
+      (newest, each) => (!newest || each.atMs >= newest.atMs ? each : newest),
+      null,
+    );
+    if (!cause) return { kicker: "", message: "" };
+    const server = run.table()!.rows.find((row) => row.server.id === cause.serverId)!.server.name;
     const several = (run.details()?.selection.length ?? 0) > 1;
-    const [first] = all;
-    // Where it happened leads, as the card it marks names its stage: "Bergen · Start", then what happened.
-    return all.length !== 1
-      ? { kicker: TOAST.several, message: TOAST.marked }
-      : {
-          kicker: several ? `${first!.server} · ${first!.stages}` : first!.stages,
-          message: first!.reason,
-        };
+    return {
+      kicker: several ? `${server} · ${causePlace(cause)}` : causePlace(cause),
+      message: reasonLabel(cause.reason),
+    };
   });
   const toast = signal<{ kicker: string; message: string; tone: Tone }>({
     kicker: "",
@@ -170,7 +169,7 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
   let seen = 0;
   effect(() => {
     const phase = run.phase();
-    const count = issues().length;
+    const count = causes().length;
     const added = count > seen;
     seen = count;
     if (phase === "idle") show(null);
