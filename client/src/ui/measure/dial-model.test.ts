@@ -369,6 +369,39 @@ test("a run short of complete names what it lacks first, then each cause once", 
       }),
       "Frankfurt: connection lost in Download; Oslo: stopped delivering data in Download",
     ],
+    [
+      "one server lost twice, said under its name once",
+      judged("incomplete", {
+        Frankfurt: {
+          cells: { latency: "failed", download: "unreached" },
+          causes: [
+            { stage: "latency", reason: "connection-lost", scope: "latency" },
+            { stage: "download", reason: "timeout" },
+          ],
+        },
+        Oslo: { cells: { latency: "failed", download: "unreached" }, causes: [lost] },
+      }),
+      "Frankfurt: connection lost in Latency, stopped delivering data in Download; Oslo: connection lost in Download",
+    ],
+    [
+      "four servers lost in four places",
+      judged("incomplete", {
+        Frankfurt: {
+          cells: { latency: "failed", download: "unreached" },
+          causes: [{ stage: "start", reason: "connection-lost" }],
+        },
+        Oslo: {
+          cells: { latency: "failed", download: "unreached" },
+          causes: [{ stage: "latency", reason: "connection-lost", scope: "latency" }],
+        },
+        Bergen: { cells: { latency: "failed", download: "unreached" }, causes: [lost] },
+        Porto: {
+          cells: { latency: "failed", download: "unreached" },
+          causes: [{ ...lost, reason: "timeout" }],
+        },
+      }),
+      "Frankfurt: connection lost at Start; Oslo: connection lost in Latency; and 2 more servers",
+    ],
   ];
   for (const [name, table, hint] of cases) expect(endingHint(table), name).toBe(hint);
 });

@@ -19,6 +19,7 @@ export const DIAL = {
   noReplies: (time: string) => `No replies for ${time}`,
   /** A finished run's issues on more servers than one line names. */
   troubled: (servers: number) => `${servers} servers with issues`,
+  more: (servers: number) => `and ${servers} more ${servers === 1 ? "server" : "servers"}`,
   unavailable: (throughput: boolean, latency: boolean) =>
     throughput && latency
       ? "Throughput and latency paths are unavailable"

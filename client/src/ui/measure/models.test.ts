@@ -365,7 +365,7 @@ test("a card's line names who failed in its stage and who never reached it; one 
       failures: [failure("o", "connection-lost"), failure("b", "server-capacity")],
     },
   } as unknown as RunResult);
-  expect(cardLine(table, "download")).toBe("Oslo: connection lost, without Bergen");
+  expect(cardLine(table, "download")).toBe("Oslo: connection lost; without Bergen");
   expect(cardLine(table, "upload")).toBe("Without Oslo and Bergen");
   expect(cardLine(table, "download", "o")).toBe("Connection lost");
   expect(cardLine(table, "upload", "o")).toBe("Left in Download: connection lost");

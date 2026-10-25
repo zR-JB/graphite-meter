@@ -350,13 +350,19 @@ export function endingHint(table: Grid): string {
       )
       .join("; ");
   }
-  // Servers that lost the same places for one reason share a line: "Frankfurt and Oslo: connection lost in Download".
-  const own = Map.groupBy(causes, (cause) => `${cause.serverId} ${cause.reason}`).values();
-  const lines = Map.groupBy(own, (group) => causeAt(...group));
-  const name = (id: string) => rows.find((row) => row.server.id === id)!.server.name;
-  return [...lines]
-    .map(
-      ([where, groups]) => `${listed(groups.map((group) => name(group[0]!.serverId)))}: ${where}`,
-    )
-    .join("; ");
+  // Each server says its causes once; servers that say the same share a line: "Frankfurt and Oslo: connection lost in Download".
+  const said = Map.groupBy(
+    rows.filter((row) => row.causes.length),
+    ({ causes }) =>
+      [...Map.groupBy(causes, (cause) => cause.reason).values()]
+        .map((group) => causeAt(...group))
+        .join(", "),
+  );
+  const lines = [...said].map(
+    ([what, named]) => `${listed(named.map((row) => row.server.name))}: ${what}`,
+  );
+  // The grid lists every cause, so a long ending names two and counts the servers left.
+  if (lines.length <= 2) return lines.join("; ");
+  const rest = [...said.values()].slice(2).flat().length;
+  return `${lines.slice(0, 2).join("; ")}; ${DIAL.more(rest)}`;
 }
