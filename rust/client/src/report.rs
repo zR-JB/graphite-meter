@@ -59,10 +59,7 @@ pub fn unreported(view: &View) -> Option<String> {
     Some(match (error, signed_out) {
         _ if run.at.is_some() => return signed_out.map(|_| EXPIRED.into()),
         (_, Some(error)) => error.text.clone(),
-        (Some(error), None) => format!(
-            "Could not start the test. {}",
-            crate::text::capitalized(&error.text)
-        ),
+        (Some(error), None) => format!("Could not start the test. {}", error.text),
         (None, None) => "Test stopped before it started.".into(),
     })
 }

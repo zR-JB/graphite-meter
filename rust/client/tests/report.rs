@@ -9,7 +9,7 @@ use graphite_meter_client::{
     model::{
         Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput,
     },
-    report::{WIDTH, report},
+    report::{WIDTH, report, unreported},
     run::prepare::ServerPath,
     style::Palette,
     text::{Line, Profile, write},
@@ -422,4 +422,25 @@ fn a_stopped_test_marks_the_stages_it_never_reached() {
     let view = viewed(&["a"], &plan, vec![idle], end, at);
     let text = printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain);
     assert!(text.contains("\n↓ Download  Not reached\n"), "{text}");
+}
+
+#[test]
+fn a_refused_start_keeps_the_text_as_its_producer_wrote_it() {
+    for text in [
+        "graphite-meter runs Graphite Meter 0.13.4 (API version 1); this client needs API version 2, from 0.13.5. \
+         Update graphite-meter.",
+        "http://meter.example:7246 runs Graphite Meter 0.15.0, newer than this client (0.14.0); update this client.",
+    ] {
+        let mut view = View::default();
+        view.apply(&Event::Checking(Kind::Run));
+        view.apply(&Event::RunFinished {
+            outcome: Outcome::Failed,
+            error: Some(Failure::new(FailureReason::PathFailed, text)),
+            elapsed: Duration::ZERO,
+        });
+        assert_eq!(
+            unreported(&view),
+            Some(format!("Could not start the test. {text}"))
+        );
+    }
 }
