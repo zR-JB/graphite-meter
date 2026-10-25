@@ -1,6 +1,5 @@
 //! Latency probing (`docs/MEASUREMENTS.md`): a pure `Schedule` of sends, deadlines and redials, and its bus loop.
 use crate::{
-    controller::internal,
     measure::latency::{Deadline, ProbeOutcome},
     model::{Cadence, Stage},
     net::{Bus, Class, Client, Fault, LatencyPath, REDIAL_WINDOW, retrying},
@@ -208,7 +207,7 @@ impl Prober {
             if let Some(Err(_)) = running.run_until_cancelled_owned(probing).await {
                 drop(sender.send(ProberEvent::Down {
                     at: Instant::now(),
-                    failure: internal(),
+                    failure: Fault::Internal.failure(),
                 }));
             }
         });

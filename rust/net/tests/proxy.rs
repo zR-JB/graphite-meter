@@ -11,7 +11,7 @@ fn from(variables: &[(&str, &str)]) -> Proxy {
         variables
             .iter()
             .find(|(key, _)| key == name)
-            .map(|(_, value)| value.clone())
+            .map(|(_, value)| value.into())
     })
 }
 
@@ -45,6 +45,46 @@ fn an_unusable_value_fails_each_request_it_would_carry_naming_the_variable() {
         "a bypassed target is not carried"
     );
     assert_eq!(via(&proxy, "http://127.0.0.1"), "-");
+}
+
+#[test]
+fn an_empty_value_is_unset_and_a_blank_one_hides_its_lowercase_spelling() {
+    let proxy = from(&[
+        ("HTTP_PROXY", ""),
+        ("http_proxy", "http://proxy.example:3128"),
+        ("HTTPS_PROXY", "   "),
+        ("https_proxy", "http://proxy.example:3128"),
+    ]);
+    assert_eq!(
+        via(&proxy, "http://meter.example"),
+        "http://proxy.example:3128"
+    );
+    assert_eq!(via(&proxy, "https://meter.example"), "-");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_value_that_is_not_utf8_is_unusable_and_a_no_proxy_entry_that_is_not_bypasses_nothing() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let proxy = Proxy::from_lookup(|name| {
+        let value: &[u8] = match name {
+            "HTTPS_PROXY" => b"http://proxy.example:3128/\xff",
+            "https_proxy" | "HTTP_PROXY" => b"http://proxy.example:3128",
+            "NO_PROXY" => b"skip.example\xff, other.example",
+            _ => return None,
+        };
+        Some(OsStr::from_bytes(value).into())
+    });
+    assert_eq!(
+        via(&proxy, "https://meter.example"),
+        "HTTPS_PROXY is not a usable proxy: not valid UTF-8",
+        "the lowercase spelling does not stand in"
+    );
+    assert_eq!(
+        via(&proxy, "http://skip.example"),
+        "http://proxy.example:3128"
+    );
+    assert_eq!(via(&proxy, "http://other.example"), "-");
 }
 
 #[test]

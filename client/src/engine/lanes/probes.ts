@@ -84,6 +84,8 @@ export function openProbeChannel(
       case "outcomes":
         for (const outcome of data.outcomes) outcome.observedAt = fromEpoch(outcome.observedAt);
         return events.outcomes(data.outcomes);
+      case "unmeasured":
+        return events.unmeasured?.(data.rtts);
       case "interrupted":
         return events.interrupted(data.count, data.reason);
       case "stalled":
@@ -145,6 +147,9 @@ export function openProbeChannel(
       measured = true;
       remeasured = drain !== null;
       worker.postMessage({ type: "measure" } satisfies ProbeCommand);
+    },
+    warm() {
+      if (!released.signal.aborted) worker.postMessage({ type: "warm" } satisfies ProbeCommand);
     },
     pace(intervalMs, maxInFlight) {
       if (!released.signal.aborted)

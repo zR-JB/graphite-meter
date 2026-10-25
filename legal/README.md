@@ -44,8 +44,8 @@ review records of the crates that fail.
 on every server platform listed in `[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each build the
 check lists the compiled crates with `cargo tree` over normal and build edges, checks each against its approved review
 and refuses reviews of no compiled crate, and every shipped target needs an approved platform record. The static
-x86_64 Linux server and client compile at most 143 and 150 crates. That ceiling is a dependency policy rather than a
-license requirement.
+x86_64 Linux server and client compile at most 121 and 146 crates, exactly what they compile today, so a pull request
+that adds a crate raises the ceiling on purpose. That ceiling is a dependency policy rather than a license requirement.
 
 ## Updating pinned forks
 
@@ -84,14 +84,38 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
    compiled only prepared crates with unchanged legal files, linked only the record's native inputs (on Windows
    arm64 only its objects, because LLD's map names no archives there), imported only its system libraries, embedded
    exactly `LEGAL.txt` and, for a reviewed build, carries `graphite-meter reviewed notices sha256:` with its SHA-256
-   in plain text, which release verification compares with the notices shipped beside the executable. It then writes
-   `inventory.json` of the compiled crates and the server's browser packages.
+   in plain text, which release verification compares with the notices shipped beside the executable. A build
+   optimized with a trained PGO profile also carries `graphite-meter pgo profile sha256:` with the profile's SHA-256.
+   It then writes `inventory.json` of the compiled crates and the server's browser packages.
 3. Source offer. A reviewed build writes its part of the release's one source offer,
    `graphite-meter_VERSION_third-party-source.tar.gz`: the compiled crates' and browser packages' sources under
-   `third_party/`, its inventory and report under `builds/<package>_<os>_<arch>/`, the fork records and the manual
-   material. Release staging merges the parts of every shipped build into that one archive. The build also writes the
+   `third_party/`, its inventory and report under `builds/<package>_<os>_<arch>/` with the PGO profile it was
+   optimized with as `pgo.profdata` (every release build but Windows arm64's), the fork records and the manual
+   material. Release verification refuses an offer that lacks a build's profile or holds one its executable does not
+   name. Release staging merges the parts of every shipped build into that one archive. The build also writes the
    `SOURCE.txt` that its release archive and the server's image ship; it names the release source, the source offer
    and the build. A prerelease publishes no tag or source offer, so its `SOURCE.txt` names the repository.
+
+### Rebuild a release byte for byte
+
+A release build trains its PGO profile on timed loopback transfers, so a second training differs and so does the
+optimized executable. Given the same profile, the build is deterministic, so a stable release exports the profile its
+server image job trained (target `pgo-ARCH-trained`) and builds the image and its part of the offer from it with
+`PGO=supplied`, the recipe below. To rebuild the Linux amd64 server of release `X.Y.Z`, check out tag `vX.Y.Z`, take the
+profile from the source offer, and build with it in place of training:
+
+```sh
+mkdir pgo
+tar -xzf graphite-meter_X.Y.Z_third-party-source.tar.gz -O \
+  graphite-meter_X.Y.Z_third-party-source/builds/graphite-meter-server_linux_amd64/pgo.profdata >pgo/x86_64.profdata
+podman build -f container/Dockerfile --target server --platform linux/amd64 --build-arg PGO=supplied \
+  --build-arg PROFILE=release --build-arg VERSION=X.Y.Z --build-arg GM_CLIENT_REVISION="$(git rev-parse HEAD)" \
+  --build-arg GM_CLIENT_VALIDATE=0 -t graphite-meter:rebuilt .
+```
+
+`/graphite-meter` in that image has the SHA-256 of the executable in the release's
+`graphite-meter-server_X.Y.Z_linux_amd64.tar.gz`; an arm64 server takes its build's profile as `pgo/aarch64.profdata`.
+The clients' profiles are in the offer too, but their byte-for-byte rebuild is not established.
 
 `--development` notices, which local builds (`scripts.build`, through `mise run dev`, `tui`, `server-build`,
 `tui-build` and `e2e-server`) embed, need the dependency reviews but no platform record, so any host builds them. Their

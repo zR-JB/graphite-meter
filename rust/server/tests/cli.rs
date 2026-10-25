@@ -197,10 +197,14 @@ fn a_listener_that_cannot_bind_names_its_setting() {
 fn help_prints_the_usage_and_exits_zero() {
     let output = server(&["-h"], &[], b"");
     assert!(output.status.success());
-    assert_eq!(text(&output.stderr), include_str!("usage.txt"));
+    assert_eq!(text(&output.stdout), include_str!("usage.txt"));
+    assert!(output.stderr.is_empty());
     let output = server(&["-nope"], &[], b"");
     assert_eq!(output.status.code(), Some(1));
     assert!(text(&output.stderr).starts_with("unknown option --nope\nUsage: "));
+    let output = server(&["help"], &[], b"");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text(&output.stderr).starts_with("unexpected argument \"help\"\nUsage: "));
 }
 
 /// A verbose throughput line's message, checked for its shape, with its transfer count.
@@ -219,6 +223,70 @@ fn transfers(message: &str) -> usize {
     decimal(rate.strip_suffix(" Gbit/s").unwrap());
     decimal(bytes.split_once(" MB in ").unwrap().0);
     count.strip_suffix(" transfers").unwrap().parse().unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn healthcheck_passes_while_the_clear_listener_answers() {
+    let (child, address, _) = listening(&[]);
+    let check = || server(&["healthcheck"], &[("GM_H1_ADDR", address.as_str())], b"");
+    let healthy = check();
+    assert!(healthy.status.success(), "{}", text(&healthy.stderr));
+    assert!(healthy.stdout.is_empty() && healthy.stderr.is_empty());
+    terminate(child);
+    let down = check();
+    assert_eq!(down.status.code(), Some(1));
+    let line = text(&down.stderr).strip_suffix('\n').unwrap();
+    let message = format!("could not ask {address} for /probe: connection refused");
+    assert_eq!(logged(line), ("ERROR", "health:", message.as_str()));
+}
+
+#[test]
+fn healthcheck_fails_a_listener_that_never_answers() {
+    let hung = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = hung.local_addr().unwrap().to_string();
+    let output = server(&["healthcheck"], &[("GM_H1_ADDR", address.as_str())], b"");
+    assert_eq!(output.status.code(), Some(1));
+    let line = text(&output.stderr).strip_suffix('\n').unwrap();
+    let message = format!("{address} did not answer /probe within 2s");
+    assert_eq!(logged(line), ("ERROR", "health:", message.as_str()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_private_key_open_beyond_group_read_is_warned_about() {
+    use graphite_meter_testkit::{Identity, Scratch};
+    use std::io::{BufRead, BufReader};
+    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
+    let cert = scratch.file("cert.pem", &identity.certificate).unwrap();
+    for (mode, warned) in [(0o600, false), (0o640, false), (0o660, true), (0o644, true)] {
+        let key = scratch
+            .file_with_mode("key.pem", &identity.key, mode)
+            .unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+            .env_clear()
+            .envs([
+                ("GM_H1_ADDR", "127.0.0.1:0"),
+                ("GM_H2_ADDR", "127.0.0.2:0"),
+                ("GM_TLS_CERT", cert.to_str().unwrap()),
+                ("GM_TLS_KEY", key.to_str().unwrap()),
+                ("TOKIO_WORKER_THREADS", "2"),
+            ])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let lines = BufReader::new(child.stderr.take().unwrap()).lines();
+        let started: Vec<_> = lines
+            .map(Result::unwrap)
+            .take_while(|line| logged(line).2 != "ready")
+            .collect();
+        let warning = format!("private key {} has permissions {mode:04o}", key.display());
+        let found = started
+            .iter()
+            .any(|line| logged(line).2.starts_with(&warning));
+        terminate(child);
+        assert_eq!(found, warned, "{mode:04o}: {started:?}");
+    }
 }
 
 #[cfg(unix)]
@@ -243,6 +311,79 @@ fn a_verbose_server_logs_requests_and_throughput_and_sigterm_ends_its_running_do
         elapsed < std::time::Duration::from_secs(2),
         "stopped after {elapsed:?}"
     );
+}
+
+#[cfg(unix)]
+fn ask_retired(address: &str, times: usize) {
+    use std::io::Read;
+    for _ in 0..times {
+        let mut old = std::net::TcpStream::connect(address).unwrap();
+        old.write_all(b"POST /upload/session HTTP/1.1\r\nHost: test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        old.read_to_end(&mut Vec::new()).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_route_an_earlier_release_served_is_logged_once_a_minute_per_client() {
+    let (child, address, next) = listening(&[]);
+    ask_retired(&address, 2);
+    assert_eq!(
+        next(),
+        format!(
+            "POST /upload/session from 127.0.0.1: a route Graphite Meter 0.13.5 removed, 1 since its last line; \
+             update that client to {ENGINE_VERSION} (app::gate)"
+        )
+    );
+    terminate(child);
+    assert!(
+        next().starts_with("stop requested"),
+        "the second request waits for the next minute"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_retired_route_is_logged_before_sign_in_refuses_it() {
+    use graphite_meter_testkit::Scratch;
+    use std::io::{BufRead, BufReader};
+    let hash = server(&["hash-password"], &[], b"secret\nsecret\n");
+    let scratch = Scratch::new().unwrap();
+    let file = scratch.file("hash", text(&hash.stdout)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+        .env_clear()
+        .envs([
+            ("GM_H1_ADDR", "127.0.0.1:0"),
+            ("TOKIO_WORKER_THREADS", "2"),
+            ("GM_AUTH_MODE", "password"),
+            ("GM_AUTH_PUBLIC_URL", "https://meter.example.com"),
+            ("GM_AUTH_PASSWORD_HASH_FILE", file.to_str().unwrap()),
+            ("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"),
+            ("GM_PUBLIC_ORIGINS", "self"),
+        ])
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stderr.take().unwrap())
+        .lines()
+        .map(Result::unwrap);
+    let listen = lines
+        .by_ref()
+        .map(|line| logged(&line).2.to_owned())
+        .find(|message| message.contains("/tcp"))
+        .unwrap();
+    let address = listen.split_once("/tcp").unwrap().0.to_owned();
+    assert!(lines.by_ref().any(|line| logged(&line).2 == "ready"));
+    ask_retired(&address, 1);
+    let line = lines.next().unwrap();
+    assert!(
+        logged(&line)
+            .2
+            .starts_with("POST /upload/session from 127.0.0.1: a route"),
+        "{line}"
+    );
+    terminate(child);
 }
 
 #[cfg(unix)]

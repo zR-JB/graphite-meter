@@ -227,15 +227,15 @@
     --brand-strong: light-dark(oklch(0.2 0.012 258), oklch(0.97 0.004 258));
     --brand-soft: color-mix(in oklab, var(--brand) 12%, transparent);
 
-    /* Four hue families sit a quarter turn apart. Latency and bidirectional also part in lightness. */
+    /* Four hue families sit about a quarter turn apart. Latency and bidirectional also part in lightness; in dark, latency and warning are lifted clear of OK and upload. */
     --phase-warmup: light-dark(oklch(0.52 0.012 258), oklch(0.66 0.012 258));
-    --phase-latency: light-dark(oklch(0.6 0.105 182), oklch(0.82 0.105 178));
+    --phase-latency: light-dark(oklch(0.6 0.105 182), oklch(0.86 0.105 194));
     --phase-download: light-dark(oklch(0.5 0.18 263), oklch(0.72 0.145 262));
     --phase-upload: light-dark(oklch(0.63 0.15 58), oklch(0.83 0.125 66));
     --phase-bidirectional: light-dark(oklch(0.47 0.17 352), oklch(0.7 0.155 350));
 
     --ok: light-dark(oklch(0.5 0.095 155), oklch(0.8 0.1 155));
-    --warn: light-dark(oklch(0.53 0.095 85), oklch(0.86 0.1 92));
+    --warn: light-dark(oklch(0.53 0.095 85), oklch(0.895 0.1 96));
     --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
     --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 
@@ -268,12 +268,12 @@
   }
   @media (color-gamut: p3) {
     :root {
-      --phase-latency: light-dark(oklch(0.6 0.125 182), oklch(0.82 0.125 178));
+      --phase-latency: light-dark(oklch(0.6 0.125 182), oklch(0.86 0.125 194));
       --phase-download: light-dark(oklch(0.5 0.2 263), oklch(0.72 0.155 262));
       --phase-upload: light-dark(oklch(0.63 0.17 58), oklch(0.83 0.145 66));
       --phase-bidirectional: light-dark(oklch(0.47 0.19 352), oklch(0.7 0.175 350));
       --ok: light-dark(oklch(0.5 0.103 155), oklch(0.8 0.108 155));
-      --warn: light-dark(oklch(0.53 0.103 85), oklch(0.86 0.108 92));
+      --warn: light-dark(oklch(0.53 0.103 85), oklch(0.895 0.108 96));
       --err: light-dark(oklch(0.52 0.151 25), oklch(0.74 0.13 22));
     }
   }

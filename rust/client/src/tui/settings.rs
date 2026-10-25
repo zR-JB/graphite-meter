@@ -71,7 +71,7 @@ impl App {
                 self.config.stages.extend(on.then_some(stage));
                 self.config.stages.sort_unstable();
             }
-            Row::LoadedLatency => self.config.loaded_latency = on,
+            Row::SkipLoadedLatency => self.config.skip_loaded_latency = on,
             Row::ForceStreams => {
                 self.config.streams.forced = NonZero::new(self.config.streams.auto).filter(|_| on);
             }
@@ -251,7 +251,7 @@ impl App {
         if row == Row::Address {
             let url = server_origin(raw)?;
             if config.url.as_ref() != Some(&url) {
-                config.servers.clear();
+                config.select(Vec::new(), None);
             }
             config.url = Some(url);
             return Ok(());

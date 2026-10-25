@@ -55,10 +55,13 @@ export class Prober {
   #sentAt = -Infinity;
   #backupAt = Infinity;
   #outbox: ProbeOutcome[] = [];
+  #unmeasured: number[] = [];
   #flushAt = Infinity;
   #stalled = false;
   #replied = false;
   #measuring = false;
+  /** A latency warmup reads replies before its window. */
+  #warming = false;
   /** A window ended and its probes in flight have yet to resolve. */
   #draining = false;
   #stopId = 0;
@@ -147,6 +150,7 @@ export class Prober {
       reply.handlingNs !== null && reply.handlingNs / 1e6 <= rttMs ? reply.handlingNs / 1e6 : null;
     if (probe.measured)
       this.#record(probe, late ? probe.deadline : at, late, late ? null : handlingMs);
+    else if (!late && this.#warming) this.#glance(rttMs, at);
     if (!late && this.#stalled) {
       this.#stalled = false;
       this.io.post({ type: "resumed" });
@@ -155,10 +159,16 @@ export class Prober {
     this.#settle(at);
   }
 
+  /** Replies before the window go out as unmeasured round trips until it opens or the bus parks. */
+  warm(): void {
+    this.#warming = !this.#measuring;
+  }
+
   /** Outcomes count from now on; a fixed cadence probes the window's start at once. */
   measure(): void {
     if (this.#state === "stopped") return;
     this.#measuring = true;
+    this.#warming = false;
     if (this.#pace.intervalMs === null) return;
     this.#sentAt = -Infinity;
     const now = this.clock.now();
@@ -178,7 +188,7 @@ export class Prober {
     this.#stopId = id;
     if (this.#state === "stopped") return this.io.post({ type: "drained", id });
     const now = this.clock.now();
-    this.#measuring = false;
+    this.#measuring = this.#warming = false;
     this.#draining = true;
     for (const probe of this.#pending.values())
       if (probe.measured) probe.cutoff = Math.min(probe.cutoff, now);
@@ -301,8 +311,17 @@ export class Prober {
     else if (this.#flushAt === Infinity) this.#flushAt = this.clock.now() + FLUSH_MS;
   }
 
+  /** An unmeasured reply goes out with the next batch, for a warmup to read. */
+  #glance(rttMs: number, now: number): void {
+    this.#unmeasured.push(rttMs);
+    if (this.#unmeasured.length >= BATCH_MAX) this.#flush();
+    else if (this.#flushAt === Infinity) this.#flushAt = now + FLUSH_MS;
+  }
+
   #flush(): void {
     this.#flushAt = Infinity;
+    if (this.#unmeasured.length) this.io.post({ type: "unmeasured", rtts: this.#unmeasured });
+    this.#unmeasured = [];
     if (!this.#outbox.length) return;
     this.io.post({ type: "outcomes", outcomes: this.#outbox });
     this.#outbox = [];

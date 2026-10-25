@@ -246,6 +246,29 @@ async fn wrong_passwords_are_refused_counted_and_throttled_until_the_minute_pass
 }
 
 #[tokio::test]
+async fn an_ipv6_56_holds_twice_the_attempts_of_each_64_in_it() {
+    let app = auth_app(&[]);
+    for (peer, wrong_passwords) in [
+        ("2001:db8:1:1::1", 5),
+        ("2001:db8:1:2::1", 5),
+        ("2001:db8:1:3::1", 0),
+    ] {
+        for attempt in 0..=wrong_passwords {
+            let refusal = if attempt < wrong_passwords {
+                "/login?error=password"
+            } else {
+                "/login?error=throttled"
+            };
+            assert_eq!(
+                location(&sign_in(&app, peer, &wrong()).await),
+                Some(refusal),
+                "{peer}, attempt {attempt}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn signing_in_again_ends_the_presented_login_and_its_grants() {
     let app = auth_app(&[]);
     let (prior, sibling) = (

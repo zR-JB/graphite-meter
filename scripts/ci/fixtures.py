@@ -16,7 +16,8 @@ from unittest.mock import patch
 from assets import CLIENT, CREATED, OCI, SERVER, image_part, prerelease, stage
 from github_api import ControlPlaneError, JsonObject, JsonValue
 from verify_oci import STAGE, image_index
-from workspace import ROOT, build_name, build_offer, load, offer_name, release_archive, source_txt
+from workspace import (ROOT, build_name, build_offer, build_profile, load, offer_name, pgo_architecture, release_archive,
+                       source_txt)
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
@@ -126,7 +127,11 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
     images = {arch: add_json({
         "schemaVersion": 2, "mediaType": MANIFEST_TYPE,
         "config": add_json({"architecture": arch, "os": "linux", "config": {
-            "Labels": labels | dict((arch_labels or {}).get(arch, {}))}}, CONFIG_TYPE),
+            "Labels": labels | dict((arch_labels or {}).get(arch, {})),
+            "Healthcheck": {"Test": ["CMD", "/graphite-meter", "healthcheck"]},
+            "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+            "Entrypoint": ["/graphite-meter"], "User": "65532:65532", "WorkingDir": "/",
+            "ExposedPorts": {"7246/tcp": {}}}}, CONFIG_TYPE),
         "layers": [layer({**files, **(arch_files or {}).get(arch, {})}),
                    *([layer(extra_layer, directories=False)] if extra_layer else [])],
     }, MANIFEST_TYPE, platform={"architecture": arch, "os": "linux"}) for arch in arches}
@@ -189,9 +194,20 @@ def notices(build: str) -> bytes:
     return f"notices of {build}\n".encode()
 
 
-def server_binary(platform: str) -> bytes:
-    """The image's server for `platform`, the reviewed build of its notices in the source offer."""
-    return executable(load().server[platform], b"server\0" + reviewed(notices(build_name(SERVER, platform))))
+def profile_data(build: str) -> bytes:
+    return f"profile of {build}\n".encode()
+
+
+def trained(build: str, target: str, profile: str = "release") -> bytes:
+    if profile != "release" or pgo_architecture(target) is None:
+        return b""
+    return b" graphite-meter pgo profile sha256:" + hashlib.sha256(profile_data(build)).hexdigest().encode()
+
+
+def server_binary(platform: str, profile: str = "release") -> bytes:
+    """The image's server for `platform`, the reviewed build of its notices and profile in the source offer."""
+    build, target = build_name(SERVER, platform), load().server[platform]
+    return executable(target, b"server\0" + reviewed(notices(build)) + trained(build, target, profile))
 
 
 def write_part(path: Path, version: str, package: str, platform: str, profile: str = "release",
@@ -208,14 +224,18 @@ def write_part(path: Path, version: str, package: str, platform: str, profile: s
                      f"{top}/legal/rust-forks.json": (ROOT / "legal/rust-forks.json").read_bytes(),
                      f"{top}/third_party/cargo/dependency-1.0.0/src/lib.rs": b"code\n",
                      **({f"{top}/third_party/npm/package-1.0.0/index.js": b"code\n"} if package == SERVER else {}),
+                     **({f"{top}/{build_profile(build)}": profile_data(build)}
+                        if profile == "release" and pgo_architecture(shipped[platform]) else {}),
                      **(extra or {})})
 
 
-def write_client(directory: Path, version: str, platform: str, changes: Mapping[str, bytes] | None = None) -> None:
+def write_client(directory: Path, version: str, platform: str, changes: Mapping[str, bytes] | None = None,
+                 profile: str = "release") -> None:
     """A client archive as the packager writes it; `changes` replaces archive members."""
     archive, base, binary = release_archive(CLIENT, version, platform)
     target, build = load().tui[platform], build_name(CLIENT, platform)
-    members = {binary: executable(target, reviewed(notices(build))), "LICENSE": (ROOT / "LICENSE").read_bytes(),
+    members = {binary: executable(target, reviewed(notices(build)) + trained(build, target, profile)),
+               "LICENSE": (ROOT / "LICENSE").read_bytes(),
                "COPYRIGHT": (ROOT / "COPYRIGHT").read_bytes(), "THIRD_PARTY_NOTICES.txt": notices(build),
                "SOURCE.txt": source_txt(REPOSITORY_URL, version, build, target).encode()} | dict(changes or {})
     files = {f"{base}/{name}": payload for name, payload in members.items()}
@@ -234,7 +254,7 @@ def write_exports(root: Path, version: str, revision: str, repository: str, prof
     for platform, target in workspace.server.items():
         build, arch, part = build_name(SERVER, platform), platform.split("/")[1], server / platform.replace("/", "_")
         source = source_txt(REPOSITORY_URL, version, build, target).encode()
-        files = {"usr/share/licenses/graphite-meter/SOURCE.txt": source, "graphite-meter": server_binary(platform)}
+        files = {"usr/share/licenses/graphite-meter/SOURCE.txt": source, "graphite-meter": server_binary(platform, profile)}
         server.mkdir(exist_ok=True)
         write_oci(server / image_part(platform), repository, revision, version, remote=prerelease(version),
                   arch_files={arch: files}, arches=(arch,))
@@ -245,7 +265,7 @@ def write_exports(root: Path, version: str, revision: str, repository: str, prof
         client.mkdir(parents=True)
         for platform in workspace.tui:
             write_part(client / build_offer(CLIENT, platform), version, CLIENT, platform, profile)
-            write_client(client, version, platform)
+            write_client(client, version, platform, profile=profile)
 
 
 def write_staged(out: Path, version: str, revision: str, repository: str) -> str:

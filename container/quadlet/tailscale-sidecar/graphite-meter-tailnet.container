@@ -19,6 +19,8 @@ UserNS=keep-id:uid=65532,gid=65532
 ReadOnly=true
 NoNewPrivileges=true
 DropCapability=all
+HealthCmd=["/graphite-meter","healthcheck"]
+HealthInterval=30s
 
 [Service]
 Restart=always

@@ -43,7 +43,7 @@ pub async fn interactive(
 ) -> io::Result<Exit> {
     let var = |name: &str| std::env::var(name).ok();
     let (profile, progress) = (style::profile(true, var), chrome::progress(var));
-    let _session = Session::enter(progress)?;
+    let session = Session::enter(progress)?;
     // The answer is read before the input stream starts, which would take it for keys.
     let asked = io::stdin()
         .is_terminal()
@@ -121,7 +121,14 @@ pub async fn interactive(
                         crate::config::forget(&path);
                     }
                 }
-                Effect::Quit => return Ok(app.exit()),
+                Effect::Quit => {
+                    let at_once = app.running();
+                    drop((terminal, session));
+                    if !at_once {
+                        controller.close().await;
+                    }
+                    return Ok(app.exit());
+                }
             }
         }
         if paint {

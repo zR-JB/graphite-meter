@@ -17,7 +17,7 @@ pub const BROWSER_NOTICE: &str = "legal/THIRD_PARTY_NOTICES.txt";
 pub struct Notices {
     payload: Option<(&'static [u8], usize)>,
     browser: Option<usize>,
-    /// The build's plain marker is a development build's, a reviewed build's with its report's SHA-256, or nothing.
+    /// The plain marker: a development build's, a reviewed build's with its report's and profile's SHA-256s, or none.
     marker: &'static str,
     report: OnceLock<Vec<u8>>,
 }

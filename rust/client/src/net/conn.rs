@@ -486,7 +486,7 @@ pub(super) async fn dial(
 ) -> Result<Dialed, Fault> {
     let origin = origin.clone();
     let mut dialing = Dialing(runtime.spawn(async move { connect(&origin, verify).await }));
-    (&mut dialing.0).await.map_err(|_| Fault::Lost)?
+    (&mut dialing.0).await?
 }
 
 type Dialed = (Arc<Quic>, client::SendRequest);

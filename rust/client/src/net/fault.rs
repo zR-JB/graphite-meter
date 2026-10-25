@@ -33,6 +33,8 @@ pub enum Fault {
     Malformed(String),
     /// The peer speaks another API version, named in these words.
     Incompatible(String),
+    /// The client's own bug, a panic, which `connection-lost` would blame on the network.
+    Internal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,9 +47,9 @@ pub enum Class {
 impl Fault {
     pub fn reason(&self) -> FailureReason {
         match self {
-            Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_)) => {
-                FailureReason::PathFailed
-            }
+            Self::Connect(
+                ConnectError::Proxy(_) | ConnectError::Refused(_) | ConnectError::Tls(_),
+            ) => FailureReason::PathFailed,
             Self::Connect(_)
             | Self::Lost
             | Self::Ended(LaneEnding::Finished | LaneEnding::Shutdown) => {
@@ -60,7 +62,7 @@ impl Fault {
             }
             Self::Status { status, .. } if busy(*status) => FailureReason::ServerCapacity,
             Self::Status { .. } | Self::Malformed(_) => FailureReason::ProtocolError,
-            Self::Incompatible(_) => FailureReason::PathFailed,
+            Self::Incompatible(_) | Self::Internal => FailureReason::PathFailed,
             Self::Refused(refusal) => refusal.failure_reason(),
         }
     }
@@ -78,13 +80,16 @@ impl Fault {
             {
                 Class::Redial
             }
-            Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_))
+            Self::Connect(
+                ConnectError::Proxy(_) | ConnectError::Refused(_) | ConnectError::Tls(_),
+            )
             | Self::Status { .. }
             | Self::Refused(_)
             | Self::SignIn(_)
             | Self::Ended(LaneEnding::Revoked)
             | Self::Malformed(_)
-            | Self::Incompatible(_) => Class::Final,
+            | Self::Incompatible(_)
+            | Self::Internal => Class::Final,
             Self::Connect(_) | Self::Lost | Self::TimedOut(_) | Self::Ended(_) => Class::Redial,
         }
     }
@@ -144,6 +149,16 @@ impl Fault {
     }
 }
 
+impl From<tokio::task::JoinError> for Fault {
+    fn from(error: tokio::task::JoinError) -> Self {
+        if error.is_panic() {
+            Self::Internal
+        } else {
+            Self::Lost
+        }
+    }
+}
+
 impl From<ConnectError> for Fault {
     fn from(error: ConnectError) -> Self {
         Self::Connect(error)
@@ -187,6 +202,7 @@ impl fmt::Display for Fault {
             )),
             Self::TimedOut(what) => write!(formatter, "{} timed out", capitalized(what)),
             Self::Incompatible(text) => formatter.write_str(text),
+            Self::Internal => formatter.write_str("Internal error"),
             Self::Lost => formatter.write_str(self.reason().label()),
         }
     }

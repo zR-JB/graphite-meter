@@ -149,18 +149,30 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
 });
 
-test("Escape closes the docked panel holding focus and never stops a running test", async (page) => {
+test("Escape closes the docked panel holding focus, and stops a running test once none is open", async (page) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
   });
   await ready(page);
+  const hint = page.locator(".command-hints .stop-hint");
+  const hinted = (shown: boolean) =>
+    expect
+      .poll(() =>
+        hint.evaluate((el: HTMLElement) => el.checkVisibility({ visibilityProperty: true })),
+      )
+      .toBe(shown);
+  // A focused control's tip takes Escape first; with focus nowhere, the page has it.
+  const unfocus = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await hinted(false);
   await runButton(page, "Start test").click();
   // Escape cancels a start still proving its paths, so the panels open once the run is under way.
   await expect(phase(page, "idle")).toHaveCount(0);
+  await hinted(true);
   const settings = await openSettings(page);
   const details = page.locator('dialog[aria-label="Details"]');
   await page.getByRole("button", { name: "Details", exact: true }).click();
+  await hinted(false);
   const closed = (panel: typeof settings) =>
     expect.poll(() => panel.all((els: HTMLElement[]) => els.every((el) => el.inert))).toBe(true);
   await settings
@@ -169,14 +181,15 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await page.press("Escape");
   await closed(settings);
   expect(await details.all((els: HTMLElement[]) => els.some((el) => !el.inert))).toBe(true);
-  // Focus returns to the Settings button, whose tip takes the first Escape.
-  await page.press("Escape");
+  await unfocus();
   await page.press("Escape");
   await closed(details);
-  await page.press("Escape");
   await expect(runButton(page, "Stop test")).toBeVisible();
-  await runButton(page, "Stop test").click();
+  await hinted(true);
+  await unfocus();
+  await page.press("Escape");
   await expect(phase(page, "aborted")).toHaveCount(1);
+  await hinted(false);
 });
 
 test("a docked panel's edge steps 16 px from the keyboard, within its limits", async (page) => {
@@ -336,28 +349,33 @@ test("a docked sheet reopened while it leaves comes back from where it was", asy
   const travel = await page.evaluate(async () => {
     const key = (key: string) =>
       document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
-    const sheet = () =>
-      document.querySelector<HTMLElement>('dialog[aria-label="Details"]:not([aria-hidden])')!;
+    const frame = () => new Promise((done) => requestAnimationFrame(done));
+    const left = () =>
+      document.querySelector('dialog[aria-label="Details"]')!.getBoundingClientRect().left;
     key("d");
-    await wait(600);
+    let docked = NaN;
+    for (let n = 0, was = NaN; n < 300 && !(docked < innerWidth && docked === was); n++) {
+      await frame();
+      [was, docked] = [docked, left()];
+    }
     key("d");
-    await wait(60);
-    // Mid-way out it is still on screen: the sheet itself, or a copy where a browser cannot keep it displayed.
-    const leaving = [...document.querySelectorAll('dialog[aria-label="Details"]')].some(
-      (el) => el.checkVisibility() && el.getBoundingClientRect().left < innerWidth,
-    );
+    // Mid-way out it is still on screen.
+    let leaving = false;
+    for (let n = 0; n < 60 && !leaving; n++) {
+      await frame();
+      leaving = left() > docked && left() < innerWidth;
+    }
     key("d");
-    const lefts: number[] = [];
+    const back: number[] = [];
     const end = performance.now() + 500;
     while (performance.now() < end) {
-      await new Promise((done) => requestAnimationFrame(done));
-      lefts.push(sheet().getBoundingClientRect().left);
+      await frame();
+      back.push(left());
     }
-    return { leaving, lefts, width: innerWidth };
+    return { leaving, back, width: innerWidth };
   });
   expect(travel.leaving).toBe(true);
-  expect(Math.min(...travel.lefts)).toBeGreaterThan(travel.width / 2);
+  expect(Math.min(...travel.back)).toBeGreaterThan(travel.width / 2);
 });
 
 test("two docked sheets open and close beside the stage in every frame", async (page) => {

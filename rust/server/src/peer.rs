@@ -160,7 +160,10 @@ impl Peer {
     /// Uploads belong to the lease presented, else to the client `keys` names.
     pub fn owner(&self) -> Option<ClientKeys> {
         match &self.lease {
-            Some(lease) => Some(ClientKeys::Lease(lease.id())),
+            Some(lease) => Some(ClientKeys::Lease(
+                lease.id(),
+                Box::new(lease.keys().clone()),
+            )),
             None => self.keys(),
         }
     }
@@ -194,8 +197,8 @@ pub enum ClientKeys {
     V6(Ipv6Addr),
     /// A login or grant comes first, then the principal it belongs to.
     Auth(Holder, Principal),
-    /// Work presenting a lease, which holds its admission already.
-    Lease(u64),
+    /// Work presenting a lease, which holds its admission already, and the keys of the client that took it.
+    Lease(u64, Box<ClientKeys>),
 }
 
 impl ClientKeys {
@@ -215,9 +218,21 @@ impl ClientKeys {
         }
     }
 
+    pub fn charged(&self) -> &Self {
+        match self {
+            Self::Lease(_, creator) => creator,
+            keys => keys,
+        }
+    }
+
     /// Returns the key an owner is compared by, which is the address, IPv6 /64, login or grant.
     pub fn narrowest(&self) -> Option<ClientKey> {
         self.iter().next()
+    }
+
+    pub fn shares(&self, narrowest: usize) -> impl Iterator<Item = (ClientKey, usize)> {
+        let doubled = std::iter::successors(Some(narrowest), |share| Some(share.saturating_mul(2)));
+        self.iter().zip(doubled)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ClientKey> {
@@ -237,7 +252,7 @@ impl ClientKeys {
                 Some(ClientKey::Principal(principal.clone())),
                 None,
             ],
-            Self::Lease(id) => [Some(ClientKey::Lease(*id)), None, None],
+            Self::Lease(id, _) => [Some(ClientKey::Lease(*id)), None, None],
         };
         keys.into_iter().flatten()
     }

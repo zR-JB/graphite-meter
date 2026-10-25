@@ -12,6 +12,7 @@ source build. Besides serving, it takes these commands:
 | ---------------------- | --------------------------------------------------------------------------------------------------- |
 | `version`, `--version` | Print the version.                                                                                  |
 | `hash-password`        | Read a password twice on stdin (1 to 1024 bytes, hidden on a terminal) and print its Argon2id hash. |
+| `healthcheck`          | Exit 0 when the clear listener answers `/probe` within 2 s; otherwise log why and exit 1.           |
 | `--legal`              | Print the project and dependency license notices.                                                   |
 | `--help`               | Print every flag with its variable and default, then the variables without a flag.                  |
 
@@ -69,13 +70,13 @@ the setting.
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | _env only_                             | empty            | Proxy for OIDC requests, read as the [terminal client](TERMINAL.md#environment) reads them. |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR`         | _env only_                             | the system's     | CA roots for OIDC requests. `SSL_CERT_FILE` replaces the system bundle and `SSL_CERT_DIR`, a `:`-separated list, the system directories; each one unset keeps the system's. |
 
-- Listener addresses must differ. Numeric limits must be positive, per-client limits may not exceed their global
-  limit, sessions may not exceed measurements, and the session duration must be at least the operation duration.
-  An unset or empty operation lifetime is at least the stage limit plus a minute, so a server that allows
-  multi-hour stages never cuts their transfers short, and an unset or empty session lifetime is at least the
-  operation lifetime. Set them to cut transfers sooner, and clients reconnect across each cut. Something must carry
-  throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or `GM_PUBLIC_THROUGHPUT_ORIGINS`, or
-  startup fails with "configuration advertises no throughput endpoint".
+- Listener addresses must differ, except port 0, which binds a free port for each. Numeric limits must be positive,
+  per-client limits may not exceed their global limit, sessions may not exceed measurements, and the session duration
+  must be at least the operation duration. An unset or empty operation lifetime is at least the stage limit plus a
+  minute, so a server that allows multi-hour stages never cuts their transfers short, and an unset or empty session
+  lifetime is at least the operation lifetime. Set them to cut transfers sooner, and clients reconnect across each cut.
+  Something must carry throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or
+  `GM_PUBLIC_THROUGHPUT_ORIGINS`, or startup fails with "configuration advertises no throughput endpoint".
 - Any other `GM_AUTH_*` setting needs `GM_AUTH_MODE` on, a password hash or an OIDC issuer, client or group setting
   needs a mode that uses it, and each secret takes its inline or its file form, not both. A password hash must be
   Argon2id `v=19` with `m=19456,t=2,p=1`, a 16-byte salt and a 32-byte output, as `hash-password` prints it.
@@ -87,7 +88,8 @@ the setting.
   /48 share two and four times its limit. Upload receivers are counted the same way, and connections are counted
   by address.
 - Connections count TCP and QUIC alike. An idle QUIC connection ends without a close at its 30 s idle timeout, so
-  Firefox keeps the server's HTTP/3.
+  Firefox keeps the server's HTTP/3. A client that keeps an idle connection open with keep-alive pings is closed
+  after 60 s.
 - Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at
   a trusted proxy or firewall.
 - `GM_TRUSTED_PROXIES` rejects the default routes `0.0.0.0/0` and `::/0`. A trusted peer names its client with

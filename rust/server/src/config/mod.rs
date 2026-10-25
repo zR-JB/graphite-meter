@@ -36,7 +36,7 @@ pub enum Loaded {
     Config(Box<Config>),
 }
 
-/// Loads the environment, then the flags, and validates; flag errors and usage go to `usage`.
+/// Loads the environment, then the flags, and validates; argument errors and usage go to `usage`.
 pub fn load(
     env: impl Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,
@@ -93,9 +93,8 @@ pub struct Outbound {
 
 impl Outbound {
     fn from_lookup(env: &impl Fn(&str) -> Option<OsString>) -> Self {
-        let proxy = Proxy::from_lookup(|name| env(name).and_then(|value| value.into_string().ok()));
         Self {
-            proxy,
+            proxy: Proxy::from_lookup(env),
             verify: Verify::Trusted(Arc::new(Trust::from_lookup(env))),
         }
     }
@@ -290,7 +289,7 @@ impl fmt::Debug for Secret {
 }
 
 /// `could not {action}: {message}`, the system's message in lower case without its code.
-pub(crate) fn could_not(action: &str, error: &std::io::Error) -> String {
+pub fn could_not(action: &str, error: &std::io::Error) -> String {
     let message = error.to_string().to_lowercase();
     let message = message.split(" (os error").next().unwrap_or_default();
     format!("could not {action}: {message}")

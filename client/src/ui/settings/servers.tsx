@@ -63,7 +63,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     const { id } = entry.peek();
     const view = viewOf(id);
     const server = identity(entry, view);
-    const checked = computed(() => servers.selected().includes(id));
+    const checked = computed(() => servers.upcoming().includes(id));
     const readiness = computed(() => view()?.readiness);
     const status = computed(() => {
       const state = readiness();
@@ -103,14 +103,14 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
           type="checkbox"
           checked={checked}
           disabled={() => {
-            const count = servers.selected().length;
-            return locked() || (checked() ? count === 1 : count >= MAX_SELECTED);
+            const count = servers.upcoming().length;
+            return checked() ? count === 1 : count >= MAX_SELECTED;
           }}
           aria-describedby={() => (preflight() ? "settings-preflight-note" : undefined)}
           onchange={(event) => {
             // The row shows what the selection keeps.
             event.currentTarget.checked = checked.peek();
-            const selected = servers.selected.peek();
+            const selected = servers.upcoming.peek();
             servers.apply(
               checked.peek() ? selected.filter((each) => each !== id) : [...selected, id],
             );
@@ -268,8 +268,6 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     );
   };
 
-  announceChanges(() => (servers.unresolved().length ? "The saved selection has changed." : ""));
-  announceChanges(() => (servers.catalog() || servers.loading() ? "" : servers.loadError()));
   return (
     <>
       <Show when={() => entries().length > 1}>
@@ -279,7 +277,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               <span id="settings-servers-label" ref={tip(() => TIP.testServers)}>
                 Test servers
               </span>
-              <small>{() => `${servers.selected().length} selected, up to ${MAX_SELECTED}`}</small>
+              <small>{() => `${servers.upcoming().length} selected, up to ${MAX_SELECTED}`}</small>
             </div>
             <div class="kv">
               <div

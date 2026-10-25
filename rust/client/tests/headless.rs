@@ -1,5 +1,4 @@
 //! The binary without the interface against canned peers.
-#![cfg(unix)]
 
 use std::{process::Stdio, time::Duration};
 use tokio::{
@@ -13,13 +12,7 @@ use tokio::{
 fn client(url: &str, stages: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
     command.args(["--report", "-url", url, "-stages", stages]);
-    command.args([
-        "-latency-duration",
-        "1s",
-        "-download-duration",
-        "1s",
-        "-loaded-latency=false",
-    ]);
+    command.args(["-latency-duration", "1s", "-download-duration", "1s"]);
     for name in ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] {
         command
             .env_remove(name)
@@ -144,6 +137,7 @@ async fn a_run_whose_server_left_ends_its_report_with_why() {
     assert_eq!(report.lines().count(), 3, "{report}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_report_into_a_closed_pipe_exits_141_quietly() {
     let (reader, writer) = std::io::pipe().unwrap();
