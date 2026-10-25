@@ -1,5 +1,4 @@
 //! The binary without the interface against canned peers.
-#![cfg(unix)]
 
 use std::{process::Stdio, time::Duration};
 use tokio::{
@@ -138,6 +137,7 @@ async fn a_run_whose_server_left_ends_its_report_with_why() {
     assert_eq!(report.lines().count(), 3, "{report}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_report_into_a_closed_pipe_exits_141_quietly() {
     let (reader, writer) = std::io::pipe().unwrap();
