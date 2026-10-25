@@ -1267,6 +1267,10 @@
       font-weight: var(--w-strong);
     }
   }
+  /* Only a stage without a result reads its line as an error; one that keeps or may keep a result warns. */
+  .card:not(.failed) .line .reason {
+    color: var(--warn);
+  }
   .card .strip {
     min-height: 68px;
     max-height: 120px;
