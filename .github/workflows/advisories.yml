@@ -1,6 +1,6 @@
 name: Advisories
 
-# Advisory databases change without a commit, so main is checked daily; a new crate advisory also fails every PR.
+# Advisory databases change without a commit, so main is checked daily; a new advisory also fails every code PR.
 on:
   schedule:
     - cron: '43 5 * * *'
