@@ -26,6 +26,7 @@ from release import (
     parse_release,
     request_jobs,
     request_title,
+    require_breaking_bump,
     require_compatible_release_tag,
     require_publishable,
     verify_request,
@@ -433,6 +434,9 @@ class RequestTests(unittest.TestCase):
             (prerelease | {"PULL": "moved"}, "head SHA changed"),
             ({"SCREENSHOTS": "stale"}, "Screenshots are stale"),
             (prerelease | {"SCREENSHOTS": "stale"}, None),
+            ({"BREAKING": "yes"}, "#7 labelled 'breaking change' since v1.2.2; tag v2.0.0 or later"),
+            ({"BREAKING": "yes", "TAG": "v2.0.0"}, None),
+            (prerelease | {"BREAKING": "yes"}, None),
         ):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change):
                 output = Path(directory) / "output"
@@ -444,7 +448,14 @@ class RequestTests(unittest.TestCase):
                         "fork": {"head": head | {"repo": {"full_name": "fork/graphite-meter"}}},
                         "moved": {"head": head | {"sha": OLD}}}[env.pop("PULL", "")]
                 stale = "Screenshots are stale" if env.pop("SCREENSHOTS", "") else None
-                with (patch.dict(os.environ, env), github({PULL: PR | pull}),
+                labels = [{"name": "breaking change"}] if env.pop("BREAKING", "") else [{"name": "bug"}]
+                # Two pages: a direct push without a PR, then the release commit's PR.
+                history = {P + "releases/latest": {"tag_name": "v1.2.2"},
+                           P + f"compare/v1.2.2...{MAIN}?per_page=100": pages({"commits": [{"sha": OLD}]},
+                                                                             {"commits": [{"sha": MAIN}]}),
+                           P + f"commits/{OLD}/pulls": [],
+                           P + f"commits/{MAIN}/pulls": [{"number": 7, "labels": labels}]}
+                with (patch.dict(os.environ, env), github({PULL: PR | pull} | history),
                       patch("screenshots.stale", return_value=stale)):
                     outcome(self, error, command_prepare)
                 if error is not None:
@@ -454,6 +465,13 @@ class RequestTests(unittest.TestCase):
                 self.assertEqual((request["schemaVersion"], request["sourceSha"], request["pr"]),
                                  (4, HEAD if pr else MAIN, 101 if pr else 0))
                 self.assertIn(f"remote_sha={HEAD if pr else ''}\n", output.read_text())
+
+    def test_a_breaking_change_raises_the_minor_version_before_1_0_and_the_major_after(self) -> None:
+        for previous, version, error in (("0.13.4", "0.13.5", "tag v0.14.0 or later"), ("0.13.4", "0.14.0", None),
+                                         ("0.13.4", "1.0.0", None), ("1.4.2", "1.5.0", "tag v2.0.0 or later")):
+            with self.subTest(previous=previous, version=version):
+                outcome(self, error, lambda: require_breaking_bump(previous, version, [363, 366]))
+        require_breaking_bump("0.13.4", "0.13.5", [])
 
     def test_publication_requires_main_or_pr_trust_for_the_release_kind(self) -> None:
         stable, prerelease = release_of(True), release_of(False)

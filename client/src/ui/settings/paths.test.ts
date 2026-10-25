@@ -5,7 +5,7 @@ import type { PageConfig } from "../../engine/net/page";
 import { classify } from "../../engine/net/paths";
 import type { Discovery, Role } from "../../engine/types";
 import type { Preflight } from "../../protocol/documents";
-import { choices, describePath } from "./paths";
+import { choices, describePath, roleLine } from "./paths";
 
 type Browser = Pick<PageConfig, "origin" | "secure" | "webTransport">;
 const PAGE: Browser = { origin: "https://ui.example", secure: true, webTransport: "no-api" };
@@ -215,4 +215,38 @@ test("a path reads as its mechanism over its carrier", () => {
     ];
   for (const [path, target, summary] of cases)
     expect(describePath(discovery, path, target).summary).toBe(summary);
+});
+
+test("a line on a fallback says what Automatic used and why, in place of a plain Ready", () => {
+  const discovery = offer(a, [], [{ baseUrl: ".", transport: "websocket" }]);
+  const target = {
+    id: a,
+    origin: a,
+    transport: "websocket",
+    protocol: "http1",
+    tls: true,
+  } as const;
+  const fellBack = view("a", discovery);
+  fellBack.latency = {
+    selection: "auto",
+    state: "verified",
+    message: null,
+    path: {
+      target,
+      verifiedFor: { selection: "auto", head: `${a}::wt`, fallback: "WebTransport did not open" },
+    } as unknown as ServerView["latency"]["path"],
+  };
+  expect(roleLine("latency", [fellBack], false, PAGE)).toEqual({
+    state: "verified",
+    status: { label: "Ready on a fallback", tone: "warn" },
+    summary: "Automatic used WebSocket (TLS) for latency: WebTransport did not open",
+  });
+  const plain = view("b", discovery);
+  plain.latency = {
+    ...fellBack.latency,
+    path: { ...fellBack.latency.path!, verifiedFor: { selection: "auto", head: a } },
+  };
+  expect(roleLine("latency", [fellBack, plain], true, PAGE)?.summary).toBe(
+    "1 of 2 servers on a fallback",
+  );
 });

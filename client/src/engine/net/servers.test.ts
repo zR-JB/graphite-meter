@@ -97,9 +97,9 @@ test("Start runs on what its checks verified however long they take, and never f
         : { body: PROBE, hop: "http/1.1", afterMs: probeMs },
   );
   expect(readiness()).toBe("verified");
-  // A run holds the checks; at 119 s it fails on latency, and Start follows while that path is checked for 1.5 s.
+  // A run holds the checks and fails on latency; Start follows while its checks take 1.5 s.
   active.set(false);
-  await net!.advance(118_000);
+  await net!.advance(10_000);
   servers.recheck({
     serverId: "self",
     scope: "latency",
@@ -112,7 +112,7 @@ test("Start runs on what its checks verified however long they take, and never f
   await net!.advance(2_000);
   expect(await late).toEqual({ servers: ["self"], dropped: [] });
   // Evidence a network change takes while Start checks drops the server with words, never silently.
-  probeMs = 0;
+  probeMs = 500;
   servers.recheck({
     serverId: "self",
     scope: "latency",
@@ -153,17 +153,57 @@ test("Start takes each lease to the run's ceilings, and a server without room le
       return room || JSON.parse(String(init.body)).measurements === 1 ? granted(init) : busy;
     },
   );
-  expect(await prepare()).toEqual({ servers: ["self"], dropped: [] });
+  // Start proves the paths again, which its bus's reply takes a moment for.
+  const settled = async () => {
+    const started = prepare();
+    await net!.advance(1_000);
+    return started;
+  };
+  expect(await settled()).toEqual({ servers: ["self"], dropped: [] });
   // Four lanes a direction, an upload's feed and finalize, beside the bus; one id for the upload stage.
   expect(asked.at(-1)).toEqual({ measurements: 7, sessions: 0, uploads: 1 });
   room = false;
-  expect(await prepare()).toEqual({
+  expect(await settled()).toEqual({
     servers: [],
     dropped: [
       {
         server: { id: "self", url: page.origin, name: "Meter" },
         reason: "server-capacity",
         message: "Server at capacity",
+      },
+    ],
+  });
+});
+
+test("Start proves paths a check verified a moment ago, and names a lease its check could not renew", async () => {
+  let room = true;
+  const { prepare } = await load(
+    (url) =>
+      url.pathname === "/servers"
+        ? { body: HOME }
+        : url.pathname === "/preflight"
+          ? { body: preflight([h(".", "http1")], [ws(".")]) }
+          : { body: PROBE, hop: "http/1.1" },
+    {},
+    (_, init) =>
+      room ? granted(init) : { status: 429, headers: { "Graphite-Meter-Refusal": "client-limit" } },
+  );
+  const probes = net!.sent("/probe").length;
+  const started = prepare();
+  await net!.advance(1_000);
+  const ready = await started;
+  expect(ready).toEqual({ servers: ["self"], dropped: [] });
+  expect(net!.sent("/probe").length).toBeGreaterThan(probes);
+  room = false;
+  const refused = prepare();
+  await net!.advance(1_000);
+  expect(await refused).toEqual({
+    servers: [],
+    dropped: [
+      {
+        server: { id: "self", url: page.origin, name: "Meter" },
+        reason: "client-limit",
+        message: "Limit reached for your address or sign-in",
       },
     ],
   });

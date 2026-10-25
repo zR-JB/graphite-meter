@@ -17,8 +17,8 @@ export interface Need {
 
 /** A refusal of the lease by this client's share or the server's capacity, which a check or Start shows. */
 export class LeaseRefused extends CheckError {
-  constructor(readonly reason: FailureReason) {
-    super(FAILURE_REASONS[reason], "retryable");
+  constructor(reason: FailureReason) {
+    super(FAILURE_REASONS[reason], "retryable", { reason });
   }
 }
 

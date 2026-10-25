@@ -124,7 +124,8 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
       }
       current.origin = along(at, touch);
     }
-    event.preventDefault();
+    // A move the browser already scrolls with cannot be cancelled; the sheet follows the finger either way.
+    if (event.cancelable) event.preventDefault();
     const position = along(at, touch);
     current.samples.push({ t: event.timeStamp, p: position });
     while (

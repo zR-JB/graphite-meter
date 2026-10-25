@@ -7,12 +7,12 @@ locked = true
 bun = "1.4.4"
 python = "3.15.0"
 "aqua:gitleaks/gitleaks" = "8.30.1"
-"aqua:astral-sh/ty" = "0.0.88"
-"github:jdx/jactionlint" = "2.2.0"
+"aqua:astral-sh/ty" = "0.0.91"
+"github:jdx/jactionlint" = "2.3.0"
 "aqua:zizmorcore/zizmor" = "1.31.1"
-"aqua:biomejs/biome" = "2.5.15"
+"aqua:biomejs/biome" = "2.6.2"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
-"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.148"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.149"
 
 [vars]
 mise_version = "2026.10.17"
@@ -23,7 +23,7 @@ browser_firefox = "158.0"
 # SHA-256 of ftp.mozilla.org's linux-x86_64/en-US/firefox-<version>.tar.xz, from the release's SHA256SUMS.
 browser_firefox_sha256 = "9549b054ec4cf85f50f6a19d8c6fb79580312e71ebc4ec2cb217ec9af09dc12a"
 
-codeql = "2.27.2"
+codeql = "2.27.3"
 
 image_skopeo = """
 quay.io/containers/skopeo:v1.22.3-immutable\
@@ -145,6 +145,7 @@ run = [
   "cd .. && python3 -m scripts.legal.check_git_sources",
   "cd .. && python3 -m scripts.legal.check_rust_reviews",
   "cargo deny --locked check",
+  "cd .. && python3 -m scripts.legal.check_fork_advisories",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   "cargo nextest run --workspace --all-targets --locked --no-fail-fast",
 ]
