@@ -1,5 +1,6 @@
 """Fake boundaries for control-plane tests: the GitHub API, Git and the release files."""
 
+import gzip
 import hashlib
 import io
 import json
@@ -104,7 +105,8 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
 
     def layer(contents: Mapping[str, bytes | str], directories: bool = True) -> JsonObject:
         data = io.BytesIO()
-        with tarfile.open(fileobj=data, mode="w:gz") as archive:
+        with gzip.GzipFile(fileobj=data, mode="wb", mtime=0) as packed, \
+                tarfile.open(fileobj=packed, mode="w") as archive:
             parents = {str(parent) for name in contents for parent in PurePosixPath(name).parents}
             for directory in sorted(parents - {"."} if directories else ()):
                 info = tarfile.TarInfo(directory)
@@ -166,7 +168,8 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
 
 
 def write_tar(path: Path, members: Mapping[str, bytes], compressed: bool = True) -> None:
-    with tarfile.open(path, "w:gz") if compressed else tarfile.open(path, "w") as archive:
+    with path.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) if compressed else raw as out, \
+            tarfile.open(fileobj=out, mode="w") as archive:
         for name, payload in members.items():
             info = tarfile.TarInfo(name)
             info.size = len(payload)
