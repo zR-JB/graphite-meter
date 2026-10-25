@@ -341,6 +341,7 @@ export function endingHint(table: Grid): string {
   }
   if (rows.length === 1) return `${causePlace(first)}: ${lower(reasonLabel(first.reason))}${more}`;
   const troubled = rows.filter((row) => row.causes.length);
-  if (troubled.length > 1) return DIAL.troubled(troubled.length);
+  // A run that measured nothing names its first cause, as no card holds a result to mark.
+  if (troubled.length > 1 && table.measured) return DIAL.troubled(troubled.length);
   return `${troubled[0]!.server.name}: ${causeAt(first)}${more}`;
 }

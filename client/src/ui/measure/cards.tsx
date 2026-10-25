@@ -257,7 +257,9 @@ export function ResultSummary(props: {
 }): Node {
   const { lens } = props;
   const evidence = computed<Evidence>(() =>
-    lens() ? serverEvidence(props.result(), lens()) : runEvidence(props.result()),
+    lens()
+      ? serverEvidence(grid(props.result()), props.result().multiServer, lens())
+      : runEvidence(props.result()),
   );
   const table = computed(() => grid(props.result()));
   const stages = computed(() => STAGES.filter((stage) => settled(evidence().status[stage])));
@@ -316,7 +318,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
   const { lens } = live;
   const evidence = computed<Evidence>(() =>
     shownEvidence({
-      result: run.result(),
+      table: run.table(),
       details: details(),
       lens: lens(),
       focus: live.focus(),

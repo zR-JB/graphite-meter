@@ -490,6 +490,25 @@ test("several servers that all fail end the run; a sole server skips to its next
     "complete",
     "skipped",
   ]);
+  // While Upload runs, the details its Download end left read it as running, though no event said it rejoined.
+  const ended = sole.events.find(
+    (event) => event.type === "stageEnd" && event.stage === "download",
+  );
+  const left = ended?.type === "stageEnd" ? ended : null;
+  const midRun = grid(
+    {
+      ...left!.results,
+      stages: {
+        latency: "not-run",
+        download: "failed",
+        upload: "not-run",
+        bidirectional: "not-run",
+      },
+      multiServer: { ...skipped.multiServer, participants: [] },
+    },
+    "upload",
+  );
+  expect(midRun.rows[0]!.cells.upload.status).toBe("complete");
   expect(skipped.outcome).toBe("incomplete");
 });
 
@@ -539,6 +558,8 @@ test("a throughput dropout reports discarded loaded probes before the server is 
     probeCount: 1,
   });
   near(result.download?.reportedBytesPerSec, 3_000);
+  // Its lost loaded latency follows from its leaving: one cause, not two.
+  expect(grid(result).rows[0]!.causes.map(({ scope }) => scope)).toEqual(["throughput"]);
 });
 
 test("a server dropped at Start reads not reached in every stage, so each stage and the run are partial", async () => {

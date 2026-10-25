@@ -317,7 +317,7 @@ test("shown together, the latency card reads the server latency is shown for, he
   } as unknown as RunResult;
   const live = summary(121, 40);
   const shown = (focus: string, lens = "") =>
-    shownEvidence({ result: lens ? result : null, details, lens, focus, run, idle: live });
+    shownEvidence({ table: lens ? grid(result) : null, details, lens, focus, run, idle: live });
   // Latency shown for the far server reads its result and its own replies, never the run's near headline.
   expect([shown("far").latency, shown("far").idle?.probeCount]).toEqual([far.latency as never, 9]);
   expect(shown("far").status).toEqual({ latency: "complete", download: "complete" });
@@ -328,7 +328,7 @@ test("shown together, the latency card reads the server latency is shown for, he
   // A lens on one server reads that server alone; with no result yet, the run's own and the live replies.
   expect(shown("near", "far").latency).toBe(far.latency as never);
   expect(
-    shownEvidence({ result: null, details: null, lens: "", focus: "far", run, idle: live }).idle,
+    shownEvidence({ table: null, details: null, lens: "", focus: "far", run, idle: live }).idle,
   ).toBe(live);
 });
 

@@ -173,7 +173,9 @@ export function createRun(env: RunEnvironment) {
     const stages = Object.fromEntries(
       STAGES.map((name) => [name, reported[name] ?? "not-run"]),
     ) as Record<Stage, StageStatus>;
-    return grid({ ...results(), stages, multiServer: shown }, running() ? stage() : null);
+    // A stopped run keeps the stage it stopped in as it stood.
+    const current = running() || phase() === "aborted" ? stage() : null;
+    return grid({ ...results(), stages, multiServer: shown }, current);
   });
   /** Each settled stage as the grid judges it. */
   const statuses = computed(() => {

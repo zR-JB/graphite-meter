@@ -327,9 +327,9 @@ test("a run short of complete names what it lacks first, then the first cause in
       "nothing measured",
       judged("incomplete", {
         Frankfurt: { cells: { download: "failed", upload: "unreached" }, causes: [lost] },
-        Oslo: { cells: { download: "failed", upload: "unreached" } },
+        Oslo: { cells: { download: "failed", upload: "unreached" }, causes: [lost] },
       }),
-      "Frankfurt: connection lost in Download",
+      "Frankfurt: connection lost in Download and 1 more",
     ],
   ];
   for (const [name, table, hint] of cases) expect(endingHint(table), name).toBe(hint);

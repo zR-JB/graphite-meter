@@ -72,8 +72,9 @@ export function Dial(props: {
   // A finished run's arcs read what the lens shows: every server together, or the one chosen under the dial.
   const shown = computed(() => {
     const id = live.lens();
-    const result = run.result();
-    return id && result ? serverEvidence(result, id) : result;
+    const table = run.table();
+    const details = run.details();
+    return id && table && details ? serverEvidence(table, details, id) : run.result();
   });
   const arcs = computed(() => (phase() === "complete" ? resultArcs(shown()) : []));
   const headline = computed(() => headlineArc(arcs()));

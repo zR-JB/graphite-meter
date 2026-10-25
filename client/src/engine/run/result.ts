@@ -167,10 +167,11 @@ export function grid(result: Graded, running: Stage | null = null): Grid {
       const left = own.findLast(
         (f) => f.scope === failureScope(f.stage) && STAGES.indexOf(f.stage) < before,
       );
+      // A sole server rejoins at each stage, though no event has said so yet.
       if (stage === running)
         return failure
           ? { status: "failed", cause: failure }
-          : participants.includes(server.id)
+          : participants.includes(server.id) || servers.length === 1
             ? { status: "complete", cause: null }
             : { status: "unreached", cause: left ?? null };
       const status = summary.stages[stage];
@@ -181,9 +182,13 @@ export function grid(result: Graded, running: Stage | null = null): Grid {
     };
     const cells = perStage(cell);
     const statuses = Object.values(cells).map(({ status }) => status);
+    // Loaded latency lost because its server left the stage is that leaving, not a cause of its own.
+    const consequence = (f: ServerFailure) =>
+      f.scope !== failureScope(f.stage) &&
+      own.some((g) => g.stage === f.stage && g.scope === failureScope(g.stage));
     const causes: Cause[] = start
       ? [start]
-      : own.toSorted((a, b) => order(a.stage) - order(b.stage));
+      : own.filter((f) => !consequence(f)).toSorted((a, b) => order(a.stage) - order(b.stage));
     const outcome: Outcome = statuses.some(
       (status) => status === "failed" || status === "unreached",
     )

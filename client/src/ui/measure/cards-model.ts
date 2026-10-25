@@ -126,15 +126,14 @@ export const runEvidence = (result: RunResult): Evidence => {
   };
 };
 
-/** One server's share of a finished result, each stage as its cell reads; a server dropped at Start measured nothing. */
-export function serverEvidence(result: RunResult, id: string): Evidence {
-  const table = grid(result);
+/** One server's share of a run, each stage as its cell reads; a server dropped at Start measured nothing. */
+export function serverEvidence(table: Grid, details: MultiServerResult, id: string): Evidence {
   const row = table.rows.find((entry) => entry.server.id === id);
   const status = row
     ? Object.fromEntries(STAGES.map((stage) => [stage, row.cells[stage].status]))
     : {};
   const whole = wholeStages(table, id);
-  const server = result.multiServer.servers.find((entry) => entry.server.id === id);
+  const server = details.servers.find((entry) => entry.server.id === id);
   if (!server)
     return {
       status,
@@ -156,10 +155,10 @@ export function serverEvidence(result: RunResult, id: string): Evidence {
   };
 }
 
-/** What the cards read: the lens's server of a finished result, or all together; latency reads only its shown server
- *  so figures never mix servers. */
+/** What the cards read: the lens's server, or all together; latency reads only its shown server so figures never mix
+ *  servers. */
 export function shownEvidence(view: {
-  result: RunResult | null;
+  table: Grid | null;
   details: MultiServerResult | null;
   lens: string;
   focus: string | null;
@@ -167,9 +166,9 @@ export function shownEvidence(view: {
   /** The focus's live replies stand in while it has no result. */
   idle: LatencySummary | null;
 }): Evidence {
-  const { result, details, lens, focus, run } = view;
-  if (result && lens) return serverEvidence(result, lens);
-  const evidence = { ...run, whole: result ? runEvidence(result).whole : new Set<Stage>() };
+  const { table, details, lens, focus, run } = view;
+  if (table && details && lens) return serverEvidence(table, details, lens);
+  const evidence = { ...run, whole: table ? wholeStages(table) : new Set<Stage>() };
   const focused = details?.servers.find((entry) => entry.server.id === focus);
   if (!focused?.latency) return { ...evidence, idle: view.idle };
   const own = focused.stages.latency;
