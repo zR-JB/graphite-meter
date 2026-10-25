@@ -32,20 +32,24 @@ WebTransport needs HTTPS and the native HTTP/3 listener.
 
 Every release since 0.13.1 also attaches the server alone for Linux as
 `graphite-meter-server_X.Y.Z_linux_amd64.tar.gz` and `graphite-meter-server_X.Y.Z_linux_arm64.tar.gz`. Each holds the
-same static executable as the image, with its license notices, and needs nothing else installed. Download one with
-`checksums.txt`, check it and start it:
+same static executable as the image, with its license notices, and needs nothing else installed. Download one, check
+it and start it:
 
 ```sh
 curl -fLO https://github.com/zR-JB/graphite-meter/releases/download/vX.Y.Z/graphite-meter-server_X.Y.Z_linux_amd64.tar.gz
-curl -fLO https://github.com/zR-JB/graphite-meter/releases/download/vX.Y.Z/checksums.txt
-sha256sum --check --ignore-missing checksums.txt
+gh release verify-asset vX.Y.Z graphite-meter-server_X.Y.Z_linux_amd64.tar.gz -R zR-JB/graphite-meter
 tar -xzf graphite-meter-server_X.Y.Z_linux_amd64.tar.gz
 ./graphite-meter-server_X.Y.Z_linux_amd64/graphite-meter-server
 ```
 
-It listens on port 7246 on every address and takes the same `GM_*` variables and flags as the image, listed in the
-[server reference](REFERENCE.md#settings). For OIDC sign-in it finds the system CA bundle on Debian, Ubuntu, Fedora,
-RHEL, openSUSE, Alpine and Arch without configuration.
+Releases are immutable, so GitHub signs an attestation of their files, and the [GitHub CLI](https://cli.github.com),
+signed in with `gh auth login` on any machine, checks a download against it. Without the CLI, the release's
+`checksums.txt` and `sha256sum --check --ignore-missing checksums.txt` catch a damaged download, but that file comes
+from the same page, so it proves nothing more.
+
+The server listens on port 7246 on every address and takes the same `GM_*` variables and flags as the image, listed
+in the [server reference](REFERENCE.md#settings). For OIDC sign-in it finds the system CA bundle on Debian, Ubuntu,
+Fedora, RHEL, openSUSE, Alpine and Arch without configuration.
 
 To keep it running, install it, create an unprivileged user and a settings file, which may stay empty:
 

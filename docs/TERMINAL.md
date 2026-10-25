@@ -25,6 +25,9 @@ executable and its license notices (`--legal` prints them too). The Linux builds
 | Windows, amd64 | `graphite-meter-client_X.Y.Z_windows_amd64.zip`  |
 | Windows, arm64 | `graphite-meter-client_X.Y.Z_windows_arm64.zip`  |
 
+To check that a download is the one the release published, run
+`gh release verify-asset vX.Y.Z FILE -R zR-JB/graphite-meter` ([details](DEPLOYMENT.md#without-docker)).
+
 ```sh
 tar -xzf graphite-meter-client_X.Y.Z_linux_amd64.tar.gz
 ./graphite-meter-client_X.Y.Z_linux_amd64/graphite-meter-client --url http://192.168.1.20:7246
