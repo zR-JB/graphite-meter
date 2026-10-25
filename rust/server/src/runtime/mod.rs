@@ -68,7 +68,7 @@ type Accepting<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a
 
 impl Server {
     /// Loads the certificate and binds every listener, HTTP/3 UDP on its TCP port; a failure closes those bound.
-    pub async fn bind(mut config: Config, pool: Pool) -> Result<Self, String> {
+    pub async fn bind(config: Config, pool: Pool) -> Result<Self, String> {
         log!(Info, "server", "graphite-meter {ENGINE_VERSION} starting");
         let others = match config.catalog.servers.len() - 1 {
             0 => "no other servers".to_owned(),
@@ -104,18 +104,20 @@ impl Server {
             }
             None => None,
         };
-        let mut listeners = bind_all(&mut config, certificates.as_ref()).await?;
-        let app = Arc::new(App::new(config, CancellationToken::new())?);
-        if oidc_only {
-            let discovery = app.auth().discover();
-            discovery
-                .await
-                .map_err(|error| format!("OIDC discovery failed: {error}"))?;
-        }
-        let companion = listeners
-            .iter()
-            .find(|listening| listening.endpoint == Endpoint::H3Companion);
-        if let (Some(companion), Some(certificates)) = (companion, &certificates) {
+        let chosen = config
+            .listener(ListenerKind::H3)
+            .is_some_and(|listener| listener.address.port == 0);
+        let mut retries = 0..PORT_RETRIES;
+        let (app, listeners) = loop {
+            let mut attempt = config.clone();
+            let mut listeners = bind_all(&mut attempt, certificates.as_ref()).await?;
+            let app = Arc::new(App::new(attempt, CancellationToken::new())?);
+            let companion = listeners
+                .iter()
+                .find(|listening| listening.endpoint == Endpoint::H3Companion);
+            let (Some(companion), Some(certificates)) = (companion, &certificates) else {
+                break (app, listeners);
+            };
             let fits = |bytes| terms.check(certificates.handshake_bytes(), bytes);
             let binding = Binding {
                 app: &app,
@@ -125,7 +127,10 @@ impl Server {
             let local = companion.socket.local_addr();
             let local =
                 local.map_err(|error| format!("could not read the HTTP/3 port: {error}"))?;
-            let bound = binding.bind(local, &pool)?;
+            let bound = match binding.bind(local, &pool) {
+                Err(error) if chosen && in_use(&error) && retries.next().is_some() => continue,
+                bound => bound?,
+            };
             endpoint_bytes.store(bound.bytes, Ordering::Relaxed);
             let (endpoint, address) = (Endpoint::Quic, companion.address.clone());
             listeners.push(Listening {
@@ -133,6 +138,13 @@ impl Server {
                 address,
                 socket: Socket::Quic(Box::new(bound)),
             });
+            break (app, listeners);
+        };
+        if oidc_only {
+            let discovery = app.auth().discover();
+            discovery
+                .await
+                .map_err(|error| format!("OIDC discovery failed: {error}"))?;
         }
         Ok(Self {
             app,
@@ -428,6 +440,12 @@ async fn bind_all(
         });
     }
     Ok(listeners)
+}
+
+const PORT_RETRIES: usize = 8;
+
+fn in_use(error: &str) -> bool {
+    error.ends_with("address already in use") || error.ends_with("address in use")
 }
 
 /// Binds `address`; without a host it takes every IPv6 and IPv4 address, or every IPv4 one on a host without IPv6.
