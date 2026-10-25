@@ -13,7 +13,7 @@ pub use crypto::{Verify, aes_hardware, client_config, provider};
 pub use proxy::{Proxy, UnusableProxy};
 pub use runtime::Pool;
 pub use trust::Trust;
-pub use udp::bind_udp;
+pub use udp::{bind_udp, join_udp};
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

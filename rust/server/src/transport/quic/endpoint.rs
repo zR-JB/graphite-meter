@@ -69,7 +69,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
     }
 
     fn single(&self, address: SocketAddr, runtime: Handle) -> Result<Endpoints, String> {
-        let udp = Udp::bind(address, 1, &runtime)?;
+        let udp = Udp::bind(address, 1, &runtime, false)?;
         let mut config = noq::EndpointConfig::default();
         config.cid_generator(cid_generator(0));
         let bytes = udp.bytes(&config, 1, &self.app.config().limits)?;
@@ -97,7 +97,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         runtimes: &[Handle],
     ) -> Result<Option<Endpoints>, String> {
         let config = noq::EndpointConfig::default();
-        let first = Udp::bind(address, runtimes.len(), &runtimes[0])?;
+        let first = Udp::bind(address, runtimes.len(), &runtimes[0], false)?;
         // The others join the port the first bound; it stands for them until they exist.
         let address = first
             .socket
@@ -117,7 +117,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         };
         let mut sockets = vec![first];
         for runtime in &runtimes[1..shards] {
-            sockets.push(Udp::bind(address, runtimes.len(), runtime)?);
+            sockets.push(Udp::bind(address, runtimes.len(), runtime, true)?);
         }
         let each = sockets
             .iter()
@@ -223,9 +223,17 @@ struct Udp {
 }
 
 impl Udp {
-    fn bind(address: SocketAddr, sockets: usize, runtime: &Handle) -> Result<Self, String> {
+    fn bind(
+        address: SocketAddr,
+        sockets: usize,
+        runtime: &Handle,
+        joining: bool,
+    ) -> Result<Self, String> {
         let _entered = runtime.enter();
-        let bound = graphite_meter_net::bind_udp(address, sockets);
+        let bound = match joining {
+            true => graphite_meter_net::join_udp(address, sockets),
+            false => graphite_meter_net::bind_udp(address, sockets),
+        };
         let (socket, shortfall) = bound
             .map_err(|error| could_not(&format!("listen on {address}/udp (GM_H3_ADDR)"), &error))?;
         static WARNED: AtomicBool = AtomicBool::new(false);
@@ -242,7 +250,7 @@ impl Udp {
             .recv_buffer_size()
             .and_then(|receive| Ok(receive + buffers.send_buffer_size()?));
         let kernel = kernel.map_err(|error| error.to_string())?;
-        let routed = if sockets > 1 {
+        let routed = if joining {
             route_in_kernel(&socket)
         } else {
             Ok(())
