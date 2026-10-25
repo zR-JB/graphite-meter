@@ -695,6 +695,12 @@ impl App {
         let mut entries = Vec::new();
         for (title, table) in groups {
             entries.push(Entry::Heading(title.into()));
+            if title == "Console" {
+                entries.push(Entry::Text(Line::styled(
+                    "Space and r also start a test or stop it.",
+                    self.palette.muted,
+                )));
+            }
             for binding in table.iter().filter(|binding| binding.help.is_some()) {
                 let (key, does) = binding.help.unwrap_or_default();
                 let label = Line::styled(text::capitalized(does), self.palette.text);

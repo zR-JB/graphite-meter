@@ -423,7 +423,7 @@ fn quitting_during_a_run_stops_it_first_and_ends_with_the_signal_s_status() {
 }
 
 #[test]
-fn esc_stops_a_run_at_once_and_quitting_after_one_reports_it() {
+fn esc_space_and_r_stop_a_run_after_esc_closes_a_sheet_and_quitting_reports_it() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
@@ -433,6 +433,49 @@ fn esc_stops_a_run_at_once_and_quitting_after_one_reports_it() {
         "one stop is asked for once"
     );
     assert!(frame(&mut app, now).last().unwrap().starts_with("Stopping"));
+    for key in [KeyCode::Char(' '), KeyCode::Char('r')] {
+        let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+        assert_eq!(
+            command(&press(&mut app, key, now)),
+            &Command::Stop,
+            "{key:?}"
+        );
+    }
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('d'), now);
+    assert_eq!(
+        press(&mut app, KeyCode::Esc, now),
+        [],
+        "esc closes Details first"
+    );
+    assert!(!shows(&mut app, now, "Details esc close"));
+    assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('s'), now);
+    assert_eq!(
+        command(&press(&mut app, KeyCode::Char('r'), now)),
+        &Command::Stop,
+        "r stops from Settings"
+    );
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('s'), now);
+    assert_eq!(
+        press(&mut app, KeyCode::Esc, now),
+        [],
+        "esc closes Settings first"
+    );
+    assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
+    let (mut app, now) = self::app();
+    app.event(&prepared(), now);
+    assert_matches!(
+        command(&press(&mut app, KeyCode::Char(' '), now)),
+        Command::Run(_)
+    );
+    assert_eq!(
+        command(&press(&mut app, KeyCode::Char(' '), now)),
+        &Command::Stop,
+        "space stops a test still checking its paths"
+    );
     for (signal, outcome, expected) in [
         (Some(TERMINATED), Outcome::Stopped, TERMINATED),
         (Some(INTERRUPTED), Outcome::Stopped, INTERRUPTED),
