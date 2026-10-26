@@ -51,9 +51,26 @@ Reconnecting retains the same ID and receiver counters. A replacement progress
 reader supersedes its predecessor. Watching a feed does not keep an idle upload
 alive; existing idle expiry, finalization retention, and capacity limits remain
 in force. A feed whose receiver expires, or is displaced at the capacity limit
-before its first byte, ends with an `invalid` error record, and that ID stays
-refused until the ID would have expired. A WebTransport lane refused after the session opened gets its `error`
+before its first byte, ends with an `invalid` error record. A displaced ID stays
+refused for two minutes after displacement. A WebTransport lane refused after the session opened gets its `error`
 record on a new server stream. The shared classifications are in [refusal codes](refusals.txt).
+
+## Lifetime and capacity
+
+An unused upload ID expires two minutes after minting. Minting alone reserves no
+aggregate: its first data lane or progress reader claims one. The server holds at
+most 1,000 aggregates and 32 for a client's IPv4 address, IPv6 /64, login or grant;
+each broader quota key holds twice the preceding key's limit. Leased uploads count against the client
+that took the lease, so taking more leases does not multiply this quota.
+
+While a data lane is open, the aggregate stays alive. Once no lanes remain, it is
+kept for two minutes after the last lane joined or left, including after
+finalization. Progress reads and checkpoints do not extend this retention.
+
+At capacity, the oldest aggregate that has no lanes, bytes or finalization may be
+displaced. Its progress reader is notified, and its ID remains refused for two
+minutes after displacement, preventing the evicted upload from reclaiming a slot.
+An aggregate that has accepted bytes is never displaced this way.
 
 ## Progress records
 

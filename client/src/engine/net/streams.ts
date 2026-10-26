@@ -189,7 +189,7 @@ export function streamNotes(config: TestConfig, servers: readonly PlanServer[]):
 
 export function planError(config: TestConfig, servers: readonly PlanServer[]): string {
   const planned = activities(config);
-  if (!planned.length) return "Give at least one stage a duration";
+  if (!planned.length) return "Turn on at least one test stage";
   try {
     for (const activity of planned)
       if (activity.transfer.length) planStreams(servers, activity, config.transferStreams);

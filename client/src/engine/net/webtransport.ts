@@ -6,7 +6,7 @@ const WINDOW_MS = 5 * 60_000;
 const ALLOWED = 4;
 
 export const THROTTLED =
-  "WebTransport failed 4 times on this page, so it is paused. Reload the page to try it again.";
+  "WebTransport failed 4 times on this page and is paused. Wait up to 5 minutes or reload the page, then try again.";
 
 export class HandshakeLedger {
   #failures: number[] = [];

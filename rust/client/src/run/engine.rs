@@ -562,7 +562,7 @@ impl Engine {
             "the test server was not ready within {}",
             format::stage_time(READY_BOUND)
         );
-        let failure = Failure::new(FailureReason::Timeout, text);
+        let failure = Failure::new(FailureReason::PathFailed, text);
         for (index, lanes) in late {
             match lanes {
                 true => self.fail(

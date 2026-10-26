@@ -14,9 +14,11 @@ use std::{fmt::Write as _, fs::File, io::Read, path::Path};
 const MAX_INPUT_BYTES: usize = 64 << 10;
 const MAX_NORMALIZED_BYTES: usize = 48 << 10;
 
-/// The catalog from whichever source is present, an empty value counting as present; with neither, `self` alone.
 pub(super) fn load(inline: Option<String>, file: Option<String>) -> Result<ServerCatalog, String> {
-    match (inline, file) {
+    match (
+        inline.filter(|value| !value.is_empty()),
+        file.filter(|value| !value.is_empty()),
+    ) {
         (Some(_), Some(_)) => {
             Err("set only one of GM_SERVER_CATALOG and GM_SERVER_CATALOG_FILE".into())
         }

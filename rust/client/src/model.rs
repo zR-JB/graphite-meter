@@ -182,7 +182,13 @@ impl StageResult {
         }
     }
 
-    pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
+    pub fn absent<'a>(&self, selected: &'a [ServerId]) -> impl Iterator<Item = &'a ServerId> {
+        selected
+            .iter()
+            .filter(|id| !self.servers.iter().any(|server| server.server == **id))
+    }
+
+    pub fn status(&self, focus: Option<&ServerId>, selected: &[ServerId]) -> StageStatus {
         let missing = |direction: &Direction| {
             self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none())
         };
@@ -198,9 +204,27 @@ impl StageResult {
             _ if self.failures.iter().any(|failure| self.owns(failure.scope)) => {
                 StageStatus::Partial
             }
+            _ if self.absent(selected).next().is_some() => StageStatus::Partial,
             _ => StageStatus::Complete,
         }
     }
+}
+
+pub fn selection(results: &[StageResult]) -> Vec<ServerId> {
+    let Some(first) = results.first() else {
+        return Vec::new();
+    };
+    let mut selected: Vec<_> = first.servers.iter().map(|own| own.server.clone()).collect();
+    let dropped = first
+        .failures
+        .iter()
+        .filter(|failure| failure.scope == Scope::Server);
+    for failure in dropped {
+        if !selected.contains(&failure.server) {
+            selected.push(failure.server.clone());
+        }
+    }
+    selected
 }
 
 /// The run's latency server: the first selected one while it stays, else the first survivor with a latency median.
@@ -243,10 +267,10 @@ pub enum Outcome {
 impl Outcome {
     /// From the stage results; the first carries the failures of selected servers that never began a stage.
     pub fn of(results: &[StageResult], plan: &[Stage]) -> Self {
-        let focus = focus(results);
+        let (focus, selected) = (focus(results), selection(results));
         let statuses: Vec<_> = results
             .iter()
-            .map(|result| result.status(focus.as_ref()))
+            .map(|result| result.status(focus.as_ref(), &selected))
             .collect();
         let ran = |stage: &Stage| results.iter().any(|result| result.stage == *stage);
         let planned = plan.iter().all(ran);
