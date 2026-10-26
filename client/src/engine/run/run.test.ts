@@ -1677,6 +1677,92 @@ test("a steady upload and a steady latency stage each finish early", async () =>
   expect(result.latency?.reportedMs).toBe(10);
 });
 
+/** One server whose lanes report every 10 ms, as a server's lanes do together, at `rate(ms into the window)` bytes per ms; its
+ *  upload receiver counts 1 byte per ms. */
+const paced = (rate: (ms: number) => number): Peer[] => {
+  let started = 0;
+  let reported = 0;
+  const counted = (at: number) => {
+    let total = 0;
+    for (let ms = 0; ms < at - started; ms++) total += rate(ms);
+    return total;
+  };
+  const report = (events: StageEvents) => {
+    const total = counted(clock.t);
+    events.download(total - reported);
+    reported = total;
+  };
+  return [
+    {
+      id: "self",
+      silent: (_, __, dir) => dir === "down",
+      measure: (events) => {
+        started = clock.t;
+        clock.every(10, () => report(events));
+      },
+      countAt: counted,
+      flush: report,
+    },
+  ];
+};
+
+test("a steady download ends once its steady window holds 12 rates whose mean is within 0.25 %, before half its plan", async () => {
+  const h = setup(
+    paced(() => 1),
+    { download: true },
+    { downloadMs: 10_000 },
+    { adaptive: true },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.durationMs).toBeLessThan(5_000);
+  expect(result.stages.download).toBe("complete");
+  expect(result.outcome).toBe("complete");
+  const [interval] = result.multiServer.intervals;
+  // Twelve 250 ms rates, each within the window.
+  expect(interval!.headline!.endMs - interval!.headline!.startMs).toBeGreaterThanOrEqual(3_000);
+  expect(result.download?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
+  // Lanes reporting every 20 ms, out of step with the tick, scatter the reported rates 3 %; the exact edges do not.
+  const coarse = setup(
+    [{ id: "self" }],
+    { download: true },
+    { downloadMs: 10_000 },
+    { adaptive: true },
+  );
+  coarse.start();
+  expect((await coarse.result()).durationMs).toBeLessThan(5_000);
+});
+
+test("a download whose rates scatter 1 % ends only once enough of them hold its mean within 0.25 %", async () => {
+  // Rates of 1 and 1.02 by turns have a 1 % spread, so the mean's standard error reaches 0.25 % at 16 of them.
+  const h = setup(
+    paced((ms) => (Math.floor(ms / 500) % 2 ? 1.02 : 1)),
+    { download: true },
+    { downloadMs: 10_000 },
+    { adaptive: true },
+  );
+  h.start();
+  const { durationMs } = await h.result();
+  expect(durationMs).toBeGreaterThan(4_250);
+  expect(durationMs).toBeLessThan(6_000);
+});
+
+test("rates that scatter 5 %, steady enough to score, keep the download to its plan, and its bidirectional stage", async () => {
+  const scatter = paced((ms) => (Math.floor(ms / 500) % 2 ? 1.1 : 1));
+  const download = setup(scatter, { download: true }, { downloadMs: 10_000 }, { adaptive: true });
+  download.start();
+  expect((await download.result()).durationMs).toBeGreaterThanOrEqual(10_000);
+  // A steady upload alone would end early; the scattered download holds both.
+  const both = setup(
+    scatter,
+    { bidirectional: true },
+    { bidirectionalMs: 10_000 },
+    { adaptive: true },
+  );
+  both.start();
+  expect((await both.result()).durationMs).toBeGreaterThanOrEqual(10_000);
+});
+
 test("an early finish's steady window opens on what the lanes had counted there, however late they report", async () => {
   // 1 byte per ms, each reported 30 ms after it was counted: a tick sees 30 bytes too few.
   let started = 0;
@@ -1693,19 +1779,20 @@ test("an early finish's steady window opens on what the lanes had counted there,
         rate: 0,
         measure: (events) => {
           started = clock.t;
-          clock.every(20, () => report(events, 30));
+          // A server's lanes report together about every 10 ms.
+          clock.every(10, () => report(events, 30));
         },
         countAt: (at) => at - started,
         flush: (events) => report(events, 0),
       },
     ],
     { download: true },
-    { downloadMs: 6_000 },
+    { downloadMs: 10_000 },
     { adaptive: true },
   );
   h.start();
   const result = await h.result();
-  expect(result.durationMs).toBeLessThan(6_000);
+  expect(result.durationMs).toBeLessThan(10_000);
   expect(result.download?.reportedBytesPerSec).toBe(1_000);
 });
 

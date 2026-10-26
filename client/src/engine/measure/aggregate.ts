@@ -110,6 +110,10 @@ interface Open {
   stableQuiet: Totals;
   /** All directions together, for the early-finish score. */
   combined: RateSeries;
+  /** Download rates between the lanes' exact counts at each 250 ms edge, for the steady window's standard error; its
+   *  window opens at the first edge rate that starts in the steady window. */
+  edges: RateSeries;
+  edgesOpen: boolean;
   total: Series;
   servers: Map<string, Series>;
   peakFrom: Boundary | null;
@@ -141,10 +145,6 @@ export class Aggregate {
 
   get current(): Interval | null {
     return this.#open?.record ?? null;
-  }
-
-  get sufficient(): boolean {
-    return !!this.#open?.record.complete && sufficient(this.#open.record.full);
   }
 
   begin(
@@ -187,6 +187,8 @@ export class Aggregate {
       quiet: { down: 0, up: 0 },
       stableQuiet: { down: 0, up: 0 },
       combined: new RateSeries(SCORE_BUCKETS),
+      edges: new RateSeries(),
+      edgesOpen: false,
       total: series(),
       servers: new Map(participants.map((id) => [id, series()])),
       peakFrom: null,
@@ -353,6 +355,35 @@ export class Aggregate {
     return transferConfidence(this.#open?.combined.recent ?? []);
   }
 
+  /** The steady window's fewest rates and largest relative standard error over its directions, a download's from its exact
+   *  edges; none while unsteady. */
+  get steadyError(): { count: number; relative: number } {
+    const open = this.#open;
+    if (!open?.stable) return { count: 0, relative: Infinity };
+    const errors = directions(open.record.stage).map((dir) =>
+      dir === "up"
+        ? open.total[dir].windowError
+        : open.edgesOpen
+          ? open.edges.windowError
+          : { count: 0, relative: Infinity },
+    );
+    return {
+      count: Math.min(...errors.map(({ count }) => count)),
+      relative: Math.max(...errors.map(({ relative }) => relative)),
+    };
+  }
+
+  /** Adds the bytes every lane counted between two edges of the window, in run ms. */
+  edge(bytes: number, fromMs: number, toMs: number): void {
+    const open = this.#open;
+    if (!open) return;
+    if (open.stable && !open.edgesOpen && fromMs >= open.stable.atMs) {
+      open.edges.openWindow();
+      open.edgesOpen = true;
+    }
+    open.edges.observe(bytes, toMs - fromMs);
+  }
+
   resetStability(): void {
     const open = this.#open;
     if (!open) return;
@@ -380,6 +411,7 @@ export class Aggregate {
     if (stable && !open.wasStable) {
       open.stableQuiet = { ...open.quiet };
       for (const dir of directions(open.record.stage)) open.total[dir].openWindow();
+      open.edgesOpen = false;
     }
     open.wasStable = stable;
     return stable;

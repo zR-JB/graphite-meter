@@ -12,7 +12,13 @@ import { LatencyBuckets, type LatencyBucket } from "../measure/buckets";
 import { ServerLatency, type LatencySummary } from "../measure/latency";
 import { LiveRates, type SpeedChange } from "../measure/live";
 import { combinedModel, type WireModel, type WirePath } from "../measure/overhead";
-import { EARLY_FINISH, mayFinishEarly, minCoverage, type Confidence } from "../measure/stability";
+import {
+  BUCKET_MS,
+  latencyMayFinish,
+  minCoverage,
+  transferMayFinish,
+  type Confidence,
+} from "../measure/stability";
 import { protocolFromNextHop } from "../net/paths";
 import {
   CADENCE_MS,
@@ -212,8 +218,6 @@ interface StageRun {
   closedAt: number;
   /** A hole, stall, dropout or gap: no early finish this stage. */
   disturbed: boolean;
-  /** Timeline ms since when an early finish has been eligible. */
-  armedAt: number | null;
   evaluatedAt: number;
   finishedEarly: boolean;
   /** Where the warmup began, in page ms and the download bytes shown then: its ramp's origin. */
@@ -221,6 +225,12 @@ interface StageRun {
   /** Page ms the measured window opened and closed at, however long its final evidence takes; Infinity until then. */
   opensAt: number;
   sealedAt: number;
+  /** The next 250 ms edge of the window to ask the lanes' exact download counts at, and the last answered, by interval. */
+  edges: {
+    next: number;
+    asking: boolean;
+    last: { interval: number; total: number; at: number } | null;
+  };
   /** The speed changes each server's live rate confirmed in the window, by server and direction. */
   changes: Map<string, Partial<Record<Direction, SpeedChange[]>>>;
   /** The plan as the window closed; later changes cannot reach a window that already ended. */
@@ -438,8 +448,6 @@ export class Run {
     const now = segmentAt(this.#segments, this.#elapsed);
     const continued =
       !ended && shown && now?.phase === shown.phase && now.activity.stage === shown.activity.stage;
-    // An early finish stays armed only on the segment it armed on.
-    if (stage && !continued) stage.armedAt = null;
     if (continued) {
       this.#shown = now;
       if (stage) {
@@ -582,7 +590,6 @@ export class Run {
       return stage && stage.phase !== "settled" ? void this.#endStage(stage) : this.#complete();
     const segment = segmentAt(this.#segments, this.#elapsed);
     if (!segment) return;
-    if (stage?.armedAt != null && this.#evaluate(stage)) return this.#tick();
     if (segment !== this.#shown) return this.#enter(segment);
     const budgetMs = segment.end - segment.start;
     const key = `${segment.start}:${budgetMs}`;
@@ -639,12 +646,12 @@ export class Run {
       measured: false,
       closedAt: 0,
       disturbed: false,
-      armedAt: null,
       evaluatedAt: -Infinity,
       finishedEarly: false,
       ramp: null,
       opensAt: Number.POSITIVE_INFINITY,
       sealedAt: Number.POSITIVE_INFINITY,
+      edges: { next: Number.POSITIVE_INFINITY, asking: false, last: null },
       changes: new Map(),
       plan: null,
       cut: false,
@@ -755,6 +762,7 @@ export class Run {
     const cadence = this.#cadence(activity);
     const at = this.#clock.activeMs();
     const opensAt = (stage.opensAt = this.#clock.read());
+    stage.edges = { next: opensAt + BUCKET_MS, asking: false, last: null };
     for (const seat of seats) {
       // A latency warmup's last replies show as the window opens.
       seat.server.buckets.flush(this.#elapsed);
@@ -1006,6 +1014,34 @@ export class Run {
     return !!sample && !final && !this.#stalled && this.#evaluate(stage);
   }
 
+  /** Asks the lanes for their exact download counts at each 250 ms edge: rates between reported counts alias against the
+   *  tick into a spread that is not the link's. */
+  #edge(stage: StageRun, now: number): void {
+    const edges = stage.edges;
+    if (edges.asking || now < edges.next) return;
+    // A late page asks at the latest edge; the rate since the last answer spans the edges it missed.
+    const at = edges.next + Math.floor((now - edges.next) / BUCKET_MS) * BUCKET_MS;
+    edges.next = at + BUCKET_MS;
+    edges.asking = true;
+    const seats = active(stage);
+    const interval = this.#aggregate.current?.id ?? -1;
+    void Promise.all(seats.map((seat) => seat.resources.countAt(at))).then((counts) => {
+      edges.asking = false;
+      if (!this.#current(stage) || stage.phase !== "measuring") return;
+      // An unanswered edge is spanned by the next; another interval or seat set starts the chain again.
+      if (counts.some((count) => count === null)) return;
+      const total = counts.reduce<number>((sum, count) => sum + count!, 0);
+      const current =
+        interval === this.#aggregate.current?.id && seats.every((seat) => !seat.server.removed);
+      const last = edges.last;
+      edges.last = current ? { interval, total, at } : null;
+      if (!current || last?.interval !== interval) return;
+      const start = this.#clock.start;
+      this.#aggregate.edge(total - last.total, last.at - start, at - start);
+      if (this.#evaluate(stage)) this.#tick();
+    });
+  }
+
   /** Keeps a speed change a server's live rate confirmed in the window, timed from the window's opening. */
   #changed(stage: StageRun, id: string, dir: Direction, change: SpeedChange | null): void {
     if (!change || stage.phase !== "measuring" || change.atMs < stage.opensAt) return;
@@ -1028,7 +1064,10 @@ export class Run {
   #sample(stage: StageRun, now: number): void {
     this.#sampledAt = now;
     const { transfer } = stage.activity;
-    if (transfer.includes("down")) this.#boundary(stage);
+    if (transfer.includes("down")) {
+      this.#boundary(stage);
+      if (stage.phase === "measuring") this.#edge(stage, now);
+    }
     if (stage.activity.stage === "latency" || !this.#current(stage)) return;
     const seats = active(stage);
     if (!this.#stalled)
@@ -1251,7 +1290,6 @@ export class Run {
     for (const segment of this.#segments)
       if (segment.activity.stage === stage.activity.stage)
         this.#elapsed = Math.max(this.#elapsed, segment.end);
-    stage.armedAt = null;
     queueMicrotask(() => this.#tick());
   }
 
@@ -1286,7 +1324,6 @@ export class Run {
   /** A stall, dropout or gap restarts the steadiness window and rules out finishing this stage early. */
   #disturb(stage: StageRun): void {
     stage.disturbed = true;
-    stage.armedAt = null;
     this.#aggregate.resetStability();
     if (stage.activity.stage === "latency")
       for (const server of this.#servers) server.latency.idle.reset();
@@ -1321,10 +1358,8 @@ export class Run {
       segment.phase === "warmup" ||
       stage.phase !== "measuring" ||
       !this.#plan.adaptive
-    ) {
-      stage.armedAt = null;
+    )
       return false;
-    }
     const latency = segment.phase === "latency";
     const seats = latency
       ? active(stage).filter((seat) => !seat.server.latency.failed.has("latency"))
@@ -1350,27 +1385,23 @@ export class Run {
     }
     stage.evaluatedAt = this.#clock.read();
     const at = this.#clock.activeMs();
+    const durationMs = segment.end - segment.start;
     const eligible =
       !stage.disturbed &&
-      (latency ? seats.length > 0 : this.#aggregate.sufficient) &&
       !seats.some((seat) => recovering(stage, seat, at)) &&
-      mayFinishEarly({
-        kind: latency ? "latency" : "transfer",
-        intervalMs: latency ? CADENCE_MS[this.#plan.pingCadence] : null,
-        elapsedMs: this.#elapsed - segment.start,
-        durationMs: segment.end - segment.start,
-        confidence,
-      });
-    if (!eligible) {
-      stage.armedAt = null;
-      return false;
-    }
-    stage.armedAt ??= this.#elapsed;
-    if (this.#elapsed - stage.armedAt < EARLY_FINISH.confirmationMs) return false;
+      (latency
+        ? seats.length > 0 &&
+          latencyMayFinish({
+            intervalMs: CADENCE_MS[this.#plan.pingCadence],
+            elapsedMs: this.#elapsed - segment.start,
+            durationMs,
+            confidence,
+          })
+        : transferMayFinish(this.#aggregate.steadyError));
+    if (!eligible) return false;
     const total = this.#segments.at(-1)!.end;
     this.#segments = truncate(this.#segments, segment, this.#elapsed);
     if (this.#segments.at(-1)!.end < total) stage.finishedEarly = true;
-    stage.armedAt = null;
     return true;
   }
 

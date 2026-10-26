@@ -1,6 +1,6 @@
 // Cuts rates into buckets, measures steadiness and applies the early-finish rule (docs/MEASUREMENTS.md#stage-timing).
 
-const BUCKET_MS = 250;
+export const BUCKET_MS = 250;
 /** Early finish scores this trailing window. */
 export const SCORE_WINDOW_MS = 4_000;
 export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
@@ -67,6 +67,13 @@ export class RateSeries {
     if (this.recent.length > this.keep) this.recent.shift();
   }
 
+  /** The open window's rate count, and its mean's standard error as a share of that mean. */
+  get windowError(): { count: number; relative: number } {
+    const m = this.#window;
+    if (!m || m.count < 2 || !(m.mean > 0)) return { count: m?.count ?? 0, relative: Infinity };
+    return { count: m.count, relative: Math.sqrt(m.squares / (m.count - 1) / m.count) / m.mean };
+  }
+
   /** Reads the stabilityPct of every 250 ms rate, or of the open window's. */
   stability(window = false): number {
     const m = window ? (this.#window ?? fresh()) : this.#all;
@@ -116,45 +123,37 @@ export function stabilityPct(rates: readonly number[]): number {
 }
 
 export const EARLY_FINISH = {
-  /** This share of a stage must have run. */
+  /** An early finish ends a transfer once its steady window's mean has this standard error, as a share of the mean. */
+  standardError: 0.0025,
+  /** This share of the latency stage must have run. */
   minCoverage: 0.52,
   stability: 0.86,
   latencySamples: 8,
   transferSamples: 12,
-  /** The score must hold this long. */
-  confirmationMs: 1_100,
 } as const;
 
-/** A complete transfer stage's intervals must span this share of its planned time. */
-export const minCoverage = (early: boolean) => (early ? EARLY_FINISH.minCoverage : 0.75);
+/** A complete transfer stage's intervals must span this share of its planned time; an early finish's steady window
+ *  promises its own accuracy instead. */
+export const minCoverage = (early: boolean) => (early ? 0 : 0.75);
 
 /** Acts as a Schmitt trigger, stable from the threshold and unstable again 0.08 below it. */
 export const stillStable = (wasStable: boolean, score: number) =>
   score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
 
-/** The evidence a stage can reach within its time, never below the statistical minimum; `intervalMs` null is reply-driven. */
-function sampleFloor(
-  kind: "latency" | "transfer",
-  durationMs: number,
-  intervalMs: number | null,
-): number {
-  const requested = kind === "latency" ? EARLY_FINISH.latencySamples : EARLY_FINISH.transferSamples;
-  const budgetMs = Math.max(
-    0,
-    (Number.isFinite(durationMs) ? durationMs : 0) - EARLY_FINISH.confirmationMs,
+/** The replies a latency stage can reach within its time, never below three; `intervalMs` null is reply-driven. */
+function replyFloor(durationMs: number, intervalMs: number | null): number {
+  const requested = EARLY_FINISH.latencySamples;
+  if (!intervalMs) return requested;
+  const budgetMs = Math.max(0, Number.isFinite(durationMs) ? durationMs : 0);
+  const capacity = Math.min(
+    Math.ceil(SCORE_WINDOW_MS / intervalMs),
+    1 + Math.floor(budgetMs / intervalMs),
   );
-  const spacing = kind === "latency" ? intervalMs : BUCKET_MS;
-  if (!spacing) return requested;
-  const capacity =
-    kind === "latency"
-      ? Math.min(Math.ceil(SCORE_WINDOW_MS / spacing), 1 + Math.floor(budgetMs / spacing))
-      : Math.min(SCORE_BUCKETS, Math.floor(budgetMs / spacing));
-  return Math.max(Math.min(requested, kind === "latency" ? 3 : 4), Math.min(requested, capacity));
+  return Math.max(Math.min(requested, 3), Math.min(requested, capacity));
 }
 
-/** An early finish needs the coverage, a stable score and enough evidence. */
-export function mayFinishEarly(input: {
-  kind: "latency" | "transfer";
+/** The latency stage may finish early once it covers its share with a stable score and enough replies. */
+export function latencyMayFinish(input: {
   intervalMs: number | null;
   elapsedMs: number;
   durationMs: number;
@@ -165,6 +164,11 @@ export function mayFinishEarly(input: {
     durationMs > 0 &&
     input.elapsedMs / durationMs >= EARLY_FINISH.minCoverage &&
     confidence.score >= EARLY_FINISH.stability &&
-    confidence.sampleCount >= sampleFloor(input.kind, durationMs, input.intervalMs)
+    confidence.sampleCount >= replyFloor(durationMs, input.intervalMs)
   );
 }
+
+/** A transfer stage may finish early once its steady window holds enough rates and its mean's standard error is within
+ *  the promise; fewer rates would understate their own spread. */
+export const transferMayFinish = (steady: { count: number; relative: number }) =>
+  steady.count >= EARLY_FINISH.transferSamples && steady.relative < EARLY_FINISH.standardError;

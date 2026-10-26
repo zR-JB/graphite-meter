@@ -144,6 +144,13 @@ export function resources(
       receivedAtMs: setup.now(),
     };
   };
+  // Exactly `rate` per ms the download moved, as the lanes count it between reports.
+  const counted = (at: number) => {
+    let total = 0;
+    for (let ms = 0; ms < at - started; ms++)
+      if (activity.transfer.includes("down") && !peer.silent?.(activity, ms, "down")) total += rate;
+    return total;
+  };
   const stop = () => {
     measuring = false;
     stopLanes();
@@ -195,7 +202,7 @@ export function resources(
           : Promise.resolve(answer))
       );
     },
-    countAt: async (at) => peer.countAt?.(at) ?? null,
+    countAt: async (at) => peer.countAt?.(at) ?? (measuring ? counted(at) : null),
     flush: async (cutoff) => (await peer.flush?.(events, cutoff)) ?? null,
     replaceUpload: (signal) => peer.replaceUpload?.(signal) ?? Promise.resolve(),
   };
