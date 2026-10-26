@@ -25,8 +25,10 @@ async function killDuringDownload(page: Page, ...peers: Subprocess[]) {
 async function stopDuringDownload(page: Page, signal: NodeJS.Signals, ...peers: Subprocess[]) {
   await runButton(page, "Start test").click();
   await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
-  // Measured evidence exists once the readout shows a rate.
-  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
+  // The download's own rate, not the latency figure the dial hands over from while the stage still prepares.
+  await expect(page.locator('.results .card[data-tone="download"] .headline .num')).toHaveText(
+    /\d/,
+  );
   for (const peer of peers) peer.kill(signal);
 }
 
