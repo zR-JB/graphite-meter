@@ -1343,7 +1343,7 @@ export class Run {
             durationMs,
             confidence,
           })
-        : transferMayFinish(durationMs, this.#aggregate.steadyError));
+        : transferMayFinish(this.#aggregate.steadyError));
     if (!eligible) return false;
     const total = this.#segments.at(-1)!.end;
     this.#segments = truncate(this.#segments, segment, this.#elapsed);

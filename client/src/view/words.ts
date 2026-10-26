@@ -366,7 +366,7 @@ export const TIP = {
   stageTime: "Duration\nEach stage's planned length\nUp to the servers' limit, 5 min by default",
   bidirectionalStage: "Bidirectional stage\nDownload and upload at once, after the others",
   earlyFinish:
-    "Early finish\nEnds a transfer once its result holds to 0.25 %, latency after about half its time\nNever after a stall, gap or lost server",
+    "Early finish\nEnds a transfer once its mean's standard error is below 0.25 %, latency after about half its time\nNever after a stall, gap or lost server",
   units:
     "Units\nBits: Mbit/s, as internet plans\nBytes: MB/s, 8× lower, as downloads\n" +
     "Decimal: steps of 1,000 (k, M, G)\nBinary: steps of 1,024 (Ki, Mi, Gi)",

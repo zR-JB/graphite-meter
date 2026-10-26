@@ -123,7 +123,7 @@ export function stabilityPct(rates: readonly number[]): number {
 }
 
 export const EARLY_FINISH = {
-  /** An early-finished transfer's steady window holds its mean to this standard error: the accuracy it promises. */
+  /** An early finish ends a transfer once its steady window's mean has this standard error, as a share of the mean. */
   standardError: 0.0025,
   /** This share of the latency stage must have run. */
   minCoverage: 0.52,
@@ -140,21 +140,16 @@ export const minCoverage = (early: boolean) => (early ? 0 : 0.75);
 export const stillStable = (wasStable: boolean, score: number) =>
   score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
 
-/** The evidence a stage can reach within its time, never below the statistical minimum; `intervalMs` null is reply-driven. */
-function sampleFloor(
-  kind: "latency" | "transfer",
-  durationMs: number,
-  intervalMs: number | null,
-): number {
-  const requested = kind === "latency" ? EARLY_FINISH.latencySamples : EARLY_FINISH.transferSamples;
+/** The replies a latency stage can reach within its time, never below three; `intervalMs` null is reply-driven. */
+function replyFloor(durationMs: number, intervalMs: number | null): number {
+  const requested = EARLY_FINISH.latencySamples;
+  if (!intervalMs) return requested;
   const budgetMs = Math.max(0, Number.isFinite(durationMs) ? durationMs : 0);
-  const spacing = kind === "latency" ? intervalMs : BUCKET_MS;
-  if (!spacing) return requested;
-  const capacity =
-    kind === "latency"
-      ? Math.min(Math.ceil(SCORE_WINDOW_MS / spacing), 1 + Math.floor(budgetMs / spacing))
-      : Math.min(SCORE_BUCKETS, Math.floor(budgetMs / spacing));
-  return Math.max(Math.min(requested, kind === "latency" ? 3 : 4), Math.min(requested, capacity));
+  const capacity = Math.min(
+    Math.ceil(SCORE_WINDOW_MS / intervalMs),
+    1 + Math.floor(budgetMs / intervalMs),
+  );
+  return Math.max(Math.min(requested, 3), Math.min(requested, capacity));
 }
 
 /** The latency stage may finish early once it covers its share with a stable score and enough replies. */
@@ -169,15 +164,11 @@ export function latencyMayFinish(input: {
     durationMs > 0 &&
     input.elapsedMs / durationMs >= EARLY_FINISH.minCoverage &&
     confidence.score >= EARLY_FINISH.stability &&
-    confidence.sampleCount >= sampleFloor("latency", durationMs, input.intervalMs)
+    confidence.sampleCount >= replyFloor(durationMs, input.intervalMs)
   );
 }
 
 /** A transfer stage may finish early once its steady window holds enough rates and its mean's standard error is within
  *  the promise; fewer rates would understate their own spread. */
-export const transferMayFinish = (
-  durationMs: number,
-  steady: { count: number; relative: number },
-) =>
-  steady.count >= sampleFloor("transfer", durationMs, null) &&
-  steady.relative < EARLY_FINISH.standardError;
+export const transferMayFinish = (steady: { count: number; relative: number }) =>
+  steady.count >= EARLY_FINISH.transferSamples && steady.relative < EARLY_FINISH.standardError;
