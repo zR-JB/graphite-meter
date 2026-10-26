@@ -226,7 +226,11 @@ interface StageRun {
   opensAt: number;
   sealedAt: number;
   /** The next 250 ms edge of the window to ask the lanes' exact download counts at, and the last answered, by interval. */
-  edges: { next: number; asking: boolean; last: { interval: number; total: number } | null };
+  edges: {
+    next: number;
+    asking: boolean;
+    last: { interval: number; total: number; at: number } | null;
+  };
   /** The speed changes each server's live rate confirmed in the window, by server and direction. */
   changes: Map<string, Partial<Record<Direction, SpeedChange[]>>>;
   /** The plan as the window closed; later changes cannot reach a window that already ended. */
@@ -1001,10 +1005,8 @@ export class Run {
   #edge(stage: StageRun, now: number): void {
     const edges = stage.edges;
     if (edges.asking || now < edges.next) return;
-    // A late page skips to the latest edge and starts the chain again there.
-    const behind = Math.floor((now - edges.next) / BUCKET_MS);
-    if (behind) edges.last = null;
-    const at = edges.next + behind * BUCKET_MS;
+    // A late page asks at the latest edge; the rate since the last answer spans the edges it missed.
+    const at = edges.next + Math.floor((now - edges.next) / BUCKET_MS) * BUCKET_MS;
     edges.next = at + BUCKET_MS;
     edges.asking = true;
     const seats = active(stage);
@@ -1012,15 +1014,16 @@ export class Run {
     void Promise.all(seats.map((seat) => seat.resources.countAt(at))).then((counts) => {
       edges.asking = false;
       if (!this.#current(stage) || stage.phase !== "measuring") return;
-      const whole =
-        counts.every((count) => count !== null) &&
-        seats.every((seat) => !seat.server.removed) &&
-        interval === this.#aggregate.current?.id;
-      const total = counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
+      // An unanswered edge is spanned by the next; another interval or seat set starts the chain again.
+      if (counts.some((count) => count === null)) return;
+      const total = counts.reduce<number>((sum, count) => sum + count!, 0);
+      const current =
+        interval === this.#aggregate.current?.id && seats.every((seat) => !seat.server.removed);
       const last = edges.last;
-      edges.last = whole ? { interval, total } : null;
-      if (!whole || last?.interval !== interval) return;
-      this.#aggregate.edge(total - last.total, BUCKET_MS);
+      edges.last = current ? { interval, total, at } : null;
+      if (!current || last?.interval !== interval) return;
+      const start = this.#clock.start;
+      this.#aggregate.edge(total - last.total, last.at - start, at - start);
       if (this.#evaluate(stage)) this.#tick();
     });
   }

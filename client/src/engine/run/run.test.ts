@@ -1640,8 +1640,8 @@ test("a steady download ends once its steady window holds 12 rates whose mean is
   expect(result.stages.download).toBe("complete");
   expect(result.outcome).toBe("complete");
   const [interval] = result.multiServer.intervals;
-  // Twelve 250 ms rates, the first of which may begin before the window.
-  expect(interval!.headline!.endMs - interval!.headline!.startMs).toBeGreaterThan(2_700);
+  // Twelve 250 ms rates, each within the window.
+  expect(interval!.headline!.endMs - interval!.headline!.startMs).toBeGreaterThanOrEqual(3_000);
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
   // Lanes reporting every 20 ms, out of step with the tick, scatter the reported rates 3 %; the exact edges do not.
   const coarse = setup(
