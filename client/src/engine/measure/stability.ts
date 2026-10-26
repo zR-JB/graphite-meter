@@ -1,6 +1,6 @@
 // Cuts rates into buckets, measures steadiness and applies the early-finish rule (docs/MEASUREMENTS.md#stage-timing).
 
-const BUCKET_MS = 250;
+export const BUCKET_MS = 250;
 /** Early finish scores this trailing window. */
 export const SCORE_WINDOW_MS = 4_000;
 export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;

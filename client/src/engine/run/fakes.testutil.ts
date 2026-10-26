@@ -195,7 +195,13 @@ export function resources(
           : Promise.resolve(answer))
       );
     },
-    countAt: async (at) => peer.countAt?.(at) ?? null,
+    // A lane that moves without holes counts exactly `rate` per ms of its window.
+    countAt: async (at) =>
+      peer.countAt
+        ? peer.countAt(at)
+        : measuring && !peer.silent && activity.transfer.includes("down")
+          ? Math.round(rate * Math.max(0, at - started))
+          : null,
     flush: async (cutoff) => (await peer.flush?.(events, cutoff)) ?? null,
     replaceUpload: (signal) => peer.replaceUpload?.(signal) ?? Promise.resolve(),
   };

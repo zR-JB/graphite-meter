@@ -1600,16 +1600,32 @@ test("a steady upload and a steady latency stage each finish early", async () =>
 
 /** One server whose lanes report every 10 ms, as a server's lanes do together, at `rate(ms into the window)` bytes per ms; its
  *  upload receiver counts 1 byte per ms. */
-const paced = (rate: (ms: number) => number): Peer[] => [
-  {
-    id: "self",
-    silent: (_, __, dir) => dir === "down",
-    measure: (events) => {
-      const started = clock.t;
-      clock.every(10, () => events.download(10 * rate(clock.t - started)));
+const paced = (rate: (ms: number) => number): Peer[] => {
+  let started = 0;
+  let reported = 0;
+  const counted = (at: number) => {
+    let total = 0;
+    for (let ms = 0; ms < at - started; ms++) total += rate(ms);
+    return total;
+  };
+  const report = (events: StageEvents) => {
+    const total = counted(clock.t);
+    events.download(total - reported);
+    reported = total;
+  };
+  return [
+    {
+      id: "self",
+      silent: (_, __, dir) => dir === "down",
+      measure: (events) => {
+        started = clock.t;
+        clock.every(10, () => report(events));
+      },
+      countAt: counted,
+      flush: report,
     },
-  },
-];
+  ];
+};
 
 test("a steady download ends once its steady window holds 12 rates whose mean is within 0.25 %, before half its plan", async () => {
   const h = setup(
@@ -1624,8 +1640,18 @@ test("a steady download ends once its steady window holds 12 rates whose mean is
   expect(result.stages.download).toBe("complete");
   expect(result.outcome).toBe("complete");
   const [interval] = result.multiServer.intervals;
-  expect(interval!.headline!.endMs - interval!.headline!.startMs).toBeGreaterThan(2_900);
+  // Twelve 250 ms rates, the first of which may begin before the window.
+  expect(interval!.headline!.endMs - interval!.headline!.startMs).toBeGreaterThan(2_700);
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
+  // Lanes reporting every 20 ms, out of step with the tick, scatter the reported rates 3 %; the exact edges do not.
+  const coarse = setup(
+    [{ id: "self" }],
+    { download: true },
+    { downloadMs: 10_000 },
+    { adaptive: true },
+  );
+  coarse.start();
+  expect((await coarse.result()).durationMs).toBeLessThan(5_000);
 });
 
 test("a download whose rates scatter 1 % ends only once enough of them hold its mean within 0.25 %", async () => {

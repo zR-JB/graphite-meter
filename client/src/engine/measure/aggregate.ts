@@ -110,6 +110,8 @@ interface Open {
   stableQuiet: Totals;
   /** All directions together, for the early-finish score. */
   combined: RateSeries;
+  /** Download rates between the lanes' exact counts at each 250 ms edge, for the steady window's standard error. */
+  edges: RateSeries;
   total: Series;
   servers: Map<string, Series>;
   peakFrom: Boundary | null;
@@ -183,6 +185,7 @@ export class Aggregate {
       quiet: { down: 0, up: 0 },
       stableQuiet: { down: 0, up: 0 },
       combined: new RateSeries(SCORE_BUCKETS),
+      edges: new RateSeries(),
       total: series(),
       servers: new Map(participants.map((id) => [id, series()])),
       peakFrom: null,
@@ -349,15 +352,23 @@ export class Aggregate {
     return transferConfidence(this.#open?.combined.recent ?? []);
   }
 
-  /** The steady window's fewest rates and largest relative standard error over its directions; none while unsteady. */
+  /** The steady window's fewest rates and largest relative standard error over its directions, a download's from its exact
+   *  edges; none while unsteady. */
   get steadyError(): { count: number; relative: number } {
     const open = this.#open;
     if (!open?.stable) return { count: 0, relative: Infinity };
-    const errors = directions(open.record.stage).map((dir) => open.total[dir].windowError);
+    const errors = directions(open.record.stage).map((dir) =>
+      dir === "down" ? open.edges.windowError : open.total[dir].windowError,
+    );
     return {
       count: Math.min(...errors.map(({ count }) => count)),
       relative: Math.max(...errors.map(({ relative }) => relative)),
     };
+  }
+
+  /** Adds the bytes every lane counted between two edges of the window, `ms` apart. */
+  edge(bytes: number, ms: number): void {
+    this.#open?.edges.observe(bytes, ms);
   }
 
   resetStability(): void {
@@ -387,6 +398,7 @@ export class Aggregate {
     if (stable && !open.wasStable) {
       open.stableQuiet = { ...open.quiet };
       for (const dir of directions(open.record.stage)) open.total[dir].openWindow();
+      open.edges.openWindow();
     }
     open.wasStable = stable;
     return stable;

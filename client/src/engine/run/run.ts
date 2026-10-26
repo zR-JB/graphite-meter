@@ -13,6 +13,7 @@ import { ServerLatency, type LatencySummary } from "../measure/latency";
 import { LiveRates, type SpeedChange } from "../measure/live";
 import { combinedModel, type WireModel, type WirePath } from "../measure/overhead";
 import {
+  BUCKET_MS,
   latencyMayFinish,
   minCoverage,
   transferMayFinish,
@@ -224,6 +225,8 @@ interface StageRun {
   /** Page ms the measured window opened and closed at, however long its final evidence takes; Infinity until then. */
   opensAt: number;
   sealedAt: number;
+  /** The next 250 ms edge of the window to ask the lanes' exact download counts at, and the last answered, by interval. */
+  edges: { next: number; asking: boolean; last: { interval: number; total: number } | null };
   /** The speed changes each server's live rate confirmed in the window, by server and direction. */
   changes: Map<string, Partial<Record<Direction, SpeedChange[]>>>;
   /** The plan as the window closed; later changes cannot reach a window that already ended. */
@@ -632,6 +635,7 @@ export class Run {
       ramp: null,
       opensAt: Number.POSITIVE_INFINITY,
       sealedAt: Number.POSITIVE_INFINITY,
+      edges: { next: Number.POSITIVE_INFINITY, asking: false, last: null },
       changes: new Map(),
       plan: null,
     };
@@ -741,6 +745,7 @@ export class Run {
     const cadence = this.#cadence(activity);
     const at = this.#clock.activeMs();
     const opensAt = (stage.opensAt = this.#clock.read());
+    stage.edges = { next: opensAt + BUCKET_MS, asking: false, last: null };
     for (const seat of seats) {
       // A latency warmup's last replies show as the window opens.
       seat.server.buckets.flush(this.#elapsed);
@@ -991,6 +996,35 @@ export class Run {
     return !!sample && !final && !this.#stalled && this.#evaluate(stage);
   }
 
+  /** Asks the lanes for their exact download counts at each 250 ms edge: rates between reported counts alias against the
+   *  tick into a spread that is not the link's. */
+  #edge(stage: StageRun, now: number): void {
+    const edges = stage.edges;
+    if (edges.asking || now < edges.next) return;
+    // A late page skips to the latest edge and starts the chain again there.
+    const behind = Math.floor((now - edges.next) / BUCKET_MS);
+    if (behind) edges.last = null;
+    const at = edges.next + behind * BUCKET_MS;
+    edges.next = at + BUCKET_MS;
+    edges.asking = true;
+    const seats = active(stage);
+    const interval = this.#aggregate.current?.id ?? -1;
+    void Promise.all(seats.map((seat) => seat.resources.countAt(at))).then((counts) => {
+      edges.asking = false;
+      if (!this.#current(stage) || stage.phase !== "measuring") return;
+      const whole =
+        counts.every((count) => count !== null) &&
+        seats.every((seat) => !seat.server.removed) &&
+        interval === this.#aggregate.current?.id;
+      const total = counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
+      const last = edges.last;
+      edges.last = whole ? { interval, total } : null;
+      if (!whole || last?.interval !== interval) return;
+      this.#aggregate.edge(total - last.total, BUCKET_MS);
+      if (this.#evaluate(stage)) this.#tick();
+    });
+  }
+
   /** Keeps a speed change a server's live rate confirmed in the window, timed from the window's opening. */
   #changed(stage: StageRun, id: string, dir: Direction, change: SpeedChange | null): void {
     if (!change || stage.phase !== "measuring" || change.atMs < stage.opensAt) return;
@@ -1013,7 +1047,10 @@ export class Run {
   #sample(stage: StageRun, now: number): void {
     this.#sampledAt = now;
     const { transfer } = stage.activity;
-    if (transfer.includes("down")) this.#boundary(stage);
+    if (transfer.includes("down")) {
+      this.#boundary(stage);
+      if (stage.phase === "measuring") this.#edge(stage, now);
+    }
     if (stage.activity.stage === "latency" || !this.#current(stage)) return;
     const seats = active(stage);
     if (!this.#stalled)
