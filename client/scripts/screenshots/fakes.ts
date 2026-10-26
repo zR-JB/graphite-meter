@@ -1,4 +1,5 @@
 // The screenshot build's network and clock: fixed scenarios and timer-to-timer time, so runs pass alike at once.
+import { EDGE_MS } from "../../src/engine/lanes/bytes";
 import type { ProbeOutcome } from "../../src/protocol/messages";
 import type { Clock } from "../../src/engine/run/clock";
 import type {
@@ -132,6 +133,7 @@ export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
   let stop = () => {};
   let started = 0;
   let sent = 0;
+  let received = 0;
   const receiver = () => ({
     id: activity.stage,
     bytes: Math.round(sent),
@@ -149,13 +151,20 @@ export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
     measure() {
       stop();
       started = now;
+      let edge = 1;
       const stops: (() => void)[] = [];
       if (activity.transfer.length)
         stops.push(
           every(TICK_MS, () => {
             const ms = now - started;
-            if (activity.transfer.includes("down"))
-              events.download(Math.round((rate("down", ms) * TICK_MS) / 1000));
+            if (activity.transfer.includes("down")) {
+              const bytes = Math.round((rate("down", ms) * TICK_MS) / 1000);
+              received += bytes;
+              events.download(bytes);
+              // Download Stability reads the lanes' totals at each edge, which real lanes send with their reports.
+              for (; edge * EDGE_MS <= ms; edge++)
+                events.edge(edge, started + edge * EDGE_MS, received);
+            }
             if (activity.transfer.includes("up")) {
               sent += (rate("up", ms) * TICK_MS) / 1000;
               if (ms % RECEIVER_MS < TICK_MS) events.receiver(receiver());
