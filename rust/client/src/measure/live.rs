@@ -43,7 +43,14 @@ pub struct LiveRate {
     regime_start: f64,
     fast: f64,
     candidate: Option<Candidate>,
+    /// A regime holds once a readiness check finds it steady and, in single precision, not rising; changes count between held ones.
+    held: bool,
+    change: Option<(f64, f64)>,
     presented: f64,
+}
+
+fn departs(ratio: f64) -> bool {
+    ratio < 0.75 || ratio > 1.2
 }
 
 /// The presentation window spans 85% of the current regime, never less than 800 ms.
@@ -80,8 +87,9 @@ impl LiveRate {
             total: self.bytes,
         });
         self.recalculate();
+        let regime = self.regime_start;
         let shift = self.regime(start);
-        if shift.is_some() {
+        if self.regime_start != regime {
             self.recalculate();
         }
         let mut keep = (self.evidence - window(self.evidence - self.regime_start))
@@ -157,18 +165,19 @@ impl LiveRate {
                 return None;
             }
             let ratio = self.fast / self.presented;
-            if !(0.75..=1.2).contains(&ratio) {
-                // What the window read before the fast window that holds the change.
-                let window = window(self.evidence - self.regime_start);
-                let before = (self.presented * window - self.fast * FAST_WINDOW_MS)
-                    / (window - FAST_WINDOW_MS);
-                self.candidate = Some(Candidate {
-                    up: ratio > 1.2,
-                    start,
-                    reference: self.presented,
-                    before,
-                });
+            if !departs(ratio) {
+                return (ratio as f32 <= 1.0).then(|| self.hold()).flatten();
             }
+            // What the window read before the fast window that holds the change.
+            let window = window(self.evidence - self.regime_start);
+            let before =
+                (self.presented * window - self.fast * FAST_WINDOW_MS) / (window - FAST_WINDOW_MS);
+            self.candidate = Some(Candidate {
+                up: ratio > 1.2,
+                start,
+                reference: self.presented,
+                before,
+            });
             return None;
         };
         let ratio = if candidate.reference > 0.0 {
@@ -189,9 +198,19 @@ impl LiveRate {
             return None;
         }
         (self.regime_start, self.candidate) = (candidate.start, None);
-        Some(Shift {
-            since_ms: self.evidence - candidate.start,
-            from: candidate.before,
+        if self.held {
+            self.change = Some((candidate.start, candidate.before));
+        }
+        self.held = false;
+        None
+    }
+
+    fn hold(&mut self) -> Option<Shift> {
+        self.held = true;
+        let (start, from) = self.change.take()?;
+        departs(self.presented / from).then_some(Shift {
+            since_ms: self.evidence - start,
+            from,
         })
     }
 }

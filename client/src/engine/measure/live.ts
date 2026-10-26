@@ -18,6 +18,8 @@ interface Span {
   total: number;
 }
 
+const departs = (ratio: number) => ratio < 0.75 || ratio > 1.2;
+
 /** The growing window covers 85% of the current regime, never less than 800 ms. */
 const windowMs = (regimeAgeMs: number) => {
   const age = Math.max(0, regimeAgeMs) || 0;
@@ -42,8 +44,11 @@ export class RateEstimator {
   #regimeStart = 0;
   #fast = 0;
   #candidate: { up: boolean; start: number; reference: number; before: number } | null = null;
+  /** A regime holds once a readiness check finds it steady and, in single precision, not rising; changes count between held ones. */
+  #held = false;
+  #change: { start: number; before: number } | null = null;
 
-  /** Adds `bytes` over `durationMs` and returns the new regime this confirmed, if any. */
+  /** Adds `bytes` over `durationMs` and returns the change whose regime this found holding, if any. */
   observe(bytes: number, durationMs: number): Shift | null {
     if (!(durationMs > 0) || !Number.isFinite(durationMs)) return null;
     if (!this.#anchored) {
@@ -56,8 +61,9 @@ export class RateEstimator {
     this.#bytes += bytes;
     this.#spans.push({ start, end: this.#evidence, bytes, total: this.#bytes });
     this.#recalculate();
+    const regime = this.#regimeStart;
     const shift = this.#regime(start);
-    if (shift) this.#recalculate();
+    if (this.#regimeStart !== regime) this.#recalculate();
     const keep = Math.min(
       this.#evidence - windowMs(this.#evidence - this.#regimeStart),
       Math.max(this.#regimeStart, this.#evidence - FAST_WINDOW_MS),
@@ -118,7 +124,7 @@ export class RateEstimator {
     if (!candidate) {
       if (this.#evidence - this.#regimeStart < REGIME_READY_MS || this.presented <= 0) return null;
       const ratio = this.#fast / this.presented;
-      if (!(ratio < 0.75 || ratio > 1.2)) return null;
+      if (!departs(ratio)) return Math.fround(ratio) > 1 ? null : this.#hold();
       // What the window read before the fast window that holds the change.
       const window = windowMs(this.#evidence - this.#regimeStart);
       const before =
@@ -138,7 +144,18 @@ export class RateEstimator {
       return null;
     this.#regimeStart = candidate.start;
     this.#candidate = null;
-    return { sinceMs: this.#evidence - candidate.start, fromBytesPerSec: candidate.before };
+    if (this.#held) this.#change = { start: candidate.start, before: candidate.before };
+    this.#held = false;
+    return null;
+  }
+
+  #hold(): Shift | null {
+    const change = this.#change;
+    this.#held = true;
+    this.#change = null;
+    return change && departs(this.presented / change.before)
+      ? { sinceMs: this.#evidence - change.start, fromBytesPerSec: change.before }
+      : null;
   }
 }
 
@@ -149,7 +166,6 @@ export interface SpeedChange {
   toBytesPerSec: number;
 }
 
-/** A shift the estimator confirmed by `now`, timed back from `now` by its evidence. */
 const changeOf = (shift: Shift | null, rate: RateEstimator, now: number): SpeedChange | null =>
   shift && {
     atMs: now - shift.sinceMs,

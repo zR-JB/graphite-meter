@@ -44,12 +44,8 @@ test(
       const [server] = run.record!.result.multiServer.servers;
       for (const stage of ["download", "upload"] as const) {
         const own = server![stage]!;
-        // A ramp may confirm a rise first; the link's one drop is the only drop.
-        const drops = (own.changes ?? []).filter(
-          (each) => each.toBytesPerSec < each.fromBytesPerSec,
-        );
-        expect(drops.length).toBe(1);
-        const [change] = drops;
+        const [change, ...more] = own.changes ?? [];
+        expect(more).toEqual([]);
         // The live rate reads a drop within its 750 ms fast window, after the page saw the stage begin.
         expect(change!.atMs).toBeGreaterThan(SLOWS_AT_MS - 500);
         expect(change!.atMs).toBeLessThan(SLOWS_AT_MS + 3_000);
