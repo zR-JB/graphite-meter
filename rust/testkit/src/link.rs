@@ -1,9 +1,10 @@
 //! A loopback relay that stalls on demand; over UDP it also delays each direction, optionally through a bottleneck.
 use bytes::Bytes;
 use std::{
+    collections::HashMap,
     io,
     net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex, PoisonError},
     time::Duration,
 };
 use tokio::{
@@ -57,9 +58,13 @@ pub struct Link {
 }
 
 impl Link {
-    /// From now on nothing passes, in either direction.
+    /// From now on nothing passes, in either direction, until resumed.
     pub fn stall(&self) {
         self.stalled.send_replace(true);
+    }
+
+    pub fn resume(&self) {
+        self.stalled.send_replace(false);
     }
 
     pub async fn tcp(target: SocketAddr) -> io::Result<Self> {
@@ -89,7 +94,7 @@ impl Link {
         })
     }
 
-    /// Relays through `bottleneck`, if any, in each direction before the delay.
+    /// Relays through `bottleneck`, if any, each way before the delay; each client address gets its own socket, as behind a NAT.
     pub async fn udp(
         target: SocketAddr,
         one_way: Duration,
@@ -101,67 +106,47 @@ impl Link {
                 "a bottleneck passes at least 1 bit/s",
             ));
         }
-        let front = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let back = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        back.connect(target).await?;
-        for socket in [&front, &back] {
-            let socket = socket2::SockRef::from(socket);
-            socket.set_recv_buffer_size(16 << 20)?;
-            socket.set_send_buffer_size(16 << 20)?;
-        }
+        let front = Arc::new(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?);
+        buffers(&front)?;
         let address = front.local_addr()?;
-        let (front, back) = (Arc::new(front), Arc::new(back));
         let (stalled, stalls) = watch::channel(false);
-        let (client, clients) = watch::channel(None::<SocketAddr>);
-        let (up, mut ups) = mpsc::channel::<(Instant, Bytes)>(16384);
-        let (down, mut downs) = mpsc::channel::<(Instant, Bytes)>(16384);
+        let (up, mut ups) = mpsc::channel::<(Instant, Arc<UdpSocket>, Bytes)>(16384);
+        let (down, mut downs) = mpsc::channel::<(Instant, SocketAddr, Bytes)>(16384);
         let mut tasks = JoinSet::new();
         let (reader, open) = (front.clone(), stalls.clone());
         tasks.spawn(async move {
             let (mut buffer, mut pace) = (vec![0; 65536], Pace::new(bottleneck));
+            let down_pace = Arc::new(Mutex::new(Pace::new(bottleneck)));
+            let (mut backs, mut readers) = (HashMap::new(), JoinSet::new());
             loop {
                 let (count, from) = match reader.recv_from(&mut buffer).await {
                     Ok(received) => received,
                     Err(error) if transient(&error) => continue,
                     Err(_) => break,
                 };
-                client.send_replace(Some(from));
-                if !*open.borrow()
-                    && let Some(departure) = pace.departure(count)
-                {
-                    let _ = up
-                        .send((
-                            departure + one_way,
-                            Bytes::copy_from_slice(&buffer[..count]),
-                        ))
-                        .await;
-                }
-            }
-        });
-        let (reader, open) = (back.clone(), stalls.clone());
-        tasks.spawn(async move {
-            let (mut buffer, mut pace) = (vec![0; 65536], Pace::new(bottleneck));
-            loop {
-                let count = match reader.recv(&mut buffer).await {
-                    Ok(count) => count,
-                    Err(error) if transient(&error) => continue,
-                    Err(_) => break,
+                let back = match backs.get(&from) {
+                    Some(back) => Arc::clone(back),
+                    None => {
+                        let Ok(back) = connected(target).await else {
+                            continue;
+                        };
+                        let (down, open, pace) = (down.clone(), open.clone(), down_pace.clone());
+                        readers.spawn(back_to(back.clone(), from, down, open, pace, one_way));
+                        backs.insert(from, back.clone());
+                        back
+                    }
                 };
                 if !*open.borrow()
                     && let Some(departure) = pace.departure(count)
                 {
-                    let _ = down
-                        .send((
-                            departure + one_way,
-                            Bytes::copy_from_slice(&buffer[..count]),
-                        ))
-                        .await;
+                    let packet = Bytes::copy_from_slice(&buffer[..count]);
+                    let _ = up.send((departure + one_way, back, packet)).await;
                 }
             }
         });
         let open = stalls.clone();
         tasks.spawn(async move {
-            while let Some((at, packet)) = ups.recv().await {
+            while let Some((at, back, packet)) = ups.recv().await {
                 tokio::time::sleep_until(at).await;
                 if !*open.borrow() {
                     let _ = back.send(&packet).await;
@@ -169,10 +154,9 @@ impl Link {
             }
         });
         tasks.spawn(async move {
-            while let Some((at, packet)) = downs.recv().await {
+            while let Some((at, client, packet)) = downs.recv().await {
                 tokio::time::sleep_until(at).await;
-                let (client, stalled) = (*clients.borrow(), *stalls.borrow());
-                if let (Some(client), false) = (client, stalled) {
+                if !*stalls.borrow() {
                     let _ = front.send_to(&packet, client).await;
                 }
             }
@@ -182,6 +166,48 @@ impl Link {
             stalled,
             _tasks: tasks,
         })
+    }
+}
+
+fn buffers(socket: &UdpSocket) -> io::Result<()> {
+    let socket = socket2::SockRef::from(socket);
+    socket.set_recv_buffer_size(16 << 20)?;
+    socket.set_send_buffer_size(16 << 20)
+}
+
+async fn connected(target: SocketAddr) -> io::Result<Arc<UdpSocket>> {
+    let back = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    back.connect(target).await?;
+    buffers(&back)?;
+    Ok(Arc::new(back))
+}
+
+async fn back_to(
+    back: Arc<UdpSocket>,
+    client: SocketAddr,
+    down: mpsc::Sender<(Instant, SocketAddr, Bytes)>,
+    open: watch::Receiver<bool>,
+    pace: Arc<Mutex<Pace>>,
+    one_way: Duration,
+) {
+    let mut buffer = vec![0; 65536];
+    loop {
+        let count = match back.recv(&mut buffer).await {
+            Ok(count) => count,
+            Err(error) if transient(&error) => continue,
+            Err(_) => break,
+        };
+        let departure = (!*open.borrow())
+            .then(|| {
+                pace.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .departure(count)
+            })
+            .flatten();
+        if let Some(departure) = departure {
+            let packet = Bytes::copy_from_slice(&buffer[..count]);
+            let _ = down.send((departure + one_way, client, packet)).await;
+        }
     }
 }
 

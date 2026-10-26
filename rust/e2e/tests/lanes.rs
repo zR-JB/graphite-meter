@@ -192,3 +192,59 @@ async fn a_silent_quic_address_waits_at_least_3_s_while_a_delayed_answering_one_
         "{delay:?} outlasts the silent address's bound"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http3_upload_after_a_download_outage_starts_in_slow_start() {
+    let (server, client) = (Server::start().await, client());
+    let link = Link::udp(server.quic, Duration::from_millis(20), None)
+        .await
+        .unwrap();
+    let path = ThroughputPath {
+        origin: Origin::parse(&format!("https://{}", link.address)).unwrap(),
+        transport: ThroughputTransport::FetchStream,
+        protocol: Protocol::Http3,
+    };
+    let grant = LeaseRequest {
+        measurements: 2,
+        sessions: 0,
+        uploads: 0,
+    };
+    let targets = [path.origin.clone()];
+    client.lease(&server.http1, &targets, grant).await.unwrap();
+    let token = CancellationToken::new();
+    let plans = topology(&path, Stage::Download, Dir { down: 1, up: 0 });
+    let mut download = Lanes::start(
+        &client,
+        plans,
+        Work::Download,
+        Duration::ZERO,
+        token.clone(),
+    );
+    until(&mut download, Duration::from_secs(10), async |lanes| {
+        lanes.ready() && lanes.bytes() >= MIB
+    })
+    .await;
+    link.stall();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    link.resume();
+    let resumed = download.bytes();
+    until(&mut download, Duration::from_secs(10), async |lanes| {
+        lanes.bytes() >= resumed + MIB
+    })
+    .await;
+    token.cancel();
+    let id = client.upload_id(&server.http1).await.unwrap();
+    let plans = topology(&path, Stage::Upload, Dir { down: 0, up: 1 });
+    let token = CancellationToken::new();
+    let mut upload = Lanes::start(
+        &client,
+        plans,
+        Work::Upload(id.clone()),
+        Duration::ZERO,
+        token.clone(),
+    );
+    let counted =
+        async |_: &Lanes| received(&client, Protocol::Http1, &server.http1, &id).await >= 8 * MIB;
+    until(&mut upload, Duration::from_secs(3), counted).await;
+    token.cancel();
+}
