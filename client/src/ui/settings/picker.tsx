@@ -135,7 +135,7 @@ export function ConnectionPicker(props: {
             opened.set(!opened.peek());
           }}
         >
-          {() => (opened() ? "Hide other paths" : "Other paths")}
+          Other paths
         </button>
       </div>
       {/* The line keeps its slot from the start, though until the server list loads there is nothing to check or retry. */}
