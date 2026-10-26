@@ -10,7 +10,7 @@ rule holds in both clients unless [client differences](#client-differences) says
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Download / upload           | The payload bytes per second over the headline interval, shown in the rate unit you chose.                                                                                                               | There is no rate when no interval was long enough.                                                   |
 | Peak                        | The highest mean over the headline window and over consecutive ≥ 500 ms windows of its interval, on every clock.                                                                                         | There is no peak when there is no headline.                                                          |
-| Speed changes               | Each drop of a quarter or rise of a fifth the live rate confirmed in the window: when it first read it, from the window's start, the rate it read before and the rate it confirmed. They never split the headline.| There are none while the rate held.                                                                  |
+| Speed changes               | Each drop of a quarter or rise of a fifth in the window from one rate the live rate found steady, and not rising, to the next: when it first read it, from the window's start, the rate before and the rate after. A transport's ramp or a dip it recovers from is not one. They never split the headline.| There are none while the rate stayed steady, and none for a change too late in the window to find its new rate steady.                                                                  |
 | Latency                     | The median (P50) RTT of in-window replies, per server and stage. P95 is secondary.                                                                                                                       | It is missing when there is no reply, or when a failed stage has fewer than three replies and timeouts. |
 | Added latency               | The loaded median − idle median, per loaded stage and server, in ms. Negative values are kept.                                                                                                            | There is no value when either median is missing.                                                     |
 | Jitter                      | The mean absolute change between consecutive replies, in ms.                                                                                                                                             | It is missing when fewer than two replies are comparable.                                             |
@@ -181,6 +181,9 @@ RTT stays primary for latency, jitter, deadlines and added latency.
 | Stopped    | Canceled by the user; work a failure cancels carries that failure, never "stopped". |
 | Failed     | Nothing was measured; the browser keeps such a run in History as Incomplete.         |
 
+A stop after a stage's measured window closed lets that stage finish with what it measured, and its probes still out
+leave only its latency population incomplete. The run then ends Stopped, or after the last stage as it would have.
+
 In the browser a stage is Complete only when every selected server measured it. A server that left in an earlier
 stage, or failed its check at Start, did not reach it, so the stage is Partial even though its result stands.
 
@@ -210,7 +213,7 @@ pins:
 ## Saved history
 
 When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB,
-a run that failed once its stages began among them; a refused Start and a stop are never kept.
+a run that failed once its stages began among them; a refused Start and a stopped run are never kept.
 A record holds the build and the result. The result covers the selected servers and survivors, each server's engine
 version, path evidence and stage statuses, latency populations with exact probe counts, at most 128 recent
 intervals, each server's latest 128 speed changes per stage and direction, failures with reasons, each said as a sentence with the lane's or server's own text kept beside it, byte

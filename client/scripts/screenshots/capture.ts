@@ -336,17 +336,17 @@ const PALETTE = {
 };
 const png = (data: string) => `data:image/png;base64,${data}`;
 
-/** The desktop with the phone overlapping its lower-right corner, over a soft backdrop. */
+/** The desktop with the phone beside it, its rim over the window's right margin, on a soft backdrop. */
 function heroHtml(theme: Theme) {
   const c = PALETTE[theme];
   return `<style>
     body { margin: 0; }
-    .canvas { position: relative; width: 3480px; height: 2300px; border-radius: 52px; overflow: hidden;
+    .canvas { position: relative; width: 3850px; height: 2300px; border-radius: 52px; overflow: hidden;
       background: linear-gradient(${c.backdrop[0]}, ${c.backdrop[1]}); }
     .desk { position: absolute; left: 150px; top: 150px; width: 2880px; height: 1800px; border-radius: 30px;
       overflow: hidden; box-shadow: 0 24px 100px rgb(0 0 0 / ${c.shadow}); }
     .desk::after { content: ""; position: absolute; inset: 0; border-radius: 30px; box-shadow: inset 0 0 0 3px ${c.edge}; }
-    .phone { position: absolute; left: 2641px; top: 727px; width: 689px; height: 1423px; border-radius: 125px;
+    .phone { position: absolute; left: 3010px; top: 727px; width: 689px; height: 1423px; border-radius: 125px;
       background: #16181c; box-shadow: inset 0 0 0 1px #16181c, inset 0 0 0 5px #464b54,
       0 28px 90px rgb(0 0 0 / ${Math.min(1, c.shadow * 1.6)}); }
     .screen { position: absolute; left: 30px; top: 30px; width: 629px; height: 1363px; border-radius: 95px;
@@ -522,7 +522,7 @@ const terminal: Record<Theme, { canvas: string; rows: Cell[][] }> =
 const studio = new Page({ monitorDisplay: false });
 await studio.goto("about:blank");
 for (const theme of THEMES) {
-  await render(studio, heroHtml(theme), { width: 3480, height: 2300 }, 2400, `hero-${theme}.png`);
+  await render(studio, heroHtml(theme), { width: 3850, height: 2300 }, 2400, `hero-${theme}.png`);
   await render(
     studio,
     phonesHtml(theme),

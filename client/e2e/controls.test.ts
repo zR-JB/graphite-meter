@@ -320,6 +320,25 @@ test("the topbar menu opens, moves, acts and closes from the keyboard", async (p
     .toBe(true);
 });
 
+test("a path picker's fold opens and closes from the keyboard, its name kept and its state told", async (page) => {
+  await open(page);
+  const settings = await openSettings(page);
+  const picker = settings.getByRole("group", { name: "Throughput path" });
+  const fold = picker.getByRole("button", { name: "Other paths", exact: true });
+  const other = picker.getByRole("radio", { name: /^HTTP\/2/ });
+  await expect(fold).toBeEnabled();
+  await expect(fold).toHaveAttribute("aria-expanded", "false");
+  await expect(other).toHaveCount(0);
+  await fold.evaluate((el: HTMLElement) => el.focus());
+  await page.press("Enter");
+  await expect(fold).toHaveAttribute("aria-expanded", "true");
+  await expect(other).toHaveCount(1);
+  await page.press(" ");
+  await expect(fold).toHaveAttribute("aria-expanded", "false");
+  await expect(other).toHaveCount(0);
+  await expect(fold).toBeFocused();
+});
+
 test("the first result saves after the application server becomes unreachable", async (page) => {
   const oslo = await spawnPeer("Oslo", catalog(frankfurt));
   try {

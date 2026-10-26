@@ -471,12 +471,37 @@
       min-height: var(--hit);
     }
   }
-  .choices > button {
-    display: flex;
+  /* A fold under its choices: the select's caret in the check column, turning up while the rest show. */
+  .choices > .fold {
+    color: var(--text-soft);
+    font: var(--role-caption);
+  }
+  .choices > .fold::before {
+    content: "";
+    justify-self: center;
+    width: 7px;
+    height: 7px;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    translate: 0 -2px;
+    rotate: 45deg;
+    transition:
+      translate var(--dur-hover) var(--ease-out),
+      rotate var(--dur-hover) var(--ease-out);
+  }
+  .choices > .fold[aria-expanded="true"]::before {
+    translate: 0 2px;
+    rotate: 225deg;
+  }
+  .choices > .fold:disabled {
+    opacity: 0.5;
   }
   @media (hover: hover) {
     .choices > :is(label, button):hover:not(:has(> :disabled), :disabled) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
+    }
+    .choices > .fold:hover:not(:disabled) {
+      color: var(--text);
     }
   }
   /* A choice's or a menu item's second line says what it does; the ring alone marks the chosen one. */

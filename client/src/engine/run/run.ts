@@ -40,7 +40,7 @@ import {
   type StageResources,
   type TestConfig,
 } from "../types";
-import { pageClock, RunClock, type Clock } from "./clock";
+import { abortable, pageClock, RunClock, type Clock } from "./clock";
 import {
   failureScope,
   failureSentence,
@@ -235,6 +235,8 @@ interface StageRun {
   changes: Map<string, Partial<Record<Direction, SpeedChange[]>>>;
   /** The plan as the window closed; later changes cannot reach a window that already ended. */
   plan: StagePlans[Stage] | null;
+  /** A stop cut its probes' drain, so what they still owe is unknown, not failed. */
+  cut: boolean;
 }
 
 const active = (stage: StageRun) =>
@@ -282,6 +284,7 @@ export class Run {
   readonly #mint: RunOptions["mint"];
   /** Ends the upload ids still being minted when the run ends. */
   readonly #minting = new AbortController();
+  readonly #stopped = new AbortController();
   #mintedAt = 0;
   readonly #streams: RunOptions["streams"];
   readonly #page: Clock;
@@ -393,7 +396,14 @@ export class Run {
     this.#arm();
   }
 
-  /** The user's stop: nothing is reported or saved. */
+  /** The user's stop: a stage whose window closed settles first, ending the run if it was last; `abort` ends at once. */
+  stop(): void {
+    const stage = this.#stage;
+    if (this.#state === "running" && stage?.phase === "finalizing" && stage.measured)
+      this.#stopped.abort();
+    else this.abort();
+  }
+
   abort(): void {
     if (this.#state !== "running") return;
     this.#state = "aborted";
@@ -415,7 +425,9 @@ export class Run {
   canChange(stage: Stage): boolean {
     return (
       this.#state !== "running" ||
-      (!this.#finishing && changeable(this.#stage?.activity.stage ?? null, stage))
+      (!this.#finishing &&
+        !this.#stopped.signal.aborted &&
+        changeable(this.#stage?.activity.stage ?? null, stage))
     );
   }
 
@@ -642,6 +654,7 @@ export class Run {
       edges: { next: Number.POSITIVE_INFINITY, asking: false, last: null },
       changes: new Map(),
       plan: null,
+      cut: false,
     };
     this.#stage = stage;
     this.#stages.set(activity.stage, stage);
@@ -887,12 +900,13 @@ export class Run {
       probesIncomplete: () => {
         if (!counting()) return;
         server.latency.stages[name].markIncomplete();
-        this.#failure(
-          server,
-          "latency",
-          "connection-lost",
-          "Latency observations were interrupted",
-        );
+        if (!stage.cut)
+          this.#failure(
+            server,
+            "latency",
+            "connection-lost",
+            "Latency observations were interrupted",
+          );
       },
       stalled: (stall) => {
         if (!live()) return;
@@ -1433,7 +1447,10 @@ export class Run {
     for (const seat of active(stage))
       if (seat.latencyStall) this.#failLatency(stage, seat, seat.latencyStall.detail);
     for (const seat of active(stage)) finish(seat);
-    await Promise.all(finishing.values());
+    await abortable(Promise.all(finishing.values()), this.#stopped.signal).catch(() => {
+      stage.cut = true;
+      for (const seat of finishing.keys()) seat.resources.discard(true);
+    });
     if (!this.#current(stage)) return;
     stage.phase = "settled";
     // Readiness waits and checkpoints end with their stage.
@@ -1469,6 +1486,7 @@ export class Run {
     // A live change during the stage end may have replaced or removed the next segment.
     const next = segmentAt(this.#segments, this.#elapsed);
     if (this.#finishing || !next) return this.#complete();
+    if (this.#stopped.signal.aborted) return this.abort();
     this.#prepare(next);
   }
 
