@@ -13,7 +13,7 @@ A self-hosted speed and latency test, in one container or one binary, for the br
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
-  <img src="docs/assets/hero-light.png" width="100%" alt="The browser app on a desktop after a completed test, 9.40 Gbit/s down and 9.39 Gbit/s up with 0.4 ms idle latency and 1.3 ms added under load, and a phone in front of it showing another test at 1197 Mbit/s down, 864.0 Mbit/s up and 2.7 ms latency">
+  <img src="docs/assets/hero-light.png" width="100%" alt="The browser app on a desktop after a completed test, 9.40 Gbit/s down and 9.39 Gbit/s up with 0.4 ms idle latency and 1.3 ms added under load, and a phone beside it showing another test at 1197 Mbit/s down with 2.7 ms latency">
 </picture>
 
 <sub>Browser app 0.13.5 in Chrome on a desktop and a phone.</sub>
