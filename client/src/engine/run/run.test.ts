@@ -1252,6 +1252,85 @@ test("an aborted stage end delivers no late events", async () => {
   expect(h.events).toHaveLength(count);
 });
 
+const draining: Peer = {
+  id: "self",
+  measure: probe(10, 4),
+  finish: () => new Promise<void>(() => {}),
+  discard: (events, incomplete) => incomplete && events.probesIncomplete(),
+};
+
+test("a stop after the last stage's window closed keeps its result and completes the run", async () => {
+  const h = setup([draining], { download: true }, { downloadMs: 1_000 }, { loadedLatency: true });
+  h.start();
+  await h.elapse(1_100);
+  expect(h.calls).toContain("end:self");
+  h.run.stop();
+  const result = await h.result(100);
+  expect(result.outcome).toBe("complete");
+  near(result.download?.reportedBytesPerSec, 1_000);
+  expect(result.latencyByStage.download).toMatchObject({ accountingComplete: false, p50Ms: 10 });
+  expect(result.multiServer.failures).toEqual([]);
+});
+
+test("a stop in a window ends the run at once; one after it closed keeps that stage and runs no other", async () => {
+  for (const [at, settled] of [
+    [500, []],
+    [1_100, ["upload"]],
+  ] as const) {
+    const h = setup(
+      [{ id: "self", checkpointLagMs: 400 }],
+      { upload: true, bidirectional: true },
+      { uploadMs: 1_000, bidirectionalMs: 1_000 },
+    );
+    h.start();
+    await h.elapse(at);
+    h.run.stop();
+    expect(h.events.some(({ type }) => type === "aborted")).toBe(!settled.length);
+    await h.elapse(1_000);
+    const ends = h.events.flatMap((event) => (event.type === "stageEnd" ? [event] : []));
+    expect(ends.map(({ stage, status }) => `${stage} ${status}`)).toEqual(
+      settled.map((stage) => `${stage} complete`),
+    );
+    if (ends[0]) near(ends[0].results.upload?.reportedBytesPerSec, 1_000);
+    expect(
+      h.events.flatMap(({ type }) => (type === "aborted" || type === "complete" ? [type] : [])),
+    ).toEqual(["aborted"]);
+    expect(h.calls).not.toContain("begin:self:bidirectional");
+  }
+});
+
+test("a stop keeps the failures it did not cause, however it ends the stage", async () => {
+  const failures: Record<string, string[]> = {};
+  for (const stopped of [false, true]) {
+    const drains: Partial<Peer> = {
+      measure: draining.measure,
+      discard: draining.discard,
+      finish: () => new Promise<void>((resolve) => later(300, resolve)),
+    };
+    const signedOut = () =>
+      clock.t >= 1_000
+        ? new Promise<null>((_, reject) =>
+            later(200, () => reject(new SignInRequired(prepared("b", true).server))),
+          )
+        : undefined;
+    const h = setup(
+      two({ ...drains }, { ...drains, checkpoint: signedOut }),
+      { upload: true },
+      { uploadMs: 1_000 },
+      { loadedLatency: true },
+    );
+    h.start();
+    await h.elapse(1_050);
+    if (stopped) h.run.stop();
+    const result = await h.result(3_000);
+    failures[`${stopped}`] = result.multiServer.failures.map(
+      ({ serverId, scope, reason }) => `${serverId} ${scope} ${reason}`,
+    );
+  }
+  expect(failures.true).toEqual(failures.false!);
+  expect(failures.true).toContain("b latency connection-lost");
+});
+
 test("no progress runs ahead of the segment shown, and a finalizing stage stops its clock", async () => {
   const slow = { finish: () => new Promise<void>((resolve) => later(800, resolve)) };
   const h = setup(

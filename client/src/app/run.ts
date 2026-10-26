@@ -173,7 +173,8 @@ export function createRun(env: RunEnvironment) {
       STAGES.map((name) => [name, reported[name] ?? "not-run"]),
     ) as Record<Stage, StageStatus>;
     // A stopped run keeps the stage it stopped in as it stood.
-    const current = running() || phase() === "aborted" ? stage() : null;
+    const now = stage();
+    const current = (running() || phase() === "aborted") && now && !reported[now] ? now : null;
     return grid({ ...results(), stages, multiServer: shown }, current);
   });
   /** Each settled stage as the grid judges it. */
@@ -427,7 +428,7 @@ export function createRun(env: RunEnvironment) {
   function toggle(): void {
     if (running.peek()) {
       cancel();
-      run?.abort();
+      run?.stop();
       return;
     }
     if (pending) return cancel();
