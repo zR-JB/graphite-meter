@@ -1598,6 +1598,44 @@ test("a steady upload and a steady latency stage each finish early", async () =>
   expect(result.latency?.reportedMs).toBe(10);
 });
 
+/** One server whose lanes report every millisecond at `rate(ms into the window)` bytes per ms. */
+const paced = (rate: (ms: number) => number): Peer[] => [
+  {
+    id: "self",
+    rate: 0,
+    measure: (events) => {
+      const started = clock.t;
+      clock.every(1, () => events.download(rate(clock.t - started)));
+    },
+  },
+];
+
+test("a steady download ends once its steady window holds 12 rates whose mean is within 0.25 %, before half its plan", async () => {
+  const h = setup(
+    paced(() => 1),
+    { download: true },
+    { downloadMs: 10_000 },
+    { adaptive: true },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.durationMs).toBeLessThan(5_000);
+  const [interval] = result.multiServer.intervals;
+  expect(interval!.headline!.endMs - interval!.headline!.startMs).toBeGreaterThanOrEqual(3_000);
+  expect(result.download?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
+});
+
+test("rates that scatter 5 % either side, steady enough to score, keep the download to its plan", async () => {
+  const h = setup(
+    paced((ms) => (Math.floor(ms / 500) % 2 ? 1.1 : 1)),
+    { download: true },
+    { downloadMs: 10_000 },
+    { adaptive: true },
+  );
+  h.start();
+  expect((await h.result()).durationMs).toBeGreaterThanOrEqual(10_000);
+});
+
 test("an early finish's steady window opens on what the lanes had counted there, however late they report", async () => {
   // 1 byte per ms, each reported 30 ms after it was counted: a tick sees 30 bytes too few.
   let started = 0;
@@ -1614,7 +1652,8 @@ test("an early finish's steady window opens on what the lanes had counted there,
         rate: 0,
         measure: (events) => {
           started = clock.t;
-          clock.every(20, () => report(events, 30));
+          // Reports every millisecond, so the tick's own sampling adds no spread to the rates.
+          clock.every(1, () => report(events, 30));
         },
         countAt: (at) => at - started,
         flush: (events) => report(events, 0),

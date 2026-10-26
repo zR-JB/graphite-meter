@@ -12,7 +12,12 @@ import { LatencyBuckets, type LatencyBucket } from "../measure/buckets";
 import { ServerLatency, type LatencySummary } from "../measure/latency";
 import { LiveRates, type SpeedChange } from "../measure/live";
 import { combinedModel, type WireModel, type WirePath } from "../measure/overhead";
-import { EARLY_FINISH, mayFinishEarly, minCoverage, type Confidence } from "../measure/stability";
+import {
+  latencyMayFinish,
+  minCoverage,
+  transferMayFinish,
+  type Confidence,
+} from "../measure/stability";
 import { protocolFromNextHop } from "../net/paths";
 import {
   CADENCE_MS,
@@ -212,8 +217,6 @@ interface StageRun {
   closedAt: number;
   /** A hole, stall, dropout or gap: no early finish this stage. */
   disturbed: boolean;
-  /** Timeline ms since when an early finish has been eligible. */
-  armedAt: number | null;
   evaluatedAt: number;
   finishedEarly: boolean;
   /** Where the warmup began, in page ms and the download bytes shown then: its ramp's origin. */
@@ -426,8 +429,6 @@ export class Run {
     const now = segmentAt(this.#segments, this.#elapsed);
     const continued =
       !ended && shown && now?.phase === shown.phase && now.activity.stage === shown.activity.stage;
-    // An early finish stays armed only on the segment it armed on.
-    if (stage && !continued) stage.armedAt = null;
     if (continued) {
       this.#shown = now;
       if (stage) {
@@ -570,7 +571,6 @@ export class Run {
       return stage && stage.phase !== "settled" ? void this.#endStage(stage) : this.#complete();
     const segment = segmentAt(this.#segments, this.#elapsed);
     if (!segment) return;
-    if (stage?.armedAt != null && this.#evaluate(stage)) return this.#tick();
     if (segment !== this.#shown) return this.#enter(segment);
     const budgetMs = segment.end - segment.start;
     const key = `${segment.start}:${budgetMs}`;
@@ -627,7 +627,6 @@ export class Run {
       measured: false,
       closedAt: 0,
       disturbed: false,
-      armedAt: null,
       evaluatedAt: -Infinity,
       finishedEarly: false,
       ramp: null,
@@ -1237,7 +1236,6 @@ export class Run {
     for (const segment of this.#segments)
       if (segment.activity.stage === stage.activity.stage)
         this.#elapsed = Math.max(this.#elapsed, segment.end);
-    stage.armedAt = null;
     queueMicrotask(() => this.#tick());
   }
 
@@ -1272,7 +1270,6 @@ export class Run {
   /** A stall, dropout or gap restarts the steadiness window and rules out finishing this stage early. */
   #disturb(stage: StageRun): void {
     stage.disturbed = true;
-    stage.armedAt = null;
     this.#aggregate.resetStability();
     if (stage.activity.stage === "latency")
       for (const server of this.#servers) server.latency.idle.reset();
@@ -1307,10 +1304,8 @@ export class Run {
       segment.phase === "warmup" ||
       stage.phase !== "measuring" ||
       !this.#plan.adaptive
-    ) {
-      stage.armedAt = null;
+    )
       return false;
-    }
     const latency = segment.phase === "latency";
     const seats = latency
       ? active(stage).filter((seat) => !seat.server.latency.failed.has("latency"))
@@ -1336,27 +1331,23 @@ export class Run {
     }
     stage.evaluatedAt = this.#clock.read();
     const at = this.#clock.activeMs();
+    const durationMs = segment.end - segment.start;
     const eligible =
       !stage.disturbed &&
-      (latency ? seats.length > 0 : this.#aggregate.sufficient) &&
       !seats.some((seat) => recovering(stage, seat, at)) &&
-      mayFinishEarly({
-        kind: latency ? "latency" : "transfer",
-        intervalMs: latency ? CADENCE_MS[this.#plan.pingCadence] : null,
-        elapsedMs: this.#elapsed - segment.start,
-        durationMs: segment.end - segment.start,
-        confidence,
-      });
-    if (!eligible) {
-      stage.armedAt = null;
-      return false;
-    }
-    stage.armedAt ??= this.#elapsed;
-    if (this.#elapsed - stage.armedAt < EARLY_FINISH.confirmationMs) return false;
+      (latency
+        ? seats.length > 0 &&
+          latencyMayFinish({
+            intervalMs: CADENCE_MS[this.#plan.pingCadence],
+            elapsedMs: this.#elapsed - segment.start,
+            durationMs,
+            confidence,
+          })
+        : transferMayFinish(durationMs, this.#aggregate.steadyError));
+    if (!eligible) return false;
     const total = this.#segments.at(-1)!.end;
     this.#segments = truncate(this.#segments, segment, this.#elapsed);
     if (this.#segments.at(-1)!.end < total) stage.finishedEarly = true;
-    stage.armedAt = null;
     return true;
   }
 

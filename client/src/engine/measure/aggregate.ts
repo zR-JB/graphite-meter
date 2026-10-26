@@ -143,10 +143,6 @@ export class Aggregate {
     return this.#open?.record ?? null;
   }
 
-  get sufficient(): boolean {
-    return !!this.#open?.record.complete && sufficient(this.#open.record.full);
-  }
-
   begin(
     stage: TransferStage,
     participants: string[],
@@ -351,6 +347,17 @@ export class Aggregate {
   /** The early-finish score over the trailing four seconds of all directions together. */
   confidence() {
     return transferConfidence(this.#open?.combined.recent ?? []);
+  }
+
+  /** The steady window's fewest rates and largest relative standard error over its directions; none while unsteady. */
+  get steadyError(): { count: number; relative: number } {
+    const open = this.#open;
+    if (!open?.stable) return { count: 0, relative: Infinity };
+    const errors = directions(open.record.stage).map((dir) => open.total[dir].windowError);
+    return {
+      count: Math.min(...errors.map(({ count }) => count)),
+      relative: Math.max(...errors.map(({ relative }) => relative)),
+    };
   }
 
   resetStability(): void {
