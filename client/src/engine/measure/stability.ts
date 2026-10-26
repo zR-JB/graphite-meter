@@ -1,6 +1,9 @@
 // Cuts rates into buckets, measures steadiness and applies the early-finish rule (docs/MEASUREMENTS.md#stage-timing).
 
-export const BUCKET_MS = 250;
+import { EDGE_MS } from "../lanes/bytes";
+
+/** A rate per lane edge, so download rates fall between the lanes' exact counts. */
+export const BUCKET_MS = EDGE_MS;
 /** Early finish scores this trailing window. */
 export const SCORE_WINDOW_MS = 4_000;
 export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;

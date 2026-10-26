@@ -412,7 +412,7 @@ test("a count sums every lane's total at a time without cutting the lanes, or is
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(3_000);
 });
 
-test("an edge reaches the run once every lane passed it, summed; a lane whose first edge came later counted nothing before", async () => {
+test("an edge reaches the run once every lane passed it, summed, and none once the lanes stop", async () => {
   const joined = stage(DOWNLOAD);
   void joined.resources.prepare(new AbortController().signal);
   await elapse(150);
@@ -423,12 +423,21 @@ test("an edge reaches the run once every lane passed it, summed; a lane whose fi
   edges(lanes[0]!, 1, [100, 200]);
   edges(lanes[1]!, 1, [10]);
   expect(joined.events.filter(([type]) => type === "edge")).toEqual([]);
-  edges(lanes[2]!, 2, [5]);
+  edges(lanes[2]!, 1, [0, 5]);
   edges(lanes[1]!, 2, [20, 30]);
   expect(joined.events.filter(([type]) => type === "edge")).toEqual([
     ["edge", 1, 1_250, 110],
     ["edge", 2, 1_500, 225],
   ]);
+  // A lane that answered the final flush late reports on while its carrier stops.
+  const cutoff = performance.now();
+  void joined.resources.flush(cutoff);
+  for (const lane of lanes.slice(0, 2))
+    lane.report({ type: "flushed", total: 0, at: performance.timeOrigin + cutoff });
+  await elapse(300);
+  void joined.resources.finish();
+  edges(lanes[2]!, 3, [9]);
+  expect(joined.events.filter(([type]) => type === "edge")).toHaveLength(2);
 });
 
 test("a session's stop waits for its worker's acknowledgement, at most 3.25 s", async () => {

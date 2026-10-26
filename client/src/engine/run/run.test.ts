@@ -1741,6 +1741,54 @@ test("a steady download ends once its steady window holds 12 rates whose mean is
   expect(steady.multiServer.servers[0]!.download?.stabilityPct).toBeGreaterThan(99.9);
 });
 
+test("servers whose lanes pass their edges out of step join edge by edge, so their spread stays theirs", async () => {
+  // Both alternate 1 and 2 bytes per ms each 250 ms; one server's lanes report two edges at a time.
+  const peer = (id: string, pairs: boolean): Peer => {
+    let started = 0;
+    let reported = 0;
+    let edge = 1;
+    const counted = (at: number) => {
+      let total = 0;
+      for (let ms = 0; ms < at - started; ms++) total += Math.floor(ms / 250) % 2 ? 2 : 1;
+      return total;
+    };
+    const report = (events: StageEvents) => {
+      const total = counted(clock.t);
+      events.download(total - reported);
+      reported = total;
+      const ms = clock.t - started;
+      if (pairs && !(ms % 500 >= 250 && ms % 500 < 260)) return;
+      for (; started + edge * 250 <= clock.t; edge++)
+        events.edge(edge, started + edge * 250, counted(started + edge * 250));
+    };
+    return {
+      id,
+      silent: (_, __, dir) => dir === "down",
+      measure: (events) => {
+        started = clock.t;
+        edge = 1;
+        clock.every(10, () => report(events));
+      },
+      countAt: counted,
+      flush: report,
+    };
+  };
+  for (const pairs of [false, true]) {
+    const h = setup(
+      [peer("a", false), peer("b", pairs)],
+      { download: true },
+      { downloadMs: 10_000 },
+      { adaptive: true },
+    );
+    h.start();
+    const result = await h.result();
+    expect(result.durationMs).toBeGreaterThanOrEqual(10_000);
+    expect(result.download?.stabilityPct).toBeCloseTo(66.7, 0);
+    for (const server of result.multiServer.servers)
+      expect(server.download?.stabilityPct).toBeCloseTo(66.7, 0);
+  }
+});
+
 test("a download whose rates scatter 1 % ends only once enough of them hold its mean within 0.25 %", async () => {
   // Rates of 1 and 1.02 by turns have a 1 % spread, so the mean's standard error reaches 0.25 % at 16 of them.
   const h = setup(

@@ -176,9 +176,9 @@ export class Carrier {
     const standsAt = (at: number) => (latest = Math.max(latest ?? Number.NEGATIVE_INFINITY, at));
     for (const lane of this.#lanes) lane.held = 0;
     await this.#ask(cutoff, (lane, { total, at }) => {
-      // Past FLUSH_MS the lane's count is settled without its answer.
-      if (lane.held === null) return;
+      // Past FLUSH_MS the lane's count is settled without its answer; it counts nothing more either way.
       lane.cut = true;
+      if (lane.held === null) return;
       lane.held = null;
       if (total > lane.counted) this.#count(lane, total - lane.counted);
       standsAt(fromEpoch(at));
@@ -292,22 +292,20 @@ export class Carrier {
     }
   }
 
-  /** Passes on each edge once every lane reported its total there; a lane whose first edge came later counted nothing
-   *  by the earlier ones. */
+  /** Passes on each edge once every lane reported its total there. */
   #edges(lane: Lane, edges: Edges): void {
     if (lane.edges) lane.edges.totals.push(...edges.totals);
     else lane.edges = { first: edges.first, totals: [...edges.totals] };
     const lanes = this.#lanes;
-    if (!lanes.every((each) => each.edges)) return;
+    // A stopping carrier has no lanes left to join.
+    if (!lanes.length || !lanes.every((each) => each.edges)) return;
     const from = Math.min(...lanes.map((each) => each.edges!.first));
     const to = Math.min(...lanes.map((each) => each.edges!.first + each.edges!.totals.length - 1));
     for (let index = from; index <= to; index++) {
       let total = 0;
       for (const each of lanes) {
-        const own = each.edges!;
-        if (index < own.first) continue;
-        total += own.totals.shift()!;
-        own.first++;
+        total += each.edges!.totals.shift()!;
+        each.edges!.first++;
       }
       this.#host.edge(index, this.#opened! + index * EDGE_MS, total);
     }
