@@ -241,3 +241,23 @@ test("a start waits while another tab holds the run, runs once it frees, and let
   await h.clock.advance(3_000);
   expect([h.run.phase(), held]).toEqual(["complete", 0]);
 });
+
+test("a run stopped once its stage's window closed shows that stage as it settled", async () => {
+  const slow = (h: { clock: FakeClock }) => () =>
+    new Promise<void>((resolve) => h.clock.after(300, resolve));
+  const peers: Peer[] = [{ id: "self" }, { id: "b", rate: 3 }];
+  const h = setup(only({ download: true, upload: true }, { downloadMs: 3_000, uploadMs: 1_000 }), {
+    servers: peers,
+  });
+  for (const peer of peers) peer.finish = slow(h);
+  peers[1]!.measure = (events) =>
+    h.clock.after(2_500, () => events.failed("connection-lost", "fixture"));
+  h.run.toggle();
+  await h.clock.advance(3_100);
+  h.run.toggle();
+  await h.clock.advance(1_000);
+  expect(h.run.phase()).toBe("aborted");
+  const table = h.run.table()!;
+  expect(table.rows.map(({ cells }) => cells.download.status)).toEqual(["complete", "partial"]);
+  expect(table.columns.download).toBe("partial");
+});

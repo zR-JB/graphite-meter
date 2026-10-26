@@ -8,6 +8,7 @@ import {
   openSettings,
   phase,
   closeSettings,
+  countSaves,
   ready,
   run,
   runButton,
@@ -225,6 +226,41 @@ test("stopping during download freezes elapsed time, and a rerun starts afresh a
   await expect(page.locator(".gauge-value")).toHaveText(/^\D*$/);
   const saved = await run(page);
   expect(saved.result.outcome).toBe("complete");
+});
+
+test("a stop once a stage's window closed keeps that stage, and in the last stage saves the run", async (page) => {
+  await open(page);
+  await ready(page);
+  const saves = await countSaves(page);
+  const stopAsProbesDrain = (stage: string) =>
+    page.evaluate((stage) => {
+      const post = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function (this: Worker, message: any, ...rest: any[]) {
+        post.call(this, message, ...rest);
+        if (message?.type !== "stop" || !("id" in message)) return;
+        if (!document.querySelector(`#console[data-phase="${stage}"]`)) return;
+        Worker.prototype.postMessage = post;
+        queueMicrotask(() => document.querySelector<HTMLElement>("button.run-button")!.click());
+      } as typeof post;
+    }, stage);
+  const chip = (stage: string) => page.getByRole("switch", { name: new RegExp(`^${stage} stage`) });
+
+  await stopAsProbesDrain("download");
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "aborted")).toHaveCount(1, { timeout: 15_000 });
+  await expect(chip("Download")).toHaveAttribute("class", /\bchip--complete\b/);
+  await expect(chip("Upload")).toHaveAttribute("class", /\bchip--pending\b/);
+  await expect(page.locator('.results .card[data-tone="download"] .headline .num')).toHaveText(
+    /\d/,
+  );
+  expect(await saves()).toBe(0);
+
+  await stopAsProbesDrain("upload");
+  const saved = await run(page);
+  expect(saved.result.outcome).toBe("complete");
+  expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(saved.result.latencyByStage.upload?.accountingComplete).toBe(false);
+  expect(saved.result.multiServer.failures).toEqual([]);
 });
 
 async function arcsDrawn(page: Page) {
