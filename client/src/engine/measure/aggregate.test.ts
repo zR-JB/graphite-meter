@@ -167,6 +167,7 @@ test("a steady stretch after a burst reads the stability of its own rates", () =
       rates.forEach((rate, i) => {
         total += rate * 0.25;
         aggregate.addDownload("download", "a", rate * 0.25);
+        aggregate.edge(i * 250, (i + 1) * 250, new Map([["a", rate * 0.25]]));
         aggregate.observe({ atMs: (i + 1) * 250, down: { a: total }, up: {} });
         aggregate.trackStable(aggregate.confidence().score);
       });

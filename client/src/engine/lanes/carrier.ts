@@ -1,5 +1,6 @@
 // One stage direction over fetch lanes, a worker each, or one WebTransport session worker that outlives its redials.
 import type {
+  Edges,
   FeedRecord,
   Flushed,
   LaneCommand,
@@ -9,6 +10,7 @@ import type {
 } from "../../protocol/messages";
 import type { Ending, WorkerPool } from "../types";
 import { delay, fromEpoch } from "../run/clock";
+import { EDGE_MS } from "./bytes";
 import { CLOSE_GRACE_MS, lost, restartMs } from "./endings";
 import { FINAL_GRACE_MS } from "./records";
 import { handshakes } from "../net/webtransport";
@@ -25,6 +27,8 @@ const SPREAD_MS = 1_000;
 
 export interface CarrierHost {
   bytes(bytes: number): void;
+  /** Every lane's download total at edge `index`, at page ms `at`, once every lane passed it. */
+  edge(index: number, at: number, total: number): void;
   posted(lane: number, bytes: number, elapsedMs: number): void;
   record(record: FeedRecord): void;
   /** A lane delivered for the first time since it opened. */
@@ -64,6 +68,8 @@ interface Lane {
   asked: ((answer: Flushed) => void)[];
   /** The lane answered the final flush, so what it counts later lies past the boundary. */
   cut: boolean;
+  /** The epoch's edge totals the lane reported that not every lane has passed yet; null before its first. */
+  edges: Edges | null;
   /** A session's WebTransport dial is out, so ending the worker now abandons it, which Chrome counts as a failure. */
   dialing: boolean;
   stopped: PromiseWithResolvers<boolean>;
@@ -77,6 +83,8 @@ export class Carrier {
   readonly #done = new AbortController();
   #released = false;
   #epoch = 0;
+  /** Page ms the measured window opened at, from which every lane takes its edge totals. */
+  #opened: number | null = null;
 
   constructor(plan: CarrierPlan, host: CarrierHost) {
     this.#plan = plan;
@@ -93,6 +101,7 @@ export class Carrier {
         held: null,
         asked: [],
         cut: false,
+        edges: null,
         dialing: false,
         stopped: Promise.withResolvers(),
       };
@@ -129,21 +138,36 @@ export class Carrier {
   /** Starts a new epoch at page time `at`: download bytes counted before it no longer count. */
   measure(at: number): void {
     this.#epoch++;
+    this.#opened = at;
     for (const lane of this.#lanes) {
       lane.counted = 0;
-      lane.worker.postMessage({
-        type: "measure",
-        epoch: this.#epoch,
-        at: performance.timeOrigin + at,
-      });
+      lane.edges = null;
+      this.#measure(lane);
     }
   }
 
-  /** The epoch's download bytes every lane counted by `at`, or null when one does not answer in time. */
+  #measure(lane: Lane): void {
+    if (this.#opened !== null)
+      lane.worker.postMessage({
+        type: "measure",
+        epoch: this.#epoch,
+        at: performance.timeOrigin + this.#opened,
+      });
+  }
+
+  /** The epoch's download bytes every lane counted by `at`, or null when one does not answer in time or no longer keeps a
+   *  reading from then. */
   async countAt(at: number): Promise<number | null> {
     if (this.#done.signal.aborted) return null;
     let total = 0;
-    return (await this.#ask(at, (_, answer) => (total += answer.total))) ? total : null;
+    let kept = true;
+    const asked = performance.timeOrigin + at;
+    const answered = await this.#ask(at, (_, answer) => {
+      total += answer.total;
+      // Past its readings a lane answers its earliest one, at that reading's own time.
+      kept &&= Math.abs(answer.at - asked) < 1;
+    });
+    return answered && kept ? total : null;
   }
 
   /** Collects every lane's download count at `cutoff` and resolves with the latest time they stand at, so a rate never overstates. */
@@ -234,6 +258,8 @@ export class Carrier {
     if (!command) return;
     lane.dialing = this.#plan.session;
     lane.worker.postMessage(command);
+    // A lane opened in the window takes its edges from the window's opening.
+    this.#measure(lane);
   }
 
   #report(lane: Lane, report: LaneReport | SessionReport): void {
@@ -249,6 +275,7 @@ export class Carrier {
         if (report.epoch !== this.#epoch || lane.cut) return;
         if (lane.held === null) this.#count(lane, report.bytes);
         else lane.held += report.bytes;
+        if (report.edges) this.#edges(lane, report.edges);
         return;
       case "posted":
         this.#delivered(lane);
@@ -262,6 +289,27 @@ export class Carrier {
         return void this.#ended(lane, report.ending);
       case "broken":
         return void this.#ended(lane, lost(report.detail), true);
+    }
+  }
+
+  /** Passes on each edge once every lane reported its total there; a lane whose first edge came later counted nothing
+   *  by the earlier ones. */
+  #edges(lane: Lane, edges: Edges): void {
+    if (lane.edges) lane.edges.totals.push(...edges.totals);
+    else lane.edges = { first: edges.first, totals: [...edges.totals] };
+    const lanes = this.#lanes;
+    if (!lanes.every((each) => each.edges)) return;
+    const from = Math.min(...lanes.map((each) => each.edges!.first));
+    const to = Math.min(...lanes.map((each) => each.edges!.first + each.edges!.totals.length - 1));
+    for (let index = from; index <= to; index++) {
+      let total = 0;
+      for (const each of lanes) {
+        const own = each.edges!;
+        if (index < own.first) continue;
+        total += own.totals.shift()!;
+        own.first++;
+      }
+      this.#host.edge(index, this.#opened! + index * EDGE_MS, total);
     }
   }
 

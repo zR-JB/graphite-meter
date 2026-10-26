@@ -126,7 +126,7 @@ function stage(
 
 const stopped = (worker: FakeWorker) => worker.commands.at(-1)?.type === "stop";
 const bytes = (lane: FakeWorker, epoch: number) =>
-  lane.report({ type: "bytes", bytes: 1_000, epoch });
+  lane.report({ type: "bytes", bytes: 1_000, epoch, edges: null });
 
 test("readiness waits for every lane; a lane's failure keeps its reason; one budget bounds a hung mint", async () => {
   const ready = stage(DOWNLOAD);
@@ -238,7 +238,14 @@ test("a broken lane reopens once, stalling once and checking the sign-in once; i
   }
   await elapse(300);
   for (const lane of lanes)
-    expect(lane.commands.at(-1)).toMatchObject({ type: "download", epoch: 1 });
+    expect(lane.commands.at(-2)).toMatchObject({ type: "download", epoch: 1 });
+  // A lane that reopens in the window takes its edges from the window's opening.
+  for (const lane of lanes)
+    expect(lane.commands.at(-1)).toEqual({
+      type: "measure",
+      epoch: 1,
+      at: performance.timeOrigin + 1_000,
+    });
   bytes(lanes[1]!, 1);
   expect(outage.events.filter(([type]) => type === "stalled" || type === "resumed")).toEqual([
     [
@@ -291,7 +298,10 @@ test("a broken lane reopens after its pause while a slow sign-in check runs, whi
     blip.resources.measure(performance.now());
     lanes[0]!.report({ type: "broken", detail: "TypeError: network error" });
     await elapse(300);
-    expect(lanes[0]!.commands.at(-1)).toMatchObject({ type: "download", epoch: 1 });
+    expect(lanes[0]!.commands.findLast(({ type }) => type !== "measure")).toMatchObject({
+      type: "download",
+      epoch: 1,
+    });
     await elapse(1_700);
     expect(blip.events.filter(([type]) => type === "signInRequired")).toEqual(
       signedOut ? [["signInRequired", "throughput"]] : [],
@@ -358,13 +368,18 @@ test("lanes answering a flush at different times each count what they had by the
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(4_400);
 });
 
-test("a count sums every lane's total at a time without cutting the lanes, or is null without every answer", async () => {
+test("a count sums every lane's total at a time without cutting the lanes, or is null without every answer from then", async () => {
   const counting = stage(DOWNLOAD);
   void counting.resources.prepare(new AbortController().signal);
   await elapse(150);
   const lanes = counting.lanes();
   counting.resources.measure(performance.now());
-  for (const answering of [3, 2]) {
+  // Every lane answers; one fewer; and every lane, one past its readings with its earliest one's own time.
+  for (const [answering, kept, expected] of [
+    [3, 3, 3_000],
+    [2, 2, null],
+    [3, 2, null],
+  ] as const) {
     let counted: number | null | undefined;
     const at = performance.now();
     void counting.resources.countAt(at).then((total) => (counted = total));
@@ -372,9 +387,13 @@ test("a count sums every lane's total at a time without cutting the lanes, or is
       Array(3).fill({ type: "flush", at: performance.timeOrigin + at }),
     );
     for (const [index, lane] of lanes.slice(0, answering).entries())
-      lane.report({ type: "flushed", total: 1_000 * index, at });
+      lane.report({
+        type: "flushed",
+        total: 1_000 * index,
+        at: performance.timeOrigin + at - (index < kept ? 0 : 300),
+      });
     await elapse(300);
-    expect(counted).toBe(answering === 3 ? 3_000 : null);
+    expect(counted).toBe(expected);
   }
   // Counting cuts no lane: every one counts on.
   for (const lane of lanes) bytes(lane, 1);
@@ -391,6 +410,25 @@ test("a count sums every lane's total at a time without cutting the lanes, or is
     type === "download" ? [bytes as number] : [],
   );
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(3_000);
+});
+
+test("an edge reaches the run once every lane passed it, summed; a lane whose first edge came later counted nothing before", async () => {
+  const joined = stage(DOWNLOAD);
+  void joined.resources.prepare(new AbortController().signal);
+  await elapse(150);
+  const lanes = joined.lanes();
+  joined.resources.measure(1_000);
+  const edges = (lane: FakeWorker, first: number, totals: number[]) =>
+    lane.report({ type: "bytes", bytes: 1, epoch: 1, edges: { first, totals } });
+  edges(lanes[0]!, 1, [100, 200]);
+  edges(lanes[1]!, 1, [10]);
+  expect(joined.events.filter(([type]) => type === "edge")).toEqual([]);
+  edges(lanes[2]!, 2, [5]);
+  edges(lanes[1]!, 2, [20, 30]);
+  expect(joined.events.filter(([type]) => type === "edge")).toEqual([
+    ["edge", 1, 1_250, 110],
+    ["edge", 2, 1_500, 225],
+  ]);
 });
 
 test("a session's stop waits for its worker's acknowledgement, at most 3.25 s", async () => {

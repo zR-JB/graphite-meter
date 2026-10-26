@@ -108,14 +108,11 @@ interface Open {
   wasStable: boolean;
   quiet: Totals;
   stableQuiet: Totals;
-  /** All directions together, for the early-finish score. */
-  combined: RateSeries;
-  /** Download rates between the lanes' exact counts at each 250 ms edge, for the steady window's standard error; its
-   *  window opens at the first edge rate that starts in the steady window. */
-  edges: RateSeries;
-  edgesOpen: boolean;
+  /** Each direction's and server's 250 ms rates: uploads from receiver steps, downloads between the lanes' exact counts at
+   *  each edge. A download's steady window opens at the first edge rate that starts in it. */
   total: Series;
   servers: Map<string, Series>;
+  downOpen: boolean;
   peakFrom: Boundary | null;
   peaks: Peaks;
   moved: Map<string, Partial<Record<Direction, Mark>>>;
@@ -127,7 +124,7 @@ export const directions = (stage: TransferStage): Direction[] =>
 const rateOf = (window: AggregateWindow, dir: Direction) =>
   dir === "down" ? window.downBytesPerSec : window.upBytesPerSec;
 
-const series = (): Series => ({ down: new RateSeries(), up: new RateSeries() });
+const series = (keep = 0): Series => ({ down: new RateSeries(keep), up: new RateSeries(keep) });
 
 export class Aggregate {
   intervals: Interval[] = [];
@@ -186,10 +183,8 @@ export class Aggregate {
       wasStable: false,
       quiet: { down: 0, up: 0 },
       stableQuiet: { down: 0, up: 0 },
-      combined: new RateSeries(SCORE_BUCKETS),
-      edges: new RateSeries(),
-      edgesOpen: false,
-      total: series(),
+      total: series(SCORE_BUCKETS),
+      downOpen: false,
       servers: new Map(participants.map((id) => [id, series()])),
       peakFrom: null,
       peaks: new Map(),
@@ -312,16 +307,14 @@ export class Aggregate {
       const ms = boundary.atMs - last.atMs;
       for (const dir of dirs) {
         const rate = rateOf(sample, dir)!;
-        open.total[dir].observe((rate * ms) / 1000, ms);
         // A step no server moved is quiet on its evidence's clock: the client's, or the shortest receiver's.
         if (!rate) open.quiet[dir] += Math.min(...sample[dir]!.map((c) => c.durationMs));
+        // Download rates come from the exact edges instead: counts reported between ticks alias into a spread.
+        if (dir === "down") continue;
+        open.total[dir].observe((rate * ms) / 1000, ms);
         for (const component of sample[dir]!)
           open.servers.get(component.serverId)![dir].observe(component.bytes, component.durationMs);
       }
-      open.combined.observe(
-        (((sample.downBytesPerSec ?? 0) + (sample.upBytesPerSec ?? 0)) * ms) / 1000,
-        ms,
-      );
       open.last = boundary;
       const span = window(open.peakFrom!, boundary, record);
       if (span && shortestMs(span) >= PEAK_WINDOW_MS) {
@@ -350,22 +343,24 @@ export class Aggregate {
     return sample;
   }
 
-  /** The early-finish score over the trailing four seconds of all directions together. */
+  /** The early-finish score over the trailing four seconds: the least steady direction's. */
   confidence() {
-    return transferConfidence(this.#open?.combined.recent ?? []);
+    const open = this.#open;
+    if (!open) return transferConfidence([]);
+    const scores = directions(open.record.stage).map((dir) =>
+      transferConfidence(open.total[dir].recent),
+    );
+    return scores.reduce((least, each) => (each.score < least.score ? each : least));
   }
 
-  /** The steady window's fewest rates and largest relative standard error over its directions, a download's from its exact
-   *  edges; none while unsteady. */
+  /** The steady window's fewest rates and largest relative standard error over its directions; none while unsteady. */
   get steadyError(): { count: number; relative: number } {
     const open = this.#open;
     if (!open?.stable) return { count: 0, relative: Infinity };
     const errors = directions(open.record.stage).map((dir) =>
-      dir === "up"
+      dir === "up" || open.downOpen
         ? open.total[dir].windowError
-        : open.edgesOpen
-          ? open.edges.windowError
-          : { count: 0, relative: Infinity },
+        : { count: 0, relative: Infinity },
     );
     return {
       count: Math.min(...errors.map(({ count }) => count)),
@@ -373,21 +368,26 @@ export class Aggregate {
     };
   }
 
-  /** Adds the bytes every lane counted between two edges of the window, in run ms. */
-  edge(bytes: number, fromMs: number, toMs: number): void {
+  /** Adds the download bytes each server's lanes counted between two edges of the window, in run ms. */
+  edge(fromMs: number, toMs: number, bytes: ReadonlyMap<string, number>): void {
     const open = this.#open;
-    if (!open) return;
-    if (open.stable && !open.edgesOpen && fromMs >= open.stable.atMs) {
-      open.edges.openWindow();
-      open.edgesOpen = true;
+    if (!open || !(toMs > fromMs)) return;
+    if (open.stable && !open.downOpen && fromMs >= open.stable.atMs) {
+      open.total.down.openWindow();
+      open.downOpen = true;
     }
-    open.edges.observe(bytes, toMs - fromMs);
+    let sum = 0;
+    for (const [id, own] of bytes) {
+      sum += own;
+      open.servers.get(id)?.down.observe(own, toMs - fromMs);
+    }
+    open.total.down.observe(sum, toMs - fromMs);
   }
 
   resetStability(): void {
     const open = this.#open;
     if (!open) return;
-    open.combined = new RateSeries(SCORE_BUCKETS);
+    for (const dir of directions(open.record.stage)) open.total[dir].recent.length = 0;
     open.wasStable = false;
     open.stable = null;
   }
@@ -410,8 +410,8 @@ export class Aggregate {
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
     if (stable && !open.wasStable) {
       open.stableQuiet = { ...open.quiet };
-      for (const dir of directions(open.record.stage)) open.total[dir].openWindow();
-      open.edgesOpen = false;
+      open.total.up.openWindow();
+      open.downOpen = false;
     }
     open.wasStable = stable;
     return stable;

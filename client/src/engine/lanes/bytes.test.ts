@@ -61,6 +61,29 @@ test("a cutoff counts the bytes read by then, each at its own clock reading, whe
   expect(reports.totalAt(1_080)).toEqual({ total: 1_200, at: 1_080 });
 });
 
+test("a lane takes its total at each 250 ms edge from the window's opening and reports them with its next bytes", () => {
+  const reported: [number, unknown][] = [];
+  const reports = new ByteReports((bytes, _, edges) => reported.push([bytes, edges]));
+  reports.measure(1, 1_000);
+  reports.edgesFrom(1_000);
+  // 4 bytes a millisecond, read every 100 ms; a lane reports at most every 10 ms.
+  for (let at = 1_100; at <= 1_800; at += 100) reports.count(400, at);
+  // An edge's total holds what was read by it, as a cutoff's does: the read at 1,500 ms counts by the second edge.
+  expect(reported).toEqual([
+    [400, null],
+    [400, null],
+    [400, { first: 1, totals: [800] }],
+    [400, null],
+    [400, null],
+    [400, { first: 2, totals: [2_000] }],
+    [400, null],
+    [400, { first: 3, totals: [2_800] }],
+  ]);
+  // A quiet lane reports its edges with its next read, or its flush.
+  reports.flush(2_300);
+  expect(reported.at(-1)).toEqual([0, { first: 4, totals: [3_200, 3_200] }]);
+});
+
 test("a lane's largest POST is its device-memory share of its server's lanes, Firefox's of the run's", () => {
   for (const [lanes, sharing, deviceMemory, expected] of [
     [1, 3, 8, 256 * MiB],

@@ -29,11 +29,19 @@ export interface ProbeOutcome {
   inWindow: boolean;
 }
 
-/** Download bytes counted since the previous report, in the measurement epoch they belong to. */
+/** The epoch's download totals at consecutive edges from index `first`; edge i lies at i × 250 epoch ms. */
+export interface Edges {
+  first: number;
+  totals: number[];
+}
+
+/** Download bytes counted since the previous report, in the measurement epoch they belong to, with the epoch's totals at
+ *  the edges passed since. */
 interface BytesReport {
   type: "bytes";
   bytes: number;
   epoch: number;
+  edges: Edges | null;
 }
 
 /** A worker's terminal report: an ending from the server's answer, or a network break the owner classifies, as an ended sign-in shows as one. */
