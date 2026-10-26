@@ -66,6 +66,7 @@ test("a lane takes its total at each 250 ms edge from the window's opening and r
   const reports = new ByteReports((bytes, _, edges) => reported.push([bytes, edges]));
   reports.measure(1, 1_000);
   reports.edgesFrom(1_000);
+  reports.flush(1_000);
   // 4 bytes a millisecond, read every 100 ms; a lane reports at most every 10 ms.
   for (let at = 1_100; at <= 1_800; at += 100) reports.count(400, at);
   // An edge's total holds what was read by it, as a cutoff's does: the read at 1,500 ms counts by the second edge.
