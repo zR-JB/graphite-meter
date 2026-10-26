@@ -10,7 +10,7 @@ python = "3.15.1"
 "aqua:astral-sh/ty" = "0.0.91"
 "github:jdx/jactionlint" = "2.3.0"
 "aqua:zizmorcore/zizmor" = "1.31.1"
-"aqua:biomejs/biome" = "2.6.2"
+"aqua:biomejs/biome" = "2.6.3"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.149"
 
