@@ -496,7 +496,7 @@ export class Run {
 
   #validate(plan: RunPlan, servers: readonly Participant[]): void {
     if (!STAGES.some((stage) => planned(plan, stage)))
-      throw new Error("Give at least one stage a duration");
+      throw new Error("Turn on at least one test stage");
     for (const activity of activities(plan))
       if (activity.transfer.length)
         this.#streams(

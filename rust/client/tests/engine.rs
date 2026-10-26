@@ -354,7 +354,7 @@ fn latency_failures_are_announced_as_they_happen_and_only_once() {
     script.run_until(STAGE, samples);
     assert_eq!(
         script.failed(),
-        [(STAGE, "b", Scope::Latency, FailureReason::Timeout)]
+        [(STAGE, "b", Scope::Latency, FailureReason::PathFailed)]
     );
     assert_eq!(script.window().map(|(start, _)| start), Some(STAGE));
     assert!(script.removed().is_empty());
@@ -444,7 +444,7 @@ fn a_stop_while_probes_drain_keeps_the_stage_complete() {
     script.engine.stop(script.base + STAGE + ms(600));
     let result = script.engine.result();
     assert_eq!((result.measured, result.stopped), (STAGE, false));
-    assert_eq!(result.status(None), StageStatus::Complete);
+    assert_eq!(result.status(None, &[]), StageStatus::Complete);
     assert!(
         !result.servers[0].latency.unwrap().complete,
         "its probes still out are never told"
@@ -537,7 +537,11 @@ fn outcomes_follow_stage_results() {
     });
     let unopened = script.engine.result();
     assert_eq!(
-        (unopened.throughput.down, unopened.status(None)),
+        unopened.failures[0].failure.reason,
+        FailureReason::PathFailed
+    );
+    assert_eq!(
+        (unopened.throughput.down, unopened.status(None, &[])),
         (None, StageStatus::Failed)
     );
     assert_eq!(
@@ -548,7 +552,7 @@ fn outcomes_follow_stage_results() {
     stopped.stop(Instant::now());
     let stopped = stopped.result();
     assert_eq!(
-        (stopped.throughput.down, stopped.status(None)),
+        (stopped.throughput.down, stopped.status(None, &[])),
         (None, StageStatus::Stopped)
     );
     assert_eq!(

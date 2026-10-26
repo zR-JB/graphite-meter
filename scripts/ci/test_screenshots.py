@@ -11,6 +11,8 @@ class ScreenshotRecordTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            pins = root / "mise.toml"
+            pins.write_text('[vars]\nbrowser_chrome = "156.0.0.0"\nother_pin = "1"\n')
             view = root / "client/src/view.ts"
             view.parent.mkdir(parents=True)
             view.write_text("export const title = 'Graphite Meter';\n")
@@ -20,6 +22,19 @@ class ScreenshotRecordTests(unittest.TestCase):
             stamp("v1.2.3", root)
             self.assertEqual(readme.read_text(), "<sub>Terminal client 1.2.3 at 120 by 40 cells.</sub>\n")
             self.assertIsNone(stale("v1.2.3", root), "fresh")
+            network = root / "rust/client/src/net/lanes.rs"
+            network.parent.mkdir(parents=True)
+            network.write_text("network implementation\n")
+            pins.write_text(pins.read_text().replace('other_pin = "1"', 'other_pin = "2"'))
+            self.assertIsNone(stale("v1.2.3", root), "network code and unrelated pins do not draw pixels")
+            pins.write_text(pins.read_text().replace("156.0.0.0", "156.0.0.1"))
+            self.assertIsNotNone(stale("v1.2.3", root), "the rendering browser changes the pixels")
+            stamp("v1.2.3", root)
+            terminal = root / "rust/client/src/tui/dial.rs"
+            terminal.parent.mkdir(parents=True)
+            terminal.write_text("terminal drawing\n")
+            self.assertIsNotNone(stale("v1.2.3", root), "terminal drawing changes the pixels")
+            stamp("v1.2.3", root)
             self.assertEqual(stale("v1.2.4", root),
                              "Screenshots are stale: run mise run screenshots v1.2.4 and merge it before releasing")
             readme.write_text(readme.read_text() + "not drawn\n")

@@ -376,7 +376,7 @@ Clients connect directly to each selected server and never import a peer's catal
 database or discovery service.
 
 Set `GM_SERVER_CATALOG` to inline JSON, or set `GM_SERVER_CATALOG_FILE` to an absolute path that is normally
-mounted read-only, and restart. Usually a list of the other servers' origins is enough:
+mounted read-only, and restart. Empty values count as unset. Usually a list of the other servers' origins is enough:
 
 ```sh
 export GM_SERVER_CATALOG='["https://fra.example.net","https://ams.example.net"]'

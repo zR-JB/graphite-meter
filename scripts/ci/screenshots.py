@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 from workspace import ROOT, VERSION
@@ -24,7 +25,10 @@ CAPTION = re.compile(r"(?m)^(<sub>(?:Browser app|Terminal client) )(\d+\.\d+\.\d
 # What draws the images: the browser app and its build, the terminal client, the pipeline and its harness.
 SOURCES = ("client/src", "client/public", "client/index.html", "client/build.ts", "client/bundle.ts", "client/auth",
            "client/bun.lock", "client/e2e/browsers.ts", "client/e2e/fleet.ts", "client/e2e/webview.ts",
-           "client/e2e/servers.ts", "client/scripts", "rust/client/src", "rust/proto/src",
+           "client/e2e/servers.ts", "client/scripts", "rust/client/src/tui", "rust/client/src/report.rs",
+           "rust/client/src/format.rs", "rust/client/src/style.rs", "rust/client/src/text.rs",
+           "rust/client/src/events.rs", "rust/client/src/model.rs", "rust/client/src/config.rs",
+           "rust/client/src/measure", "rust/proto/src",
            "rust/client/examples/screenshot.rs")
 
 
@@ -33,6 +37,8 @@ def ui_hash(root: Path = ROOT) -> str:
     listed = subprocess.check_output(["git", "ls-files", "-z", "-c", "-o", "--exclude-standard", "--", *SOURCES],
                                      cwd=root).decode().split("\0")
     digest = hashlib.sha256()
+    browser = tomllib.loads((root / "mise.toml").read_text())["vars"]["browser_chrome"]
+    digest.update(f"browser_chrome\0{browser}\n".encode())
     for name in sorted(set(listed)):
         if name and (root / name).is_file():
             digest.update(f"{name}\0{hashlib.sha256((root / name).read_bytes()).hexdigest()}\n".encode())

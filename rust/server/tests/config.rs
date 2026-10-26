@@ -39,6 +39,32 @@ fn with_tls<'a>(env: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
 }
 
 #[test]
+fn empty_catalog_sources_leave_the_default_or_the_other_source() {
+    let default = config(&[], &[]).catalog;
+    for env in [
+        vec![("GM_SERVER_CATALOG", "")],
+        vec![("GM_SERVER_CATALOG_FILE", "")],
+        vec![("GM_SERVER_CATALOG", ""), ("GM_SERVER_CATALOG_FILE", "")],
+    ] {
+        assert_eq!(config(&env, &[]).catalog, default);
+    }
+    let inline = r#"["https://other.example"]"#;
+    assert_eq!(
+        config(
+            &[
+                ("GM_SERVER_CATALOG", inline),
+                ("GM_SERVER_CATALOG_FILE", "")
+            ],
+            &[]
+        )
+        .catalog
+        .servers
+        .len(),
+        2
+    );
+}
+
+#[test]
 fn flag_errors_print_their_message_then_the_usage() {
     for (args, message) in [
         (&["---x"][..], "unknown option ---x"),

@@ -974,7 +974,7 @@ test("a 0 ms stage is not planned, and a plan without a stage is refused", async
     { downloadMs: 1_000 },
   );
   h.plan.duration.downloadMs = 0;
-  expect(() => h.start()).toThrow("Give at least one stage a duration");
+  expect(() => h.start()).toThrow("Turn on at least one test stage");
   h.plan.duration.downloadMs = 1_000;
   h.start();
   const result = await h.result();
