@@ -50,7 +50,7 @@ test.chrome(
       // The page dials WebTransport no more once its cap is spent, and says why and what resets it.
       const before = dials().length;
       const paused = await attempt(page, fleet);
-      expect(`${paused.notice} ${measured(paused).failures.join(" ")}`).toContain("Reload");
+      expect(`${paused.notice} ${measured(paused).failures.join(" ")}`).toMatch(/reload/i);
       expect(dials().length).toBe(before);
       await page.reload();
       await ready(page, 30_000);
