@@ -58,17 +58,17 @@ pub struct GroupPlan {
     pub lanes: Range<usize>,
 }
 
-/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport up to its lane cap each.
+/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 downloads the path's and uploads a fresh one (free of the download's congestion state), WebTransport up to its lane cap each.
 pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<GroupPlan> {
     let mut plans = Vec::new();
     for &direction in stage.directions() {
-        let apart = stage == Stage::Bidirectional && direction == Direction::Up;
         let (carrier, size) = match (path.transport, path.protocol) {
-            (ThroughputTransport::FetchStream, Protocol::Http2) => (Carrier::Dialed, usize::MAX),
-            (ThroughputTransport::FetchStream, Protocol::Http3) if apart => {
+            (ThroughputTransport::FetchStream, Protocol::Http3) if direction == Direction::Down => {
+                (Carrier::Path, usize::MAX)
+            }
+            (ThroughputTransport::FetchStream, Protocol::Http2 | Protocol::Http3) => {
                 (Carrier::Dialed, usize::MAX)
             }
-            (ThroughputTransport::FetchStream, Protocol::Http3) => (Carrier::Path, usize::MAX),
             (ThroughputTransport::FetchStream, _) => (Carrier::Dialed, 1),
             _ => (Carrier::Session, MAX_LANE_STREAMS),
         };
