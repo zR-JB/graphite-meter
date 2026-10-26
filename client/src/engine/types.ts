@@ -182,6 +182,8 @@ export interface Stall {
 
 export interface StageEvents {
   download(bytes: number): void;
+  /** The window's download total at edge `index`, page ms `at`, over every lane. */
+  edge(index: number, at: number, total: number): void;
   receiver(checkpoint: Checkpoint): void;
   /** Client-consumed bytes before the measured window, which only the live rate reads. */
   warmupDownload(bytes: number): void;

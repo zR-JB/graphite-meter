@@ -1,4 +1,5 @@
 // Fakes for driving a real run: page time that moves only when a test says so, and servers reporting at a fixed rate.
+import { EDGE_MS } from "../lanes/bytes";
 import type {
   Link,
   Checkpoint,
@@ -151,6 +152,7 @@ export function resources(
       if (activity.transfer.includes("down") && !peer.silent?.(activity, ms, "down")) total += rate;
     return total;
   };
+  let edge = 1;
   const stop = () => {
     measuring = false;
     stopLanes();
@@ -166,13 +168,19 @@ export function resources(
     measure() {
       measuring = true;
       started = clock.t;
+      edge = 1;
       calls.push(`measure:${peer.id}`);
       if (activity.transfer.length)
         stopLanes = clock.every(20, () => {
           const ms = clock.t - started;
           const moves = (dir: "down" | "up") =>
             activity.transfer.includes(dir) && !peer.silent?.(activity, ms, dir);
-          if (moves("down")) events.download(rate * 20);
+          if (moves("down")) {
+            events.download(rate * 20);
+            // The lanes report the edges passed since their last report with their bytes; a peer of its own reports its own.
+            for (; rate && started + edge * EDGE_MS <= clock.t; edge++)
+              events.edge(edge, started + edge * EDGE_MS, counted(started + edge * EDGE_MS));
+          }
           if (moves("up") && peer.receives !== false && ms % 100 < 20) events.receiver(receiver());
         });
       peer.measure?.(events, activity);

@@ -24,15 +24,18 @@ const ignore = () => {};
 let session: Session | null = null;
 const counter = (): ByteReports => {
   const counted = new ByteReports(
-    (bytes, epoch) => reports === counted && postMessage({ type: "bytes", bytes, epoch }),
+    (bytes, epoch, edges) =>
+      reports === counted && postMessage({ type: "bytes", bytes, epoch, edges }),
   );
   return counted;
 };
 let reports = counter();
 
 self.onmessage = ({ data }: MessageEvent<SessionCommand>) => {
-  if (data.type === "measure") reports.measure(data.epoch, data.at - performance.timeOrigin);
-  else if (data.type === "flush") postMessage(reports.flushed(data.at));
+  if (data.type === "measure") {
+    reports.measure(data.epoch, data.at - performance.timeOrigin);
+    reports.edgesFrom(data.at - performance.timeOrigin);
+  } else if (data.type === "flush") postMessage(reports.flushed(data.at));
   else if (data.type === "stop") void stop();
   else {
     session?.silence();

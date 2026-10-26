@@ -1,4 +1,5 @@
 // Lane payloads: downloads are counted, never touched; uploads send one incompressible block over and over.
+import type { Edges } from "../../protocol/messages";
 
 const READ_BYTES = 1024 * 1024;
 /** A server's lanes report together about this often: the page handles 100 a second, and exact counts come from flushes. */
@@ -9,6 +10,8 @@ const BLOCK_BYTES = 4 * MIB;
 const RANDOM_QUOTA = 65_536;
 /** Readings of a download's running total a flush can look back over: well past the 250 ms a flush waits. */
 const TOTALS = 512;
+/** Every lane of every server reads its total at each of these steps from the window's opening. */
+export const EDGE_MS = 250;
 
 /** Counts `body` through one reused 1 MiB buffer: a default reader allocates per chunk, halving a worker's multi-Gbit/s reads. */
 export async function countBytes(
@@ -42,9 +45,14 @@ export async function countBytes(
   }
 }
 
-/** A download's counted bytes, reported in batches by epoch; recent running totals let a flush look a moment back. */
+/** A download's counted bytes, reported in batches by epoch with the totals at each edge passed since; recent running
+ *  totals let a flush look a moment back. */
 export class ByteReports {
   #bytes = 0;
+  /** The window's opening, the next edge whose total is not taken yet, and the totals taken since the last report. */
+  #opened = Number.POSITIVE_INFINITY;
+  #edge = 1;
+  #edges: number[] = [];
   #since = performance.now();
   #epoch = 0;
   #reportMs = REPORT_MS;
@@ -55,7 +63,7 @@ export class ByteReports {
   #taken = 0;
   #last = Number.NEGATIVE_INFINITY;
 
-  constructor(readonly report: (bytes: number, epoch: number) => void) {}
+  constructor(readonly report: (bytes: number, epoch: number, edges: Edges | null) => void) {}
 
   /** One of `reporters` that share their server's report rate. */
   share(reporters: number): void {
@@ -64,6 +72,7 @@ export class ByteReports {
 
   /** Bound for read loops, each count at its own clock reading; a datagram loop passes the one it already made. */
   count = (bytes: number, now = performance.now()): void => {
+    this.#pass(now);
     this.#bytes += bytes;
     this.#total += bytes;
     this.#last = now;
@@ -72,7 +81,12 @@ export class ByteReports {
   };
 
   flush(now = performance.now()): void {
-    if (this.#bytes) this.report(this.#bytes, this.#epoch);
+    this.#pass(now);
+    const edges = this.#edges.length
+      ? { first: this.#edge - this.#edges.length, totals: this.#edges }
+      : null;
+    if (this.#bytes || edges) this.report(this.#bytes, this.#epoch, edges);
+    this.#edges = [];
     this.#bytes = 0;
     this.#since = now;
     this.#keep(now, true);
@@ -82,6 +96,8 @@ export class ByteReports {
   measure(epoch: number, at = performance.now()): void {
     this.#bytes = 0;
     if (epoch === this.#epoch) return;
+    this.#opened = Number.POSITIVE_INFINITY;
+    this.#edges = [];
     this.#epoch = epoch;
     const before = this.totalAt(at).total;
     for (let slot = 0; slot < Math.min(this.#taken, TOTALS); slot++)
@@ -111,6 +127,24 @@ export class ByteReports {
       total: counted.total,
       at: performance.timeOrigin + counted.at,
     };
+  }
+
+  /** Takes the epoch's totals at each EDGE_MS from the window's opening at `at`; a lane that opens later counted nothing
+   *  by the edges before it. */
+  edgesFrom(at: number): void {
+    if (this.#opened === at) return;
+    this.#opened = at;
+    this.#edge = 1;
+    this.#edges = [];
+  }
+
+  /** Takes the total at each edge `now` passed: what was read by then, as a cutoff counts, since every read so far came
+   *  earlier. */
+  #pass(now: number): void {
+    while (this.#opened + this.#edge * EDGE_MS < now) {
+      this.#edges.push(this.#total);
+      this.#edge++;
+    }
   }
 
   /** A reading at most every millisecond, and at every report. */

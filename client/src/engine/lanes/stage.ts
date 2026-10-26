@@ -372,6 +372,9 @@ class Stage implements StageResources {
         if (this.#measuring) events.download(bytes);
         else events.warmupDownload(bytes);
       },
+      edge: (index, at, total) => {
+        if (this.#measuring && !this.#throughputEnded) events.edge(index, at, total);
+      },
       posted: (lane, bytes, elapsedMs) => {
         if (!this.#throughputEnded) events.uploadHint(lane, bytes, elapsedMs);
       },

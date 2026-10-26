@@ -161,8 +161,8 @@ test("a download counts bytes into the epoch they were read in, from the time it
   body.controller().error(new TypeError("network error"));
   await elapse(0);
   expect(lane.posted).toEqual([
-    { type: "bytes", bytes: 11, epoch: 0 },
-    { type: "bytes", bytes: 13, epoch: 1 },
+    { type: "bytes", bytes: 11, epoch: 0, edges: null },
+    { type: "bytes", bytes: 13, epoch: 1, edges: null },
     { type: "broken", detail: "TypeError: network error" },
   ]);
 });
@@ -274,7 +274,11 @@ test("a flush reports the bytes counted so far before it answers", async () => {
   lane.send({ type: "flush", at });
   lane.send({ type: "flush", at });
   const flushed = { type: "flushed", total: 7, at };
-  expect(lane.posted).toEqual([{ type: "bytes", bytes: 7, epoch: 1 }, flushed, flushed]);
+  expect(lane.posted).toEqual([
+    { type: "bytes", bytes: 7, epoch: 1, edges: null },
+    flushed,
+    flushed,
+  ]);
 });
 
 test("a stopped lane aborts its request, falls silent, acknowledges, and carries its next lane from a fresh count", async () => {
@@ -309,7 +313,7 @@ test("a stopped lane aborts its request, falls silent, acknowledges, and carries
   const at = performance.timeOrigin + performance.now();
   lane.send({ type: "flush", at });
   expect(lane.posted.slice(1)).toEqual([
-    { type: "bytes", bytes: 4, epoch: 1 },
+    { type: "bytes", bytes: 4, epoch: 1, edges: null },
     { type: "flushed", total: 4, at },
   ]);
 });

@@ -1687,10 +1687,13 @@ const paced = (rate: (ms: number) => number): Peer[] => {
     for (let ms = 0; ms < at - started; ms++) total += rate(ms);
     return total;
   };
+  let edge = 1;
   const report = (events: StageEvents) => {
     const total = counted(clock.t);
     events.download(total - reported);
     reported = total;
+    for (; started + edge * 250 <= clock.t; edge++)
+      events.edge(edge, started + edge * 250, counted(started + edge * 250));
   };
   return [
     {
@@ -1698,6 +1701,7 @@ const paced = (rate: (ms: number) => number): Peer[] => {
       silent: (_, __, dir) => dir === "down",
       measure: (events) => {
         started = clock.t;
+        edge = 1;
         clock.every(10, () => report(events));
       },
       countAt: counted,
@@ -1730,7 +1734,59 @@ test("a steady download ends once its steady window holds 12 rates whose mean is
     { adaptive: true },
   );
   coarse.start();
-  expect((await coarse.result()).durationMs).toBeLessThan(5_000);
+  const steady = await coarse.result();
+  expect(steady.durationMs).toBeLessThan(5_000);
+  // Their Stability reads the link's, not the reports' 3 % spread.
+  expect(steady.download?.stabilityPct).toBeGreaterThan(99.9);
+  expect(steady.multiServer.servers[0]!.download?.stabilityPct).toBeGreaterThan(99.9);
+});
+
+test("servers whose lanes pass their edges out of step join edge by edge, so their spread stays theirs", async () => {
+  // Both alternate 1 and 2 bytes per ms each 250 ms; one server's lanes report two edges at a time.
+  const peer = (id: string, pairs: boolean): Peer => {
+    let started = 0;
+    let reported = 0;
+    let edge = 1;
+    const counted = (at: number) => {
+      let total = 0;
+      for (let ms = 0; ms < at - started; ms++) total += Math.floor(ms / 250) % 2 ? 2 : 1;
+      return total;
+    };
+    const report = (events: StageEvents) => {
+      const total = counted(clock.t);
+      events.download(total - reported);
+      reported = total;
+      const ms = clock.t - started;
+      if (pairs && !(ms % 500 >= 250 && ms % 500 < 260)) return;
+      for (; started + edge * 250 <= clock.t; edge++)
+        events.edge(edge, started + edge * 250, counted(started + edge * 250));
+    };
+    return {
+      id,
+      silent: (_, __, dir) => dir === "down",
+      measure: (events) => {
+        started = clock.t;
+        edge = 1;
+        clock.every(10, () => report(events));
+      },
+      countAt: counted,
+      flush: report,
+    };
+  };
+  for (const pairs of [false, true]) {
+    const h = setup(
+      [peer("a", false), peer("b", pairs)],
+      { download: true },
+      { downloadMs: 10_000 },
+      { adaptive: true },
+    );
+    h.start();
+    const result = await h.result();
+    expect(result.durationMs).toBeGreaterThanOrEqual(10_000);
+    expect(result.download?.stabilityPct).toBeCloseTo(66.7, 0);
+    for (const server of result.multiServer.servers)
+      expect(server.download?.stabilityPct).toBeCloseTo(66.7, 0);
+  }
 });
 
 test("a download whose rates scatter 1 % ends only once enough of them hold its mean within 0.25 %", async () => {
@@ -1767,10 +1823,13 @@ test("an early finish's steady window opens on what the lanes had counted there,
   // 1 byte per ms, each reported 30 ms after it was counted: a tick sees 30 bytes too few.
   let started = 0;
   let reported = 0;
+  let edge = 1;
   const report = (events: StageEvents, lagMs: number) => {
     const counted = Math.max(0, clock.t - started - lagMs);
     events.download(counted - reported);
     reported = counted;
+    for (; started + edge * 250 + lagMs <= clock.t; edge++)
+      events.edge(edge, started + edge * 250, edge * 250);
   };
   const h = setup(
     [

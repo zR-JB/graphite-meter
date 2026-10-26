@@ -32,7 +32,8 @@ let lane = new AbortController();
 let running: Promise<unknown> = Promise.resolve();
 let stopping = false;
 const post = (report: LaneReport) => stopping || postMessage(report);
-const counter = () => new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
+const counter = () =>
+  new ByteReports((bytes, epoch, edges) => post({ type: "bytes", bytes, epoch, edges }));
 let reports = counter();
 let body = new Blob();
 let partSize = 0;
@@ -42,7 +43,10 @@ let until: number | null = null;
 let bodyEnd: number | null = null;
 
 self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
-  if (data.type === "measure") return reports.measure(data.epoch, data.at - performance.timeOrigin);
+  if (data.type === "measure") {
+    reports.measure(data.epoch, data.at - performance.timeOrigin);
+    return reports.edgesFrom(data.at - performance.timeOrigin);
+  }
   if (data.type === "flush") return post(reports.flushed(data.at));
   if (data.type === "until") return void (until = data.until);
   if (data.type === "stop") return void (stopping ? lane.abort() : stop());
