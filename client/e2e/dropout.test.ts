@@ -1,8 +1,10 @@
 import {
   baseConfig,
   catalog,
+  closeSettings,
   frankfurt,
   open,
+  openSettings,
   phase,
   ready,
   runButton,
@@ -10,7 +12,7 @@ import {
   spawnPeer,
 } from "./fleet";
 import type { Subprocess } from "bun";
-import { expect, test, type Page } from "./webview";
+import { expect, settled, test, type Page } from "./webview";
 
 // The dial shows a rate after half a second of evidence, so a peer killed then leaves survivors the 800 ms a result needs.
 const long = {
@@ -60,13 +62,36 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
     expect(saved.result.stages.upload).toBe("partial");
     const card = (stage: string) => page.locator(`.results .card[data-tone="${stage}"]`);
     await expect(card("upload").locator(".name .status")).toHaveText("Partial");
-    await expect(card("upload").locator(".line .reason")).toHaveText("Without Oslo");
-    await expect(card("download").locator(".line .reason")).toHaveText("Oslo: connection lost");
+    await expect(card("upload").locator(".line .reason")).toHaveCount(0);
+    await expect(card("download").locator(".line .reason")).toHaveCount(0);
     // Under the cards, each server's result by stage and Oslo's cause.
     await expect(page.locator(".results .server-grid tbody tr")).toHaveCount(3);
-    await expect(page.locator(".results .server-grid .causes li")).toHaveText([
-      "Download from Oslo lost its connection. Upload was not reached.",
-    ]);
+    await page.locator(".server-results > summary").click();
+    const row = page.locator(".results .server-grid tbody tr", { hasText: "Oslo" });
+    await expect(row.locator(".causes li")).toHaveCount(1);
+    await expect(row.locator(".causes li")).toContainText(failure!.message);
+    for (const width of [390, 1280, 1920]) {
+      await page.setViewportSize({ width, height: 1080 });
+      if (width > 1000) await openSettings(page);
+      await page.evaluate(settled);
+      const bounds = await page.evaluate(() => {
+        const cards = document.querySelector(".results .result-cards")!.getBoundingClientRect();
+        const grid = document.querySelector(".results .server-grid")!.getBoundingClientRect();
+        const notes = [...document.querySelectorAll(".results .server-grid .causes")];
+        return {
+          difference: Math.abs(cards.width - grid.width),
+          detached: notes.some((note) => !note.closest('th[scope="row"]')),
+          overflowing: notes.some((note) => note.scrollWidth > note.clientWidth),
+          narrow: notes.some((note) => note.getBoundingClientRect().width < grid.width * 0.8),
+        };
+      });
+      expect(bounds.difference).toBeLessThanOrEqual(1);
+      expect(bounds.detached).toBe(false);
+      expect(bounds.overflowing).toBe(false);
+      if (width === 390) expect(bounds.narrow).toBe(false);
+      await page.artifact(`multiserver-dropout-${width}`);
+    }
+    await closeSettings(page);
     await expect(page.getByRole("switch", { name: /^Upload stage/ })).toHaveAttribute(
       "class",
       /\bchip--partial\b/,
@@ -120,9 +145,12 @@ test("a peer stopped mid-download leaves as Server stopped and the others carry 
         stage: "download",
         reason: "server-stopped",
       });
-    await expect(page.locator(".results .server-grid .causes li")).toHaveText([
-      "Oslo stopped during the download. Upload was not reached.",
-    ]);
+    await page.locator(".server-results > summary").click();
+    const row = page.locator(".results .server-grid tbody tr", { hasText: "Oslo" });
+    await expect(row.locator(".causes li")).toHaveCount(1);
+    await expect(row.locator(".causes li")).toContainText(
+      stopped.find((f) => f.scope === "throughput")!.message,
+    );
     expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
   } finally {
     oslo.kill();
@@ -226,6 +254,13 @@ test("a server that fails between its check and Start is named at once and reads
     expect(first.text).toContain("Bergen · Start");
     expect(first.ended).toBe(0);
     expect(saved.result.outcome).toBe("partial");
+    const settings = await openSettings(page);
+    await expect(
+      settings
+        .getByRole("group", { name: "Throughput path" })
+        .locator('.validation .status-dot[data-tone="err"]'),
+    ).toHaveCount(1);
+    await closeSettings(page);
     const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
     await lens.evaluate((select: HTMLSelectElement) => {
       select.value = "bergen";

@@ -43,8 +43,7 @@ import type { Limiter } from "./limiter";
 import type { PageConfig, PageSession } from "./page";
 import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
 
-/** A resume re-checks evidence older than this, and a reselected server keeps discovery and paths this old. */
-const FRESH_MS = 120_000;
+export const FRESH_MS = 120_000;
 /** A selected server re-reads its discovery this often, also after a failed read; the shown one's bus proves more. */
 const LIVENESS_MS = 60_000;
 const HIDDEN_MS = 30_000;
@@ -74,7 +73,7 @@ export interface ServerView {
   blocked: string | null;
   throughput: RoleView<ThroughputPath>;
   latency: RoleView<LatencyPath>;
-  /** Whether the server can run the current settings on its evidence, of any age. */
+  /** Whether all required paths have verified evidence. */
   ready: boolean;
   /** Settings is discovering this unselected server. */
   metadataChecking: boolean;
@@ -120,8 +119,10 @@ export interface Connection {
   readonly link: Link;
   /** Without options, does what has fallen due. It never rejects, and outcomes land in the view. */
   check(options?: CheckOptions): Promise<void>;
-  /** The server ready to run on evidence verified at or after `since` (page ms), or null. */
+  /** Missing latency does not invalidate a working throughput path. */
   prepared(since: number): PreparedServer | null;
+  proved(roles: readonly Role[]): void;
+  controlFailed(error: unknown): void;
   /** Verified roles become unchecked, e.g. after a run failed on them, which a `deferred` check proves again only at the next start. */
   invalidate(roles: readonly Role[], deferred?: boolean): void;
   requireSignIn(message?: string): void;
@@ -185,7 +186,7 @@ function connect(
   const link: Link = { bus: createBusSlot(env.openProbeChannel, parked), workers, lease };
   const context: CheckContext = { entry, auth, lease, page, bus: link.bus, now };
   const discovery = signal<Discovery | null>(null);
-  /** The last discovery failure is kept through a loud re-read, which only hides it. */
+  /** Control failures stay visible through quiet re-reads. */
   const fault = signal<Fault | null>(null);
   const discovering = signal<Task | null>(null);
   const connectivity = signal<ServerView["connectivity"]>(null);
@@ -241,16 +242,16 @@ function connect(
       : null;
   };
 
-  /** Gives the paths a run may use, verified at or after `since`, or null while anything stands in the way. */
   function paths(since: number): Pick<PreparedServer, "throughput" | "latency"> | null {
     if (!selected() || !discovery() || fault()) return null;
     const throughputPath = valid.throughput();
     if (!throughputPath || throughputPath.verifiedAt < since) return null;
-    if (!env.latencyNeeded()) return { throughput: throughputPath, latency: null };
     const latencyPath = valid.latency();
-    return latencyPath && latencyPath.verifiedAt >= since
-      ? { throughput: throughputPath, latency: latencyPath }
-      : null;
+    return {
+      throughput: throughputPath,
+      latency:
+        env.latencyNeeded() && latencyPath && latencyPath.verifiedAt >= since ? latencyPath : null,
+    };
   }
 
   const watchedPath = computed(() =>
@@ -333,9 +334,10 @@ function connect(
     const promise = (async () => {
       let release: (() => void) | undefined;
       try {
-        // The budget starts once a slot is granted, so queueing never spends it.
-        release = await env.limiter.acquire(entry.url, () => (selected.peek() ? 0 : 1), signal);
-        const value = await withinBudget(signal, budgetMs, run);
+        const value = await withinBudget(signal, budgetMs, async (bounded) => {
+          release = await env.limiter.acquire(entry.url, () => (selected.peek() ? 0 : 1), bounded);
+          return run(bounded);
+        });
         settle(() => succeeded(value));
       } catch (error) {
         settle(() => failed(error));
@@ -430,7 +432,11 @@ function connect(
     const failed = fault.peek();
     const reread =
       force ||
-      (fresh ? !failed || failed.failure.retry === "retryable" : discoveryDue.peek() <= now());
+      (fresh
+        ? failed
+          ? failed.failure.retry === "retryable"
+          : !discovery.peek() || discovery.peek()!.readAt < since!
+        : discoveryDue.peek() <= now());
     // A selected server's own re-read keeps showing what it knew, without a checking flash.
     const quiet =
       !force && !fresh && selected.peek() && (discovery.peek() !== null || failed !== null);
@@ -672,7 +678,7 @@ function connect(
     const signIn =
       !!failed?.failure.signIn ||
       ROLES.some((role) => required(role) && !busy[role]() && failureHere(role)?.failure.signIn);
-    const ready = paths(-Infinity) !== null;
+    const ready = paths(-Infinity) !== null && (!env.latencyNeeded() || !!valid.latency());
     const checking = loud() || ROLES.some((role) => required(role) && busy[role]());
     return {
       server: identity(),
@@ -711,6 +717,18 @@ function connect(
           ready && { server: identity(), auth: lease, discovery: discovery()!, link, ...ready }
         );
       }),
+    proved(which) {
+      batch(() =>
+        eachRole((check, role) => {
+          const outcome = check.outcome.peek();
+          if (which.includes(role) && outcome.state === "verified" && valid[role].peek())
+            check.outcome.set({ state: "verified", path: { ...outcome.path, verifiedAt: now() } });
+        }),
+      );
+    },
+    controlFailed(error) {
+      fault.set(faultAfter(error));
+    },
     invalidate,
     requireSignIn,
     resume,

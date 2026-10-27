@@ -102,8 +102,9 @@ export type RunPlan = Pick<
 >;
 type LiveChange = Pick<RunPlan, "stages" | "duration" | "adaptive">;
 
-export interface DroppedServer {
+export interface StartFailure {
   server: ServerIdentity;
+  scope: Role;
   reason: FailureReason;
   message: string;
 }
@@ -112,8 +113,8 @@ export interface RunOptions {
   servers: PreparedServer[];
   /** The server whose idle latency the run reports; the first when it is not among them. */
   focus: string;
-  /** Selected servers that failed their start check. */
-  dropped: DroppedServer[];
+  /** Paths unavailable when the run starts. */
+  failures: StartFailure[];
   plan: RunPlan;
   open: OpenStage;
   /** Mints an upload id, so that no upload stage's start waits for one. */
@@ -161,7 +162,7 @@ export type RunEvent =
   /** The latency warmup's newest replies as one median; nothing counts them. */
   | { type: "warmupReply"; serverId: string; rttMs: number }
   | { type: "summary"; serverId: string; stage: Stage; summary: LatencySummary | null }
-  | { type: "failure"; failure: ServerFailure }
+  | { type: "failure"; failure: ServerFailure; start: boolean }
   /** The run as a whole stalled (every server recovering or quiet), or recovered. */
   | { type: "stall"; stall: Stall | null }
   | { type: "stageEnd"; stage: Stage; status: StageStatus; results: StageResults }
@@ -279,7 +280,7 @@ function classify(cause: unknown, fallback: FailureReason): FailureReason {
 export class Run {
   readonly #servers: Participant[];
   readonly #source: Participant;
-  readonly #dropped: DroppedServer[];
+  readonly #startFailures: StartFailure[];
   readonly #open: OpenStage;
   readonly #mint: RunOptions["mint"];
   /** Ends the upload ids still being minted when the run ends. */
@@ -341,7 +342,7 @@ export class Run {
       };
     });
     this.#source = this.#servers.find((server) => server.id === options.focus) ?? this.#servers[0]!;
-    this.#dropped = options.dropped;
+    this.#startFailures = options.failures;
     this.#open = options.open;
     this.#mint = options.mint;
     this.#streams = options.streams;
@@ -373,15 +374,12 @@ export class Run {
       t: 0,
       step: "preparing",
     });
-    // A server that failed its start check is named at once; saved, it counts against the first stage that moves
-    // bytes, as every release reads it, and the grid knows it left at Start.
     const charged = (this.#segments.find(({ activity }) => activity.transfer.length) ?? first)
       .activity.stage;
-    for (const { server, reason, message } of this.#dropped) {
-      const failure = this.#record(server.id, "throughput", reason, message, charged, {
-        start: true,
-      });
-      if (failure) this.#emit({ type: "failure", failure });
+    for (const { server, scope, reason, message } of this.#startFailures) {
+      const stage = scope === "latency" && planned(this.#plan, "latency") ? "latency" : charged;
+      const failure = this.#record(server.id, scope, reason, message, stage, { start: true });
+      if (failure) this.#emit({ type: "failure", failure, start: true });
     }
     // A handler may have stopped the run.
     if (this.#state !== "running") return;
@@ -463,8 +461,12 @@ export class Run {
   details(): MultiServerResult {
     return {
       selection: [
-        ...this.#servers.map(({ prepared }) => prepared.server),
-        ...this.#dropped.map(({ server }) => server),
+        ...new Map(
+          [
+            ...this.#servers.map(({ prepared }) => prepared.server),
+            ...this.#startFailures.map(({ server }) => server),
+          ].map((server) => [server.id, server]),
+        ).values(),
       ],
       participants: this.#participants().map(({ id }) => id),
       latencyFocus: this.#focus().id,
@@ -526,9 +528,11 @@ export class Run {
   /** The latency source, or once it left, the first remaining server that measured idle latency. */
   #focus(): Participant {
     const source = this.#source;
-    if (!source.removed) return source;
+    if (!source.removed && source.prepared.latency && !source.latency.failed.has("latency"))
+      return source;
     const measured = (server: Participant) => !!server.latency.result();
-    return this.#latencyParticipants().find(measured) ?? this.#servers.find(measured) ?? source;
+    const candidates = this.#latencyParticipants();
+    return candidates.find(measured) ?? candidates[0] ?? this.#servers.find(measured) ?? source;
   }
 
   #current(stage: StageRun): boolean {
@@ -668,6 +672,7 @@ export class Run {
       (server) => activity.stage !== "latency" || server.prepared.latency,
     );
     for (const server of this.#participants()) server.latency.failed.delete(activity.stage);
+    if (!servers.length) return this.#skip(stage);
     const opened = servers.map(async (server) => {
       const seat = this.#seat(stage, server);
       await seat.resources.prepare(stage.abort.signal);
@@ -1230,8 +1235,7 @@ export class Run {
       server.latency.fail("latency");
       if (seat) seat.latencyStall = null;
       this.#failure(server, "latency", reason, message);
-      // An unreachable server would hold each later stage's preparation until it timed out.
-      if ((unreached(reason) && this.#participants().length > 1) || reason === "server-stopped") {
+      if (reason === "server-stopped") {
         server.removed = true;
         seat?.resources.discard(true);
       }
@@ -1287,7 +1291,7 @@ export class Run {
         server.prepared.server.name,
       ),
     });
-    this.#emit({ type: "failure", failure });
+    this.#emit({ type: "failure", failure, start: false });
   }
 
   /** With nobody left to measure, the stage ends now and keeps whatever its evidence supports. */
@@ -1296,6 +1300,7 @@ export class Run {
     for (const segment of this.#segments)
       if (segment.activity.stage === stage.activity.stage)
         this.#elapsed = Math.max(this.#elapsed, segment.end);
+    if (stage.phase === "preparing") return void this.#endStage(stage);
     queueMicrotask(() => this.#tick());
   }
 
@@ -1719,7 +1724,7 @@ export class Run {
       return null;
     const name =
       this.#servers.find(({ id }) => id === serverId)?.prepared.server.name ||
-      this.#dropped.find(({ server }) => server.id === serverId)?.server.name ||
+      this.#startFailures.find(({ server }) => server.id === serverId)?.server.name ||
       serverId;
     const failure = {
       serverId,
@@ -1746,7 +1751,7 @@ export class Run {
   ): void {
     const stage = this.#stage?.activity.stage;
     const failure = stage && this.#record(server.id, scope, reason, message, stage, { direction });
-    if (failure) this.#emit({ type: "failure", failure });
+    if (failure) this.#emit({ type: "failure", failure, start: false });
   }
 
   #complete(): void {
@@ -1819,7 +1824,7 @@ export class Run {
       !!this.#stages.get(stage)?.seats.has(id) || this.#failed(stage, id);
     const status = (stage: Stage): StageStatus =>
       (this.#settled.get(stage)?.status ?? "not-run") === "not-run" ||
-      (stage === "latency" && !prepared.latency) ||
+      (stage === "latency" && !prepared.latency && !this.#failed(stage, id)) ||
       !joined(stage)
         ? "not-run"
         : stageStatus(lanes(evidence, stage), this.#failed(stage, id));

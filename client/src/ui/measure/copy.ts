@@ -1,13 +1,13 @@
 // The instrument's own words: the dial's notes and the labels of the chips, lanes, cards, lens and toast.
 import type { ShownPhase } from "../../app/run";
-import { listed, PHASE, READINESS_TIP, TIP } from "../../view/words";
+import { PHASE, TIP } from "../../view/words";
 
 /** What the dial's note says between measurements; the explainer, when there is one, is the hint's tip. */
 export const PHASE_HINT: Partial<
   Record<ShownPhase, { status?: string; text: string; tip?: string }>
 > = {
   idle: { text: "Ready to measure your connection" },
-  connecting: { text: "Verifying the selected paths", tip: READINESS_TIP.checking },
+  connecting: { text: PHASE.connecting },
   warmup: { status: PHASE.warmup, text: "Not counted", tip: TIP.warmup },
 };
 
@@ -68,11 +68,9 @@ export const LENS = "Servers shown in the results";
 
 /** The grid of servers by stages under a multi-server result, and the causes under it. */
 export const GRID = {
+  title: "Server results",
   label: "Each server's result by stage",
   server: "Server",
-  /** The stages a cause cost its server. */
-  unreached: (stages: readonly string[]) =>
-    `${listed(stages)} ${stages.length > 1 ? "were" : "was"} not reached.`,
 } as const;
 
 export const TOAST = {

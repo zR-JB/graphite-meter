@@ -30,7 +30,7 @@ function setup(
     authorize: () => options.authorize ?? Promise.resolve(),
     prepare: async () => ({
       servers: peers.map(({ id }) => prepared(id, true)),
-      dropped: [],
+      failures: [],
       focus: "self",
       release: () => leases.released++,
     }),

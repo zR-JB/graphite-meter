@@ -110,7 +110,7 @@ export function prepared(id: string, latency: boolean, signedOut = false): Prepa
     server: { id, url: origin, name: id },
     auth: { ended: async () => signedOut } as Partial<ServerAuth> as ServerAuth,
     discovery: { engineVersion: "test" } as Discovery,
-    link: { bus: { park() {}, renew() {} }, workers: {} } as unknown as Link,
+    link: { bus: { park() {} }, workers: {} } as unknown as Link,
     throughput: { target: fetch, fetch, probe, browserProtocol: "http/1.1", ...verified },
     latency: latency
       ? {

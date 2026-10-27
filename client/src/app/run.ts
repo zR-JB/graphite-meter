@@ -15,7 +15,7 @@ import {
 } from "../engine/run/result";
 import {
   Run,
-  type DroppedServer,
+  type StartFailure,
   type LiveSample,
   type Phase,
   type RunOptions,
@@ -69,7 +69,7 @@ interface RunEnvironment {
     config: TestConfig,
   ): Promise<{
     servers: PreparedServer[];
-    dropped: DroppedServer[];
+    failures: StartFailure[];
     focus: string;
     release(): void;
   }>;
@@ -298,7 +298,7 @@ export function createRun(env: RunEnvironment) {
           return entry.summaries.set({ ...entry.summaries.peek(), [event.stage]: event.summary });
         }
         case "failure":
-          env.recheck(event.failure);
+          if (!event.start) env.recheck(event.failure);
           return details.set(current.details());
         case "stageEnd":
           return batch(() => {
@@ -366,9 +366,9 @@ export function createRun(env: RunEnvironment) {
       signal.throwIfAborted();
       if (!ready.servers.length)
         throw new Error(
-          ready.dropped
+          ready.failures
             .map(({ server, message }) =>
-              ready.dropped.length > 1 ? `${server.name}: ${message}` : message,
+              ready.failures.length > 1 ? `${server.name}: ${message}` : message,
             )
             .join("; ") || CHECK_FAILED,
         );
@@ -392,7 +392,7 @@ export function createRun(env: RunEnvironment) {
       next = new Run({
         servers: ready.servers,
         focus: focus.server.id,
-        dropped: ready.dropped,
+        failures: ready.failures,
         plan: runPlan,
         open: env.open,
         mint: env.mint,
@@ -496,7 +496,7 @@ export function createRun(env: RunEnvironment) {
   /** Whether a stage may be turned on or off now; while a test runs, the run's own rule decides. */
   const canToggle = (name: Stage) => {
     if (!running() || preparing()) return true;
-    // The first stage locks as it leaves Checking paths, not as it is named: follow every phase.
+    // The first stage locks as preparation ends: follow every phase.
     phase();
     return run?.canChange(name) ?? false;
   };

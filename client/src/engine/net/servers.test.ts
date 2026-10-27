@@ -61,7 +61,7 @@ async function load(
   /** Starts the run's preparation: its outcome once settled, or the name of the error that ended it. */
   const prepare = () =>
     servers.prepare(new AbortController().signal, config.peek()).then(
-      ({ servers, dropped }) => ({ servers: servers.map(({ server }) => server.id), dropped }),
+      ({ servers, failures }) => ({ servers: servers.map(({ server }) => server.id), failures }),
       (error: Error) => error.name,
     );
   const readiness = (id = "self") => servers.views.peek().get(id)?.readiness;
@@ -112,7 +112,7 @@ test("Start runs on what its checks verified however long they take, and never f
   probeMs = 1_500;
   const late = prepare();
   await net!.advance(2_000);
-  expect(await late).toEqual({ servers: ["self"], dropped: [] });
+  expect(await late).toEqual({ servers: ["self"], failures: [] });
   // Evidence a network change takes while Start checks drops the server with words, never silently.
   probeMs = 500;
   servers.recheck({
@@ -128,9 +128,10 @@ test("Start runs on what its checks verified however long they take, and never f
   await net!.advance(1_000);
   expect(await blip).toEqual({
     servers: [],
-    dropped: [
+    failures: [
       {
         server: { id: "self", url: page.origin, name: "Meter" },
+        scope: "throughput",
         reason: "path-failed",
         message: "Could not check the connection",
       },
@@ -161,15 +162,16 @@ test("Start takes each lease to the run's ceilings, and a server without room le
     await net!.advance(1_000);
     return started;
   };
-  expect(await settled()).toEqual({ servers: ["self"], dropped: [] });
+  expect(await settled()).toEqual({ servers: ["self"], failures: [] });
   // Four lanes a direction, an upload's feed and finalize, beside the bus; one id for the upload stage.
   expect(asked.at(-1)).toEqual({ measurements: 7, sessions: 0, uploads: 1 });
   room = false;
   expect(await settled()).toEqual({
     servers: [],
-    dropped: [
+    failures: [
       {
         server: { id: "self", url: page.origin, name: "Meter" },
+        scope: "throughput",
         reason: "server-capacity",
         message: "Server at capacity",
       },
@@ -177,7 +179,7 @@ test("Start takes each lease to the run's ceilings, and a server without room le
   });
 });
 
-test("Start proves paths a check verified a moment ago, and names a lease its check could not renew", async () => {
+test("Start reuses recent paths and still checks admission", async () => {
   let room = true;
   const { prepare } = await load(
     (url) =>
@@ -194,16 +196,17 @@ test("Start proves paths a check verified a moment ago, and names a lease its ch
   const started = prepare();
   await net!.advance(1_000);
   const ready = await started;
-  expect(ready).toEqual({ servers: ["self"], dropped: [] });
-  expect(net!.sent("/probe").length).toBeGreaterThan(probes);
+  expect(ready).toEqual({ servers: ["self"], failures: [] });
+  expect(net!.sent("/probe").length).toBe(probes);
   room = false;
   const refused = prepare();
   await net!.advance(1_000);
   expect(await refused).toEqual({
     servers: [],
-    dropped: [
+    failures: [
       {
         server: { id: "self", url: page.origin, name: "Meter" },
+        scope: "throughput",
         reason: "client-limit",
         message: "Limit reached for your address or sign-in",
       },
@@ -211,23 +214,36 @@ test("Start proves paths a check verified a moment ago, and names a lease its ch
   });
 });
 
-test("a catalog reload during Start supersedes it rather than running on closed connections", async () => {
-  let preflightMs = 0;
-  const { servers, active, prepare } = await load((url) =>
-    url.pathname === "/servers"
-      ? { body: HOME }
-      : url.pathname === "/preflight"
-        ? { body: preflight([h(".", "http1")], [ws(".")]), afterMs: preflightMs }
-        : { body: PROBE, hop: "http/1.1" },
-  );
-  active.set(false);
-  preflightMs = 1_000;
-  const pending = prepare();
-  await net!.advance(500);
-  await servers.load();
-  await net!.advance(1_000);
-  expect(await pending).toBe("AbortError");
-});
+for (const phase of ["checks", "admission"]) {
+  test(`a catalog reload during Start ${phase} supersedes closed connections`, async () => {
+    let waiting = false;
+    const { servers, active, prepare, readiness } = await load(
+      (url) =>
+        url.pathname === "/servers"
+          ? { body: HOME }
+          : url.pathname === "/preflight"
+            ? {
+                body: preflight([h(".", "http1")], [ws(".")]),
+                afterMs: waiting && phase === "checks" ? 1_000 : 0,
+              }
+            : { body: PROBE, hop: "http/1.1" },
+      {},
+      (_, init) => ({
+        ...granted(init),
+        afterMs: waiting && phase === "admission" ? 1_000 : 0,
+      }),
+    );
+    active.set(false);
+    if (phase === "checks") await net!.advance(120_001);
+    waiting = true;
+    const pending = prepare();
+    await net!.advance(500);
+    await servers.load();
+    await net!.advance(1_000);
+    expect(await pending).toBe("AbortError");
+    expect(readiness()).toBe("unchecked");
+  });
+}
 
 test("a selection made while a test starts or runs waits for it to go", async () => {
   const other = "https://other.example";

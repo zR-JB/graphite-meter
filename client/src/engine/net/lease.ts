@@ -5,8 +5,10 @@ import { refused } from "../lanes/endings";
 import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
 import type { ServerAuth } from "../types";
 import { CheckError } from "./checks";
+import { abortable } from "../run/clock";
 
 const LEASE_HEADER = "Graphite-Meter-Lease";
+const REQUEST_MS = 5_000;
 /** The bus the lease holds whenever it is held. */
 const STANDING = { measurements: 1, sessions: 0 };
 
@@ -56,31 +58,39 @@ export function createLease(url: string, auth: ServerAuth): Lease {
     return sent;
   };
   /** Asks for what is held now, answering whether the lease holds all of it; a lowering asks nothing once it ended. */
-  const post = (uploads: number, signal?: AbortSignal, lowering = false) =>
-    serially(async () => {
-      if (lowering && !token) return true;
-      const asked = total();
-      const response = await auth.fetch(`${url}${ROUTES.lease}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...field() },
-        body: JSON.stringify({ ...asked, uploads }),
-        signal,
-      });
-      if (!response.ok) {
-        const { reason } = refused(response);
-        release(response);
-        if (reason === "client-limit" || reason === "server-capacity")
-          throw new LeaseRefused(reason);
-        throw new CheckError(
-          `The server did not admit the test (HTTP ${response.status})`,
-          "retryable",
-        );
-      }
-      const answer = leaseDocument(await readJSON(response));
-      token = answer.token;
-      minted.push(...answer.uploads);
-      return answer.measurements >= asked.measurements && answer.sessions >= asked.sessions;
-    });
+  const post = (uploads: number, signal?: AbortSignal, lowering = false) => {
+    const bounded = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_MS)])
+      : AbortSignal.timeout(REQUEST_MS);
+    return abortable(
+      serially(async () => {
+        bounded.throwIfAborted();
+        if (lowering && !token) return true;
+        const asked = total();
+        const response = await auth.fetch(`${url}${ROUTES.lease}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...field() },
+          body: JSON.stringify({ ...asked, uploads }),
+          signal: bounded,
+        });
+        if (!response.ok) {
+          const { reason } = refused(response);
+          release(response);
+          if (reason === "client-limit" || reason === "server-capacity")
+            throw new LeaseRefused(reason);
+          throw new CheckError(
+            `The server did not admit the test (HTTP ${response.status})`,
+            "retryable",
+          );
+        }
+        const answer = leaseDocument(await readJSON(response));
+        token = answer.token;
+        minted.push(...answer.uploads);
+        return answer.measurements >= asked.measurements && answer.sessions >= asked.sessions;
+      }),
+      bounded,
+    );
+  };
   const lowered = () => {
     if (ending && !held.size) return lease.end();
     void post(0, undefined, true).catch(() => {});
@@ -150,6 +160,7 @@ export function createLease(url: string, auth: ServerAuth): Lease {
             method: "DELETE",
             headers: { [LEASE_HEADER]: ended },
             keepalive: true,
+            signal: AbortSignal.timeout(REQUEST_MS),
           }),
         );
       }).catch(() => {});

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { fakeNet, granted, publicAuth, type Answer } from "./fakes.testutil";
 import { createLease, LeaseRefused } from "./lease";
 
@@ -6,6 +6,36 @@ const PEER = "https://peer.example";
 const entry = { id: "peer", url: PEER, name: "Peer", additionalOrigins: [] };
 let net: ReturnType<typeof fakeNet> | null = null;
 afterEach(() => net?.restore());
+
+test("a hung lease update times out without stranding admission behind its queue", async () => {
+  let hanging = false;
+  const { lease, asked } = leased((init) => (hanging ? "hang" : granted(init)));
+  const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), ms);
+    return controller.signal;
+  });
+  try {
+    const signal = new AbortController().signal;
+    const release = await lease.hold({ measurements: 4, sessions: 0 }, signal);
+    hanging = true;
+    release();
+    const refused = lease
+      .hold({ measurements: 8, sessions: 0 }, signal)
+      .catch((error: Error) => error);
+    await net!.advance(5_001);
+    expect((await refused) instanceof DOMException).toBe(true);
+    hanging = false;
+    await net!.advance();
+    const recovered = lease.hold({ measurements: 2, sessions: 0 }, signal);
+    await net!.advance(5_001);
+    const recover = await recovered;
+    expect(asked().at(-1)?.body.measurements).toBe(3);
+    recover();
+  } finally {
+    timeout.mockRestore();
+  }
+});
 
 /** A lease of the peer whose `/lease` answers come from `answer`, and what each request asked. */
 function leased(answer: (init: RequestInit) => Answer = granted) {

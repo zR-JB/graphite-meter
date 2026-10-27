@@ -6,6 +6,7 @@ import { openProbeChannel } from "../engine/lanes/probes";
 import { mintUpload, openStage } from "../engine/lanes/stage";
 import type { LatencyBucket } from "../engine/measure/buckets";
 import { adaptWarmup, totalMs } from "../engine/run/schedule";
+import { ROLES } from "../engine/types";
 import { pageMs } from "../lib/frame";
 import { computed, effect, signal, untrack, type Read } from "../lib/signal";
 import { AUTH_ROUTES } from "../protocol/routes";
@@ -121,7 +122,6 @@ export function createApp() {
     authorize: servers.authorize,
     async prepare(signal, config) {
       const ready = await servers.prepare(signal, config);
-      // The blocker judged each limit as last read; Start holds the run to the discovery it just read.
       const limit = stageLimit(
         ready.servers.map(({ server, discovery }) => ({ name: server.name, discovery })),
       );
@@ -133,7 +133,26 @@ export function createApp() {
     lock: holdRun,
     fits: servers.fits,
     recheck: servers.recheck,
-    finished: (finished) => (finished ? saver.offer(historyRecord(finished)) : saver.withdraw()),
+    finished(finished) {
+      if (!finished) return saver.withdraw();
+      const { servers: measured, failures } = finished.result.multiServer;
+      for (const own of measured)
+        servers.proved(
+          own.server.id,
+          ROLES.filter(
+            (role) =>
+              !failures.some(
+                (failure) => failure.serverId === own.server.id && failure.scope === role,
+              ) &&
+              (role === "throughput"
+                ? !!(own.download || own.upload || own.bidirectional?.down || own.bidirectional?.up)
+                : Object.values(own.latencyByStage).some(
+                    (population) => population?.p50Ms != null,
+                  )),
+          ),
+        );
+      saver.offer(historyRecord(finished));
+    },
     open: openStage,
     mint: mintUpload,
     streams: (prepared, activity) =>

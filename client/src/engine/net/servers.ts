@@ -13,7 +13,7 @@ import {
 } from "../../protocol/documents";
 import { AUTH_ROUTES, ROUTES } from "../../protocol/routes";
 import { activities as stageActivities } from "../run/schedule";
-import type { DroppedServer } from "../run/run";
+import type { StartFailure } from "../run/run";
 import {
   MAX_SELECTED,
   ROLES,
@@ -37,9 +37,11 @@ import {
   type Grant,
 } from "./auth";
 import { CHECK_FAILED } from "./checks";
+import { abortable } from "../run/clock";
 import { LeaseRefused, type Need } from "./lease";
 import {
   createConnection,
+  FRESH_MS,
   type Connection,
   type ConnectionEnv,
   type ServerView,
@@ -119,8 +121,6 @@ export interface Servers {
   showMetadata(open: boolean): void;
   /** The page's sign-in and every selected grant must cover `requiredMs`; a CoverageError carries the words to show. */
   authorize(requiredMs: number, signal: AbortSignal): Promise<void>;
-  /** Re-reads every selected server's discovery, re-checks stale paths and takes each lease to the run's ceilings,
-   *  which `release` lowers again; an AbortError means a reload or approval replaced a connection. */
   prepare(signal: AbortSignal, plan: TestConfig): Promise<Prepared>;
   /** Whether a run lasting `totalMs` from now ends before every sign-in `authorize` checked. */
   fits(totalMs: number): boolean;
@@ -128,13 +128,14 @@ export interface Servers {
   recheck(
     failure: { serverId: string; scope: Role; reason: FailureReason; message: string } | null,
   ): void;
+  proved(serverId: string, roles: readonly Role[]): void;
   resume(): void;
   dispose(): void;
 }
 
 export interface Prepared {
   servers: PreparedServer[];
-  dropped: DroppedServer[];
+  failures: StartFailure[];
   focus: string;
   release(): void;
 }
@@ -142,6 +143,7 @@ export interface Prepared {
 const IDLE: Approval = { state: "idle" };
 const SAVED_KEY = "graphite-meter:server-selection:v1";
 const CATALOG_TIMEOUT_MS = 5_000;
+const START_TIMEOUT_MS = 20_000;
 export const TRANSPORT_KEY = { throughput: "throughputTarget", latency: "latencyTarget" } as const;
 
 const savedRow = object({ id: displayText(64, 1), url: string(1, 2048) });
@@ -579,53 +581,96 @@ export function createServers(env: ServersEnv): Servers {
 
   async function prepare(signal: AbortSignal, plan: TestConfig) {
     const chosen = chosenConnections();
-    // A check at Start adopts the renewed bus too, so the run dials one connection.
-    for (const connection of chosen) connection.link.bus.renew();
-    // Start proves every path the run will use, so the run takes nothing an earlier check left.
-    const since = now();
-    await Promise.all(chosen.map((connection) => connection.check({ since, start: true, signal })));
+    const since = now() - FRESH_MS;
+    const attempts = new Map(
+      chosen.map((connection) => [
+        connection.entry.id,
+        AbortSignal.any([signal, AbortSignal.timeout(START_TIMEOUT_MS)]),
+      ]),
+    );
+    await Promise.all(
+      chosen.map((connection) => {
+        const bounded = attempts.get(connection.entry.id)!;
+        return abortable(connection.check({ since, start: true, signal: bounded }), bounded).catch(
+          (error) => {
+            if (!bounded.aborted) throw error;
+          },
+        );
+      }),
+    );
     signal.throwIfAborted();
     if (chosen.some((connection) => connections.peek().get(connection.entry.id) !== connection))
       throw new DOMException("Connection selection changed", "AbortError");
     const servers: PreparedServer[] = [];
-    const dropped: DroppedServer[] = [];
+    const failures: StartFailure[] = [];
+    const activities = stageActivities(plan);
+    const transfer = activities.some((activity) => activity.transfer.length > 0);
     for (const connection of chosen) {
-      const ready = connection.prepared(since);
-      if (ready) {
-        servers.push(ready);
+      if (attempts.get(connection.entry.id)!.aborted) {
+        failures.push({
+          server: connection.view.peek().server,
+          scope: "throughput",
+          reason: "timeout",
+          message: "Connection preparation timed out",
+        });
         continue;
       }
+      const ready = connection.prepared(since);
       const view = connection.view.peek();
+      if (ready && (transfer || ready.latency)) {
+        servers.push(ready);
+        if (!ready.latency && activities.some(needsPings))
+          failures.push({
+            server: view.server,
+            scope: "latency",
+            reason: view.latency.reason ?? "path-failed",
+            message: view.latency.message ?? CHECK_FAILED,
+          });
+        continue;
+      }
+      const scope = view.throughput.state === "verified" ? "latency" : "throughput";
       const failed = [view.throughput, view.latency].find(({ state }) => state === "failed");
       const reason =
         view.readiness === "sign-in" ? "sign-in-required" : (failed?.reason ?? "path-failed");
       // Evidence lost while the checks ran, as to a network change, leaves no message of its own.
-      dropped.push({ server: view.server, reason, message: view.message ?? CHECK_FAILED });
+      failures.push({ server: view.server, scope, reason, message: view.message ?? CHECK_FAILED });
     }
     // The run's admission is taken now, so a server without room for it leaves before anything is measured.
     const needs = ceilings(plan, servers);
-    const uploads = stageActivities(plan).filter(({ transfer }) => transfer.includes("up")).length;
+    const uploads = activities.filter(({ transfer }) => transfer.includes("up")).length;
     const releases: (() => void)[] = [];
     const release = () => {
       for (const each of releases.splice(0)) each();
     };
     const leased = await Promise.all(
       servers.map(async (ready) => {
+        const connection = chosen.find((each) => each.entry.id === ready.server.id)!;
         try {
-          releases.push(await ready.link.lease.hold(needs.get(ready.server.id)!, signal, uploads));
+          releases.push(
+            await ready.link.lease.hold(
+              needs.get(ready.server.id)!,
+              attempts.get(ready.server.id)!,
+              uploads,
+            ),
+          );
           return ready;
         } catch (error) {
-          if (signal.aborted) return null;
+          if (signal.aborted || connections.peek().get(ready.server.id) !== connection) return null;
           const reason: FailureReason =
             error instanceof LeaseRefused
               ? error.reason
               : error instanceof SignInRequired
                 ? "sign-in-required"
-                : "path-failed";
-          if (reason === "sign-in-required")
-            connections.peek().get(ready.server.id)?.requireSignIn();
+                : error instanceof DOMException && error.name === "TimeoutError"
+                  ? "timeout"
+                  : "path-failed";
+          if (reason === "sign-in-required") connection.requireSignIn();
+          else if (reason === "path-failed" || reason === "timeout" || reason === "protocol-error")
+            connection.controlFailed(error);
           const message = error instanceof Error ? error.message : CHECK_FAILED;
-          dropped.push({ server: ready.server, reason, message });
+          const previous = failures.findIndex(({ server }) => server.id === ready.server.id);
+          if (previous !== -1) failures.splice(previous, 1);
+          failures.push({ server: ready.server, scope: "throughput", reason, message });
           return null;
         }
       }),
@@ -634,9 +679,16 @@ export function createServers(env: ServersEnv): Servers {
       release();
       signal.throwIfAborted();
     }
+    if (chosen.some((connection) => connections.peek().get(connection.entry.id) !== connection)) {
+      release();
+      throw new DOMException("Connection selection changed", "AbortError");
+    }
     const kept = leased.filter((ready) => ready !== null);
-    const shown = kept.find(({ server }) => server.id === latencyServer.peek()) ?? kept[0];
-    return { servers: kept, dropped, focus: shown?.server.id ?? "", release };
+    const shown =
+      kept.find(({ server, latency }) => server.id === latencyServer.peek() && latency) ??
+      kept.find(({ latency }) => latency) ??
+      kept[0];
+    return { servers: kept, failures, focus: shown?.server.id ?? "", release };
   }
 
   return {
@@ -713,6 +765,9 @@ export function createServers(env: ServersEnv): Servers {
       // A channel that worked and then broke says nothing against its path; the discovery re-read watches the server.
       else if (failure.reason === "path-failed" || failure.reason === "protocol-error")
         connection?.invalidate([failure.scope], true);
+    },
+    proved(serverId, roles) {
+      connections.peek().get(serverId)?.proved(roles);
     },
     resume() {
       reloadFailed();

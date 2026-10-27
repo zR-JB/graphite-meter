@@ -260,83 +260,97 @@ function Summary(props: {
   return summary;
 }
 
-/** A result's servers by stages under its cards, then each cause and what it cost; one server's result lists only
- *  the causes, as its cards already are its row. */
-function ServerGrid(props: { view: Read<GridView> }): Node {
+function ServerResults(props: { view: Read<GridView> }): Node {
   const several = computed(() => props.view().rows.length > 1);
+  const issues = computed(() => props.view().rows.filter((row) => row.word).length);
   const dot = (word: Word | null) =>
     word?.tone && word.tone !== "neutral" ? (
       <span class="status-dot inline" data-tone={word.tone} />
     ) : null;
+  const notes = (items: GridView["rows"][number]["notes"]) =>
+    items.length > 0 && (
+      <ul class="causes">
+        {items.map((note) => (
+          <li ref={tip(() => note.tip)}>
+            <span class="status-dot inline" data-tone={note.tone} />
+            <span>{note.text}</span>
+          </li>
+        ))}
+      </ul>
+    );
   return (
-    <div class="server-grid enter">
-      <Show when={several}>
-        {() => (
-          <table ref={tipGroup}>
-            <caption class="sr-only">{GRID.label}</caption>
-            <thead>
-              <tr>
-                <th scope="col">{GRID.server}</th>
+    <details class="server-results enter">
+      <summary class="link-row">
+        <Icon name="chevron" />
+        <span>{GRID.title} </span>
+        <span class="aside">
+          {() =>
+            issues()
+              ? `${issues()} of ${props.view().rows.length} with issues`
+              : `${props.view().rows.length} servers`
+          }
+        </span>
+      </summary>
+      <div class="server-grid">
+        <Show when={several}>
+          {() => (
+            <table ref={tipGroup}>
+              <caption class="sr-only">{GRID.label}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{GRID.server}</th>
+                  {() =>
+                    props.view().stages.map((stage) => (
+                      <th scope="col">
+                        {STAGE[stage].short}
+                        <span class="unit">{props.view().units[stage]}</span>
+                      </th>
+                    ))
+                  }
+                </tr>
+              </thead>
+              <tbody>
                 {() =>
-                  props.view().stages.map((stage) => (
-                    <th scope="col">
-                      {STAGE[stage].short}
-                      <span class="unit">{props.view().units[stage]}</span>
-                    </th>
+                  props.view().rows.map((row) => (
+                    <tr>
+                      <th scope="row">
+                        <div class="server-heading">
+                          <span class="name">{row.name}</span>
+                          {row.word && (
+                            <span class="word">
+                              {dot(row.word)}
+                              {row.word.label}
+                            </span>
+                          )}
+                        </div>
+                        {notes(row.notes)}
+                      </th>
+                      {row.cells.map((cell) => (
+                        <td
+                          data-label={`${STAGE[cell.stage].short} ${props.view().units[cell.stage]}`}
+                          class={cell.measured ? undefined : "word"}
+                          aria-label={cell.measured ? undefined : cell.tip}
+                          ref={cell.tip ? tip(() => cell.tip) : undefined}
+                        >
+                          <span>
+                            {dot(cell.word)}
+                            {cell.text}
+                            {cell.measured && cell.word && (
+                              <span class="sr-only">, {cell.word.label.toLowerCase()}</span>
+                            )}
+                          </span>
+                        </td>
+                      ))}
+                    </tr>
                   ))
                 }
-              </tr>
-            </thead>
-            <tbody>
-              {() =>
-                props.view().rows.map((row) => (
-                  <tr>
-                    <th scope="row">
-                      <span class="name">{row.name}</span>
-                      {row.word && (
-                        <span class="word">
-                          {dot(row.word)}
-                          {row.word.label}
-                        </span>
-                      )}
-                    </th>
-                    {row.cells.map((cell) => (
-                      <td
-                        data-label={`${STAGE[cell.stage].short} ${props.view().units[cell.stage]}`}
-                        class={cell.measured ? undefined : "word"}
-                        ref={cell.tip ? tip(() => cell.tip) : undefined}
-                      >
-                        <span>
-                          {dot(cell.word)}
-                          {cell.text}
-                          {cell.measured && cell.word && (
-                            <span class="sr-only">, {cell.word.label.toLowerCase()}</span>
-                          )}
-                        </span>
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              }
-            </tbody>
-          </table>
-        )}
-      </Show>
-      <Show when={() => props.view().notes.length > 0}>
-        {() => (
-          <ul class="causes">
-            {() =>
-              props.view().notes.map((note) => (
-                <li>
-                  <span class="status-dot inline" data-tone={note.tone} />
-                  <span>{note.text}</span>
-                </li>
-              ))
-            }
-          </ul>
-        )}
-      </Show>
-    </div>
+              </tbody>
+            </table>
+          )}
+        </Show>
+        <Show when={() => !several()}>{() => notes(props.view().rows[0]?.notes ?? [])}</Show>
+      </div>
+    </details>
   ) as HTMLElement;
 }
 
@@ -371,8 +385,8 @@ export function ResultSummary(props: {
   );
   const view = computed(() => gridView(props.result(), table(), props.units()));
   const shown = computed(() => {
-    const { rows, notes } = view();
-    return rows.length > 1 || notes.length > 0;
+    const { rows } = view();
+    return rows.length > 1 || rows.some((row) => row.notes.length > 0);
   });
   const card = (stage: Stage) =>
     Card({
@@ -390,7 +404,7 @@ export function ResultSummary(props: {
     <Summary
       stages={stages}
       card={card}
-      issues={<Show when={shown}>{() => <ServerGrid view={view} />}</Show>}
+      issues={<Show when={shown}>{() => <ServerResults view={view} />}</Show>}
     />
   );
 }
@@ -622,19 +636,18 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     untrack(() => announce(resultSentence(cards)));
   });
 
-  // A finished run short of complete shows who measured what, and why not.
   const view = computed(() => {
     const result = run.result();
     const table = run.table();
-    return result && table && result.outcome !== "complete"
-      ? gridView(result, table, units())
-      : null;
+    if (!result || !table) return null;
+    const view = gridView(result, table, units());
+    return view.rows.length > 1 || view.rows.some((row) => row.notes.length > 0) ? view : null;
   });
   return (
     <Summary
       stages={computed(() => STAGES.filter((stage) => live.visibility(stage).card))}
       card={card}
-      issues={<Show when={view}>{(shown) => <ServerGrid view={shown} />}</Show>}
+      issues={<Show when={view}>{(shown) => <ServerResults view={shown} />}</Show>}
     />
   );
 }

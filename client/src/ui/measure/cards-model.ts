@@ -39,7 +39,7 @@ import {
   type StageState,
   type Word,
 } from "../../view/words";
-import { CARDS, FACT, GRID, type FactKey } from "./copy";
+import { CARDS, FACT, type FactKey } from "./copy";
 
 type CardStatus =
   | "pending"
@@ -484,27 +484,17 @@ export function causeAt(...causes: Cause[]): string {
 export const leftLine = (cause: Cause) =>
   `${cause.stage === "start" ? "Left at Start" : `Left in ${STAGE[cause.stage].label}`}: ${lower(reasonLabel(cause.reason))}`;
 
-/** A card's line: each server's failure in its stage, then who never reached it; one server alone says why. */
 export function cardLine(table: Grid, stage: Stage, lens = ""): string {
-  const attributed = !lens && table.rows.length > 1;
+  if (!lens && table.rows.length > 1) return "";
   const rows = lens ? table.rows.filter((row) => row.server.id === lens) : table.rows;
   const lines: string[] = [];
-  // Servers short for one reason share it: "Frankfurt and Oslo: connection lost".
-  const short = new Map<string, string[]>();
-  const without: string[] = [];
-  for (const { server, cells } of rows) {
+  for (const { cells } of rows) {
     const { status, cause } = cells[stage];
     if (status === "unreached") {
-      if (attributed) without.push(server.name);
-      else if (cause) lines.push(leftLine(cause));
-    } else if ((status === "partial" || status === "failed") && cause) {
-      const reason = reasonLabel(cause.reason);
-      if (attributed) short.set(reason, [...(short.get(reason) ?? []), server.name]);
-      else lines.push(reason);
-    }
+      if (cause) lines.push(leftLine(cause));
+    } else if ((status === "partial" || status === "failed") && cause)
+      lines.push(reasonLabel(cause.reason));
   }
-  for (const [reason, names] of short) lines.push(`${listed(names)}: ${lower(reason)}`);
-  if (without.length) lines.push(`${lines.length ? "without" : "Without"} ${listed(without)}`);
   return lines.join("; ");
 }
 
@@ -563,15 +553,14 @@ export interface GridCell {
 }
 export interface GridNote {
   tone: "err" | "warn";
-  /** The cause's sentence, which names its server and stage, then what it cost. */
   text: string;
+  tip: string;
 }
 export interface GridView {
   stages: Stage[];
   /** Each column's unit, shared by its cells. */
   units: Partial<Record<Stage, string>>;
-  rows: { id: string; name: string; word: Word | null; cells: GridCell[] }[];
-  notes: GridNote[];
+  rows: { id: string; name: string; word: Word | null; cells: GridCell[]; notes: GridNote[] }[];
 }
 
 /** The result grid in words: every server's value or word per planned stage, then each cause and what it cost. */
@@ -589,7 +578,7 @@ export function gridView(result: RunResult, table: Grid, units: RateUnits): Grid
     const bytesPerSec = lanes.reduce((sum, lane) => sum + lane!.reportedBytesPerSec, 0);
     return fmtSpeed(toRateUnit(bytesPerSec, units, tier));
   };
-  const rows = table.rows.map(({ server, cells, outcome }) => ({
+  const rows = table.rows.map(({ server, cells, outcome, causes }) => ({
     id: server.id,
     name: server.name,
     word: outcome === "complete" ? null : OUTCOME[outcome],
@@ -601,41 +590,35 @@ export function gridView(result: RunResult, table: Grid, units: RateUnits): Grid
       const why = !cause ? [] : status === "unreached" ? [leftLine(cause)] : [cause.message];
       return {
         stage,
-        text: shown ? value(stage, server.id) : word!.label,
+        text: shown
+          ? value(stage, server.id)
+          : status === "unreached" || status === "skipped"
+            ? MISSING
+            : word!.label,
         measured: shown,
         word: status === "unreached" ? null : word,
         tip: [word?.label, ...why].filter(Boolean).join("\n"),
       };
     }),
-  }));
-  // One server's cards already say each cause of their stage; its list keeps only what no card shows.
-  const notes = table.rows.flatMap(({ cells, causes }) =>
-    causes
+    notes: causes
       .filter((cause) => table.rows.length > 1 || loaded(cause))
       .map((cause): GridNote => {
-        const after = stages.filter(
-          (stage) => cells[stage].status === "unreached" && cells[stage].cause === cause,
-        );
         const failed = stages.some(
           (stage) => cells[stage].status === "failed" && cells[stage].cause === cause,
         );
         return {
           tone: failed ? "err" : "warn",
-          text: [
-            cause.message,
-            after.length ? GRID.unreached(after.map((stage) => STAGE[stage].label)) : "",
-          ]
-            .filter(Boolean)
-            .join(" "),
+          text: cause.message,
+          tip: cause.detail || cause.message,
         };
-      }),
-  );
+      })
+      .filter((note, index, all) => all.findIndex((each) => each.text === note.text) === index),
+  }));
   return {
     stages,
     units: Object.fromEntries(
       stages.map((stage) => [stage, stage === "latency" ? "ms" : rateUnit(units, tier)]),
     ),
     rows,
-    notes,
   };
 }
