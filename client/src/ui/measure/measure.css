@@ -1459,7 +1459,7 @@
         gap: var(--space-3);
         padding-inline: 0;
       }
-      & tbody tr > th {
+      & tbody tr > th:first-child {
         border-top: 0;
         display: block;
         width: auto;

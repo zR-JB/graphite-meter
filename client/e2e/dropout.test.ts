@@ -82,11 +82,13 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
           difference: Math.abs(cards.width - grid.width),
           detached: notes.some((note) => !note.closest('th[scope="row"]')),
           overflowing: notes.some((note) => note.scrollWidth > note.clientWidth),
+          narrow: notes.some((note) => note.getBoundingClientRect().width < grid.width * 0.8),
         };
       });
       expect(bounds.difference).toBeLessThanOrEqual(1);
       expect(bounds.detached).toBe(false);
       expect(bounds.overflowing).toBe(false);
+      if (width === 390) expect(bounds.narrow).toBe(false);
       await page.artifact(`multiserver-dropout-${width}`);
     }
     await closeSettings(page);
