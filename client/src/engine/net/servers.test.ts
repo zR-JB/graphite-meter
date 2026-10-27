@@ -214,25 +214,36 @@ test("Start reuses recent paths and still checks admission", async () => {
   });
 });
 
-test("a catalog reload during Start supersedes it rather than running on closed connections", async () => {
-  let preflightMs = 0;
-  const { servers, active, prepare } = await load((url) =>
-    url.pathname === "/servers"
-      ? { body: HOME }
-      : url.pathname === "/preflight"
-        ? { body: preflight([h(".", "http1")], [ws(".")]), afterMs: preflightMs }
-        : { body: PROBE, hop: "http/1.1" },
-  );
-  active.set(false);
-  active.set(false);
-  await net!.advance(120_001);
-  preflightMs = 1_000;
-  const pending = prepare();
-  await net!.advance(500);
-  await servers.load();
-  await net!.advance(1_000);
-  expect(await pending).toBe("AbortError");
-});
+for (const phase of ["checks", "admission"]) {
+  test(`a catalog reload during Start ${phase} supersedes closed connections`, async () => {
+    let waiting = false;
+    const { servers, active, prepare, readiness } = await load(
+      (url) =>
+        url.pathname === "/servers"
+          ? { body: HOME }
+          : url.pathname === "/preflight"
+            ? {
+                body: preflight([h(".", "http1")], [ws(".")]),
+                afterMs: waiting && phase === "checks" ? 1_000 : 0,
+              }
+            : { body: PROBE, hop: "http/1.1" },
+      {},
+      (_, init) => ({
+        ...granted(init),
+        afterMs: waiting && phase === "admission" ? 1_000 : 0,
+      }),
+    );
+    active.set(false);
+    if (phase === "checks") await net!.advance(120_001);
+    waiting = true;
+    const pending = prepare();
+    await net!.advance(500);
+    await servers.load();
+    await net!.advance(1_000);
+    expect(await pending).toBe("AbortError");
+    expect(readiness()).toBe("unchecked");
+  });
+}
 
 test("a selection made while a test starts or runs waits for it to go", async () => {
   const other = "https://other.example";

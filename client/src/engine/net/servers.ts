@@ -644,6 +644,7 @@ export function createServers(env: ServersEnv): Servers {
     };
     const leased = await Promise.all(
       servers.map(async (ready) => {
+        const connection = chosen.find((each) => each.entry.id === ready.server.id)!;
         try {
           releases.push(
             await ready.link.lease.hold(
@@ -654,7 +655,7 @@ export function createServers(env: ServersEnv): Servers {
           );
           return ready;
         } catch (error) {
-          if (signal.aborted) return null;
+          if (signal.aborted || connections.peek().get(ready.server.id) !== connection) return null;
           const reason: FailureReason =
             error instanceof LeaseRefused
               ? error.reason
@@ -663,8 +664,9 @@ export function createServers(env: ServersEnv): Servers {
                 : error instanceof DOMException && error.name === "TimeoutError"
                   ? "timeout"
                   : "path-failed";
-          if (reason === "sign-in-required")
-            connections.peek().get(ready.server.id)?.requireSignIn();
+          if (reason === "sign-in-required") connection.requireSignIn();
+          else if (reason === "path-failed" || reason === "timeout" || reason === "protocol-error")
+            connection.controlFailed(error);
           const message = error instanceof Error ? error.message : CHECK_FAILED;
           const previous = failures.findIndex(({ server }) => server.id === ready.server.id);
           if (previous !== -1) failures.splice(previous, 1);
@@ -676,6 +678,10 @@ export function createServers(env: ServersEnv): Servers {
     if (signal.aborted) {
       release();
       signal.throwIfAborted();
+    }
+    if (chosen.some((connection) => connections.peek().get(connection.entry.id) !== connection)) {
+      release();
+      throw new DOMException("Connection selection changed", "AbortError");
     }
     const kept = leased.filter((ready) => ready !== null);
     const shown =

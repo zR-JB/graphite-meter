@@ -252,6 +252,13 @@ test("a server that fails between its check and Start is named at once and reads
     expect(first.text).toContain("Bergen · Start");
     expect(first.ended).toBe(0);
     expect(saved.result.outcome).toBe("partial");
+    const settings = await openSettings(page);
+    await expect(
+      settings
+        .getByRole("group", { name: "Throughput path" })
+        .locator('.validation .status-dot[data-tone="err"]'),
+    ).toHaveCount(1);
+    await closeSettings(page);
     const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
     await lens.evaluate((select: HTMLSelectElement) => {
       select.value = "bergen";

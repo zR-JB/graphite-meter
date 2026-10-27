@@ -122,6 +122,7 @@ export interface Connection {
   /** Missing latency does not invalidate a working throughput path. */
   prepared(since: number): PreparedServer | null;
   proved(roles: readonly Role[]): void;
+  controlFailed(error: unknown): void;
   /** Verified roles become unchecked, e.g. after a run failed on them, which a `deferred` check proves again only at the next start. */
   invalidate(roles: readonly Role[], deferred?: boolean): void;
   requireSignIn(message?: string): void;
@@ -185,7 +186,7 @@ function connect(
   const link: Link = { bus: createBusSlot(env.openProbeChannel, parked), workers, lease };
   const context: CheckContext = { entry, auth, lease, page, bus: link.bus, now };
   const discovery = signal<Discovery | null>(null);
-  /** The last discovery failure is kept through a loud re-read, which only hides it. */
+  /** Control failures stay visible through quiet re-reads. */
   const fault = signal<Fault | null>(null);
   const discovering = signal<Task | null>(null);
   const connectivity = signal<ServerView["connectivity"]>(null);
@@ -724,6 +725,9 @@ function connect(
             check.outcome.set({ state: "verified", path: { ...outcome.path, verifiedAt: now() } });
         }),
       );
+    },
+    controlFailed(error) {
+      fault.set(faultAfter(error));
     },
     invalidate,
     requireSignIn,
