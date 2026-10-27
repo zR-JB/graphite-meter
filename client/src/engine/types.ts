@@ -141,7 +141,6 @@ export interface Link {
 export interface BusSlot {
   adopt(target: LatencyTarget, events: ProbeChannelEvents): LatencyBus | null;
   take(options: ProbeChannelOptions, events: ProbeChannelEvents): LatencyBus;
-  renew(): void;
   park(): void;
   dispose(bus?: LatencyBus): void;
 }
@@ -315,7 +314,6 @@ export type OpenProbeChannel = (
 export interface LatencyBus extends ProbeChannel {
   /** Its events go to `events` from now on, told at once whether the bus answers or stalled; false once it ended. */
   adopt(events: ProbeChannelEvents): boolean;
-  renew(): void;
 }
 
 /** The test settings as saved (localStorage `graphite-meter:v1` → `config`). */

@@ -86,8 +86,8 @@ test("canceling a new start keeps the previous result", async (page) => {
   await page.addInitScript(() => {
     const original = window.fetch.bind(window);
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const held = (window as { holdPreflight?: boolean }).holdPreflight;
-      if (held && new URL(String(input), location.href).pathname === "/preflight")
+      const held = (window as { holdAdmission?: boolean }).holdAdmission;
+      if (held && new URL(String(input), location.href).pathname === "/lease")
         await new Promise((resolve) => setTimeout(resolve, 5_000));
       return original(input, init);
     }) as typeof fetch;
@@ -95,7 +95,7 @@ test("canceling a new start keeps the previous result", async (page) => {
   await open(page, home.url, { config: latencyOnly });
   await ready(page);
   await run(page);
-  await page.evaluate(() => void Object.assign(window, { holdPreflight: true }));
+  await page.evaluate(() => void Object.assign(window, { holdAdmission: true }));
   await runButton(page, "Run again").click();
   await runButton(page, "Cancel").click();
   await expect(phase(page, "complete")).toHaveCount(1);

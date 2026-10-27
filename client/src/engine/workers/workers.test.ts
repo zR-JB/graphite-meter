@@ -720,7 +720,7 @@ test("an owner's dial during a lapsed WebSocket dial follows that dial's end", a
   expect(FakeWebSocket.opened).toHaveLength(2);
 });
 
-test("a bus at the server's lifetime bound, or renewed, dials again on its own without an outage, unless it ended at once", async () => {
+test("a bus at the server's lifetime bound redials without an outage unless it ended at once", async () => {
   const probe = await boot<ProbeCommand>("./probe.ts", { WebSocket: FakeWebSocket });
   probe.send(bus("websocket"));
   const first = FakeWebSocket.opened.at(-1)!;
@@ -731,20 +731,10 @@ test("a bus at the server's lifetime bound, or renewed, dials again on its own w
   const second = FakeWebSocket.opened.at(-1)!;
   expect(second).not.toBe(first);
   second.onopen!();
-  await elapse(100);
-  probe.send({ type: "renew" });
-  await elapse(0);
-  expect([second.closes, FakeWebSocket.opened.length]).toEqual([1, 3]);
-  expect(probe.types().filter((type) => type === "stalled" || type === "renewing")).toEqual([
-    "renewing",
-    "renewing",
-  ]);
-  const third = FakeWebSocket.opened.at(-1)!;
-  third.onopen!();
-  third.onclose!({ code: 4002, reason: "lifetime" });
+  second.onclose!({ code: 4002, reason: "lifetime" });
   await elapse(0);
   expect(probe.types().at(-1)).toBe("stalled");
-  expect(FakeWebSocket.opened).toHaveLength(3);
+  expect(FakeWebSocket.opened).toHaveLength(2);
 });
 
 test("a WebTransport bus whose datagrams failed waits for its close: a revocation asks for sign-in", async () => {

@@ -54,7 +54,7 @@ export const PHASE = {
   idle: "Not started",
   waiting: "Waiting for another tab",
   authenticating: "Checking sign-in",
-  connecting: "Checking paths",
+  connecting: "Preparing test",
   blocked: "Test cannot start",
   "start-failed": "Could not start the test",
   warmup: "Warmup",
@@ -260,7 +260,7 @@ export const READINESS_TIP = {
   checking: `${READINESS.checking.label}\nAsking each selected server which paths it offers`,
   verified:
     `${READINESS.verified.label}\nThe selected servers and paths passed their check\n` +
-    "Each test proves its paths again as it starts",
+    "Recent checks and successful measurements are reused; changed or expired paths are checked again",
   "sign-in": `${READINESS["sign-in"].label}\nA selected server only admits signed-in clients`,
   failed: `${READINESS.failed.label}\nA selected server or path did not answer its check`,
 } satisfies Record<Readiness, string>;

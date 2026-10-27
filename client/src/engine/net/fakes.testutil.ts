@@ -190,7 +190,6 @@ export class FakeBuses {
         bus.disposed = true;
         clearTimeout(timer);
       },
-      renew() {},
       adopt(next) {
         if (bus.disposed) return false;
         bus.events = next;

@@ -141,7 +141,6 @@ export type ProbeCommand =
   | { type: "pace"; intervalMs: number | null; maxInFlight?: number }
   /** Dials again after the bus stalled; the worker redials on its own only at the server's bound. */
   | { type: "dial" }
-  | { type: "renew" }
   /** Ends the measured window. `drained` acknowledges the latest stop once the window's probes resolved. */
   | { type: "stop"; id: number };
 

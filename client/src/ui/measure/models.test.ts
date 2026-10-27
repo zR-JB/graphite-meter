@@ -356,7 +356,7 @@ test("shown together, the latency card reads the server latency is shown for, he
   ).toBe(live);
 });
 
-test("a card's line names who failed in its stage and who never reached it; one server shown alone says why", () => {
+test("aggregate cards leave server causes to their rows; a server lens keeps its cause", () => {
   const frankfurt = { id: "f", name: "Frankfurt", url: "" };
   const oslo = { id: "o", name: "Oslo", url: "" };
   const bergen = { id: "b", name: "Bergen", url: "" };
@@ -389,8 +389,8 @@ test("a card's line names who failed in its stage and who never reached it; one 
       failures: [failure("o", "connection-lost"), failure("b", "server-capacity")],
     },
   } as unknown as RunResult);
-  expect(cardLine(table, "download")).toBe("Oslo: connection lost; without Bergen");
-  expect(cardLine(table, "upload")).toBe("Without Oslo and Bergen");
+  expect(cardLine(table, "download")).toBe("");
+  expect(cardLine(table, "upload")).toBe("");
   expect(cardLine(table, "download", "o")).toBe("Connection lost");
   expect(cardLine(table, "upload", "o")).toBe("Left in Download: connection lost");
   expect(cardLine(table, "upload", "b")).toBe("Left at Start: server at capacity");
@@ -410,7 +410,7 @@ test("a card's line names who failed in its stage and who never reached it; one 
       failures: [failure("f", "connection-lost"), failure("o", "connection-lost")],
     },
   } as unknown as RunResult);
-  expect(cardLine(both, "download")).toBe("Frankfurt and Oslo: connection lost");
+  expect(cardLine(both, "download")).toBe("");
 });
 
 test("a card says each confirmed speed change, naming its server when several ran and its lane when both ran", () => {
@@ -500,20 +500,11 @@ test("the server grid reads each server's value or word per planned stage, then 
     ]),
   ).toEqual([
     ["Frankfurt", "", "16.00", "8.00"],
-    ["Oslo", "Incomplete", "4.00 warn", "Not reached"],
-    ["Bergen", "Incomplete", "Not reached", "Not reached"],
+    ["Oslo", "Incomplete", "4.00 warn", MISSING],
+    ["Bergen", "Incomplete", MISSING, MISSING],
   ]);
   expect(view.rows[1]!.cells[0]!.tip).toBe("Partial\nDownload from Oslo lost its connection.");
-  expect(view.notes).toEqual([
-    {
-      tone: "warn",
-      text: "Download from Oslo lost its connection. Upload was not reached.",
-    },
-    {
-      tone: "warn",
-      text: "Bergen had no room for another test when this one started. Download and Upload were not reached.",
-    },
-  ]);
+  expect(view.rows.map((row) => row.notes.length)).toEqual([0, 1, 1]);
 
   // A server that failed where it ran is the error; one left short is a warning.
   const porto = { id: "p", name: "Porto", url: "" };
@@ -536,7 +527,5 @@ test("the server grid reads each server's value or word per planned stage, then 
   } as unknown as RunResult;
   const failedView = gridView(failed, grid(failed), BITS);
   expect(failedView.rows[1]!.cells[0]).toMatchObject({ text: "Failed", measured: false });
-  expect(failedView.notes).toEqual([
-    { tone: "err", text: "Porto stopped delivering download data." },
-  ]);
+  expect(failedView.rows[1]!.notes[0]?.tone).toBe("err");
 });

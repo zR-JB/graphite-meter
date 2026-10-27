@@ -131,6 +131,8 @@ export function failureSentence(
   server: string,
 ): string {
   const known = knownReason(reason);
+  if (stage === "start" && scope === "latency")
+    return `Latency to ${server} could not be checked before this test started.`;
   if (stage === "start")
     switch (known) {
       case "server-capacity":
@@ -147,7 +149,7 @@ export function failureSentence(
       case "server-stopped":
         return `${server} stopped as this test started; try again when it is back.`;
       default:
-        return `${server} could not be reached on its selected paths when this test started.`;
+        return `The connection to ${server} could not be checked before this test started.`;
     }
   const during = DURING[stage];
   if (scope === "latency") {
@@ -265,7 +267,8 @@ export function grid(result: Graded, running: Stage | null = null): Grid {
     const summary = servers.find((entry) => entry.server.id === server.id);
     const own = failures.filter((failure) => failure.serverId === server.id);
     // A server outside the run failed its start check; its failure was charged to a stage it never reached.
-    const start: Cause | null = summary || !own[0] ? null : { ...own[0], stage: "start" };
+    const blocking = own.find((failure) => failure.scope === "throughput") ?? own[0];
+    const start: Cause | null = summary || !blocking ? null : { ...blocking, stage: "start" };
     const cell = (stage: Stage): Cell => {
       if (result.stages[stage] === "not-run" && stage !== running)
         return { status: "skipped", cause: null };

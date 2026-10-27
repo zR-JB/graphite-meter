@@ -1105,7 +1105,7 @@
   .result-summary {
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
-    gap: var(--space-2);
+    gap: var(--space-4);
     width: 100%;
     height: 100%;
     container: results / inline-size;
@@ -1324,14 +1324,37 @@
       color: var(--text-soft);
     }
   }
-  /* Each server's result by stage, ruled with hairlines as the facts lists are; a phone stacks a block per server. */
+  .server-results {
+    min-inline-size: 0;
+    & > summary {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      width: fit-content;
+      min-height: var(--hit);
+      list-style: none;
+      font: var(--role-row);
+    }
+    & > summary::-webkit-details-marker {
+      display: none;
+    }
+    & > summary .aside {
+      color: var(--text-soft);
+      font: var(--role-label);
+    }
+    &[open] > summary svg {
+      rotate: 90deg;
+    }
+    & > .server-grid {
+      margin-block-start: var(--space-2);
+    }
+  }
   .server-grid {
     display: grid;
-    gap: var(--space-2);
-    max-inline-size: 760px;
-    overflow-x: auto;
+    min-inline-size: 0;
     & table {
       width: 100%;
+      table-layout: fixed;
       border: var(--hairline) solid var(--border);
       border-radius: var(--r-chrome);
       border-spacing: 0;
@@ -1339,12 +1362,24 @@
       box-shadow: var(--elev-tile);
     }
     & :is(th, td) {
-      padding: 7px var(--row-inset);
+      padding: var(--space-3) var(--row-inset);
       text-align: end;
       white-space: nowrap;
+      vertical-align: top;
     }
     & :is(th, td):first-child {
       text-align: start;
+    }
+    & th:first-child {
+      width: 40%;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    & .server-heading {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: var(--space-1) var(--space-3);
     }
     & tbody > tr > * {
       border-top: var(--hairline) solid var(--border-subtle);
@@ -1368,7 +1403,7 @@
       font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
     }
     & tbody th .word {
-      display: block;
+      display: inline;
     }
     & td {
       font: var(--role-figure-sm);
@@ -1376,22 +1411,24 @@
     & .status-dot.inline {
       margin-inline-end: 0.4em;
     }
-    /* Causes are a ruled list with a dot in their tone, never tinted boxes: the cards already carry the alarm. */
     & .causes {
-      margin: 0;
+      margin: var(--space-2) 0 0;
       padding: 0;
       list-style: none;
-      color: var(--text-muted);
-      font: var(--role-caption);
+      color: var(--text-soft);
+      font: var(--role-row);
       & li {
-        display: flex;
-        align-items: baseline;
-        padding-block: var(--space-2);
-        border-top: var(--hairline) solid var(--border-subtle);
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: var(--space-2);
+        white-space: normal;
+        overflow-wrap: anywhere;
       }
-      & strong {
-        color: var(--text);
-        font-weight: var(--w-strong);
+      & li + li {
+        margin-block-start: var(--space-2);
+      }
+      & .status-dot {
+        margin: 0.45em 0 0;
       }
     }
   }
@@ -1424,6 +1461,8 @@
       }
       & tbody tr > th {
         border-top: 0;
+        display: block;
+        width: auto;
       }
       & tbody th .word {
         display: inline;

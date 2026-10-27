@@ -175,9 +175,6 @@ export function openProbeChannel(
       if (incomplete) cutOff();
       else release();
     },
-    renew() {
-      if (!released.signal.aborted) worker.postMessage({ type: "renew" } satisfies ProbeCommand);
-    },
     adopt(next) {
       if (released.signal.aborted) return false;
       events = next;
@@ -213,7 +210,6 @@ export function createBusSlot(open: OpenProbeChannel, parked: ProbeChannelEvents
       held = { target: options.target, bus };
       return bus;
     },
-    renew: () => held?.bus.renew(),
     park() {
       const bus = held?.bus;
       if (!bus) return;

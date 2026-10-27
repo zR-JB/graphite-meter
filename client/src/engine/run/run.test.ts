@@ -15,7 +15,7 @@ function harness(
     loadedLatency?: boolean;
     deal?: (activity: Activity) => void;
     mint?: RunOptions["mint"];
-    dropped?: RunOptions["dropped"];
+    failures?: RunOptions["failures"];
   } = {},
 ) {
   const clock = new FakeClock();
@@ -57,7 +57,7 @@ function harness(
       run = new Run({
         servers: peers.map((peer) => prepared(peer.id, peer.latency !== false, peer.signedOut)),
         focus: options.focus ?? peers[0]!.id,
-        dropped: options.dropped ?? [],
+        failures: options.failures ?? [],
         plan,
         open: (setup) => {
           const { activity, server, endsIn, uploadId } = setup;
@@ -424,7 +424,7 @@ test("a server that stayed without a result of its own makes the stage partial, 
   ]);
 });
 
-test("a server lost in the latency stage is not prepared for the later stages", async () => {
+test("a failed latency path does not remove working throughput participants", async () => {
   const lose = (how: (events: StageEvents) => unknown): Partial<Peer> => ({
     measure: (events, { stage }) => void (stage === "latency" && how(events)),
   });
@@ -445,8 +445,8 @@ test("a server lost in the latency stage is not prepared for the later stages", 
   );
   h.start();
   const { multiServer, stages } = await h.result();
-  for (const id of ["a", "c", "d"]) expect(h.calls).not.toContain(`begin:${id}:download`);
-  expect(multiServer.participants).toEqual(["b"]);
+  for (const id of ["a", "c", "d"]) expect(h.calls).toContain(`begin:${id}:download`);
+  expect(multiServer.participants).toEqual(["a", "b", "c", "d"]);
   expect(multiServer.failures).toMatchObject([
     { serverId: "d", stage: "latency", scope: "latency", reason: "path-failed" },
     { serverId: "a", stage: "latency", scope: "latency" },
@@ -454,8 +454,7 @@ test("a server lost in the latency stage is not prepared for the later stages", 
     // The survivor answered no probe, so it has no latency of its own.
     { serverId: "b", stage: "latency", reason: "insufficient-evidence" },
   ]);
-  // Measured without three of its four servers, Download is partial.
-  expect(stages.download).toBe("partial");
+  expect(stages.download).toBe("complete");
 });
 
 test("server failure text is bounded and dropped when it could disguise itself", async () => {
@@ -628,7 +627,16 @@ test("a server dropped at Start reads not reached in every stage, so each stage 
     two({ measure: probe(10, 4) }, { measure: probe(10, 4) }),
     { latency: true, download: true },
     { latencyMs: 400, downloadMs: 1_000 },
-    { dropped: [{ server: bergen, reason: "server-capacity", message: "Bergen is at capacity" }] },
+    {
+      failures: [
+        {
+          server: bergen,
+          scope: "throughput",
+          reason: "server-capacity",
+          message: "Bergen is at capacity",
+        },
+      ],
+    },
   );
   h.start();
   const result = await h.result();
@@ -912,15 +920,25 @@ test("a server with no latency of its own fails its latency stage, coherently", 
   ]);
   expect([result.stages.latency, result.outcome]).toEqual(["partial", "partial"]);
 
-  // A focus without a latency path is charged for the stage it could not run.
+  // A missing latency path keeps its preparation failure while throughput runs.
   const pathless = setup(
     two({ latency: false }, { measure: probe(10, 4) }),
     { latency: true, download: true },
     { latencyMs: 400, downloadMs: 1_000 },
+    {
+      failures: [
+        {
+          server: prepared("a", false).server,
+          scope: "latency",
+          reason: "path-failed",
+          message: "Latency path unavailable",
+        },
+      ],
+    },
   );
   pathless.start();
   expect(cells(await pathless.result()).a).toEqual([
-    "failed: insufficient-evidence in latency",
+    "failed: path-failed in latency",
     "complete",
     "skipped",
     "skipped",

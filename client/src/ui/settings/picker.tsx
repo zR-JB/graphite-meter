@@ -72,22 +72,20 @@ export function ConnectionPicker(props: {
     </label>
   );
 
-  // The servers a failure or sign-in is listed for above are left out. The paths speak for the rest.
+  // Sign-in failures are handled above.
   const considered = computed(() => {
     const ids = servers.selected();
     const views = servers.views();
     return ids.flatMap((id) => {
       const view = views.get(id);
-      return view &&
-        view.readiness !== "sign-in" &&
-        !(ids.length > 1 && view.readiness === "failed")
-        ? [view]
-        : [];
+      return view && view.readiness !== "sign-in" ? [view] : [];
     });
   });
   const line = computed(() => {
     const shown = roleLine(role, considered(), servers.selected().length > 1, app.page);
-    return shown && locked() ? { ...shown, status: READINESS["in-use"] } : shown;
+    return shown && locked() && shown.state === "verified"
+      ? { ...shown, status: READINESS["in-use"] }
+      : shown;
   });
   const offerAutomatic = computed(
     () =>
