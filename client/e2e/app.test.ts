@@ -400,6 +400,33 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
       expect(await seriousViolations(page)).toEqual([]);
       await closeSettings(page);
     }
+  // Check secondary surfaces and interactive states in both palettes on a desktop layout.
+  // The history row is a real saved result, so its data hues and selected wash are present.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  for (const scheme of ["light", "dark"]) {
+    await page.evaluate(
+      (theme) => document.documentElement.setAttribute("data-theme", theme),
+      scheme,
+    );
+    const settings = await openSettings(page);
+    const preset = settings.getByRole("button", { name: "Custom", exact: true });
+    await preset.click();
+    await preset.hover();
+    await preset.evaluate((el: HTMLElement) => el.focus());
+    expect(await seriousViolations(page)).toEqual([]);
+    await closeSettings(page);
+
+    await page.getByRole("button", { name: "Details", exact: true }).click();
+    expect(await seriousViolations(page)).toEqual([]);
+    await page.getByRole("button", { name: "Close Details" }).click();
+
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    const row = page.locator(".result-row");
+    await expect(row).toHaveCount(1);
+    await row.click();
+    expect(await seriousViolations(page)).toEqual([]);
+    await page.getByRole("button", { name: "Close History" }).click();
+  }
   await page.getByRole("button", { name: "Details" }).click();
   const about = page.getByRole("button", { name: "About & legal" });
   await about.click();
