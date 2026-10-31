@@ -77,31 +77,45 @@
     width: 38px;
     height: 22px;
     border: var(--check-edge);
-    border-radius: var(--r-full);
-    background: var(--track);
+    border-radius: var(--r-chrome);
+    background: var(--surface-inset);
     transition: var(--transition-control);
   }
-  /* Centered on the track whatever its edge rounds to, 3 px from the end it rests at. */
+  /* A sliding square key and its mark give the state a shape as well as a position. */
   .switch-knob {
     position: absolute;
     top: 50%;
     left: calc(50% - 16px);
     width: 16px;
     height: 16px;
-    border-radius: var(--r-full);
-    background: var(--surface-1);
-    box-shadow: var(--elev-thumb);
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-well);
+    background: var(--control-surface);
+    box-shadow: inset 0 0 0 1px var(--field-edge);
     translate: 0 -50%;
     transition:
       translate var(--dur-graph) var(--ease-spring),
       background-color var(--dur-hover) var(--ease-out);
   }
+  .switch-knob::after {
+    content: "";
+    width: 6px;
+    height: 1.5px;
+    background: var(--text);
+  }
   .switch input:checked + .switch-track {
-    border-color: var(--brand);
-    background: var(--brand);
+    background: var(--selected-wash);
     & .switch-knob {
       translate: 16px -50%;
-      background: var(--text-inverse);
+    }
+    & .switch-knob::after {
+      width: 6px;
+      height: 4px;
+      border: solid var(--text);
+      border-width: 0 0 1.5px 1.5px;
+      background: none;
+      rotate: -45deg;
     }
   }
   .switch-label {
@@ -111,12 +125,20 @@
   /* Forced colors keep the edge but drop fills; system colors draw the knob and the on state. */
   @media (forced-colors: active) {
     .switch-knob {
-      background: CanvasText;
+      background: Canvas;
+      outline: 1px solid CanvasText;
+      &::after {
+        background: CanvasText;
+      }
     }
     .switch input:checked + .switch-track {
-      background: Highlight;
+      border-color: Highlight;
       & .switch-knob {
-        background: HighlightText;
+        outline-color: Highlight;
+      }
+      & .switch-knob::after {
+        background: none;
+        border-color: Highlight;
       }
     }
   }
