@@ -157,13 +157,14 @@
     --space-5: 24px;
     --space-6: 32px;
 
-    /* Radii rise with elevation and stay concentric. */
-    --r-well: 2px;
-    --r-chrome: 3px;
-    --r-surface: 4px;
+    /* An instrument has three scales: inset details, controls, and outer plates.
+       Two-pixel insets keep their corners concentric with their parent. */
+    --r-well: 4px;
+    --r-chrome: 8px;
+    --r-surface: 12px;
     --r-full: 999px;
     /* A row's wash sits 2 px inside its plate, concentric with it. */
-    --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
+    --r-row: calc(var(--r-chrome) - 2px);
     --hairline: 1px;
 
     /* 10 px is the floor for any text. Only headings scale with the viewport. */
@@ -205,45 +206,49 @@
     --icon: 16px;
     --icon-sm: 13px;
 
-    /* Dark fills stay above the levels where OLED pixels switch off and smear. */
-    --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-    --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.205 0.009 258));
-    --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
-    --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
+    /* Warm paper and graphite; opaque surfaces keep motion cheap. */
+    --canvas: light-dark(oklch(0.955 0.016 85), oklch(0.12 0.003 75));
+    --surface-1: light-dark(oklch(0.982 0.012 85), oklch(0.16 0.004 75));
+    --surface-2: light-dark(oklch(0.965 0.015 85), oklch(0.19 0.005 75));
+    --surface-inset: light-dark(oklch(0.925 0.018 85), oklch(0.105 0.003 75));
+    /* Neutral keys are distinct from plates; wells remain the deepest surface. */
+    --control-surface: var(--surface-2);
     /* The surface for what floats over the instrument, opaque because a blur costs every frame on a slow GPU. */
-    --sheet: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
+    --sheet: light-dark(oklch(0.972 0.013 85), oklch(0.145 0.004 75));
 
-    --border-subtle: light-dark(oklch(0.3 0.02 255 / 0.08), oklch(0.92 0.02 255 / 0.07));
-    --border: light-dark(oklch(0.3 0.02 255 / 0.14), oklch(0.92 0.02 255 / 0.11));
-    --border-strong: light-dark(oklch(0.3 0.02 255 / 0.24), oklch(0.92 0.02 255 / 0.2));
+    --frame: light-dark(oklch(0.975 0.014 85), oklch(0.17 0.004 75));
 
-    --text: light-dark(oklch(0.22 0.012 258), oklch(0.955 0.004 258));
-    --text-muted: light-dark(oklch(0.38 0.012 258), oklch(0.8 0.008 258));
-    --text-soft: light-dark(oklch(0.5 0.012 258), oklch(0.66 0.011 258));
-    --text-inverse: light-dark(oklch(0.995 0 0), oklch(0.17 0.008 258));
+    --border-subtle: light-dark(oklch(0.3 0.02 75 / 0.1), oklch(0.92 0.02 85 / 0.09));
+    --border: light-dark(oklch(0.3 0.02 75 / 0.18), oklch(0.92 0.02 85 / 0.15));
+    --border-strong: light-dark(oklch(0.3 0.02 75 / 0.3), oklch(0.92 0.02 85 / 0.25));
+
+    --text: light-dark(oklch(0.235 0.012 75), oklch(0.95 0.013 85));
+    --text-muted: light-dark(oklch(0.385 0.015 75), oklch(0.81 0.012 85));
+    --text-soft: light-dark(oklch(0.485 0.018 75), oklch(0.69 0.014 85));
+    --text-inverse: light-dark(oklch(0.982 0.012 85), oklch(0.195 0.006 75));
 
     /* Graphite makes controls and selection ink, so a hue on screen always names a stage or a state. */
-    --brand: light-dark(oklch(0.26 0.012 258), oklch(0.93 0.005 258));
-    --brand-strong: light-dark(oklch(0.2 0.012 258), oklch(0.97 0.004 258));
+    --brand: light-dark(oklch(0.28 0.015 75), oklch(0.91 0.02 85));
+    --brand-strong: light-dark(oklch(0.22 0.012 75), oklch(0.97 0.013 85));
     --brand-soft: color-mix(in oklab, var(--brand) 12%, transparent);
 
-    /* Four hue families sit about a quarter turn apart. Latency and bidirectional also part in lightness; in dark, latency and warning are lifted clear of OK and upload. */
+    /* Teal, blue, amber and rose identify the same stages everywhere. */
     --phase-warmup: light-dark(oklch(0.52 0.012 258), oklch(0.66 0.012 258));
     --phase-latency: light-dark(oklch(0.6 0.105 182), oklch(0.86 0.105 194));
     --phase-download: light-dark(oklch(0.5 0.18 263), oklch(0.72 0.145 262));
     --phase-upload: light-dark(oklch(0.63 0.15 58), oklch(0.83 0.125 66));
     --phase-bidirectional: light-dark(oklch(0.47 0.17 352), oklch(0.7 0.155 350));
 
-    --ok: light-dark(oklch(0.5 0.095 155), oklch(0.8 0.1 155));
-    --warn: light-dark(oklch(0.53 0.095 85), oklch(0.895 0.1 96));
-    --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
+    --ok: light-dark(oklch(0.48 0.085 165), oklch(0.76 0.09 165));
+    --warn: light-dark(oklch(0.5 0.095 85), oklch(0.895 0.1 96));
+    --err: light-dark(oklch(0.5 0.15 25), oklch(0.74 0.14 22));
     --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 
     --brand-line: color-mix(in oklab, var(--brand) 50%, var(--border));
     --err-line: color-mix(in oklab, var(--err) 45%, var(--border));
     --scrim: color-mix(in oklab, var(--canvas) 55%, transparent);
     /* The edge that identifies a field or check holds 3:1 on every surface, no brighter. */
-    --field-edge: light-dark(oklch(0.48 0.014 255 / 0.7), oklch(0.7 0.014 255 / 0.62));
+    --field-edge: light-dark(oklch(0.45 0.018 75 / 0.75), oklch(0.74 0.014 85 / 0.65));
     --check-edge: 1.5px solid var(--field-edge);
     --track: color-mix(in oklab, var(--text) 8%, transparent);
     --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
@@ -251,16 +256,16 @@
 
     /* Only what floats casts a shadow. Panels and keys are flat fills with a hairline. */
     --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
-    --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
+    --shade: light-dark(oklch(0.25 0.02 75), oklch(0.08 0.01 75));
     --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
     --elev-recess: inset 0 1px 2px color-mix(in oklab, var(--shade) 6%, transparent);
-    --elev-thumb: 0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35));
+    --elev-thumb: 0 1px 2px light-dark(oklch(0.25 0.02 75 / 0.1), oklch(0.08 0.01 75 / 0.35));
     --elev-tooltip:
       var(--elev-thumb),
-      0 8px 20px -6px light-dark(oklch(0.25 0.02 255 / 0.2), oklch(0.08 0.01 255 / 0.5));
+      0 8px 20px -6px light-dark(oklch(0.25 0.02 75 / 0.2), oklch(0.08 0.01 75 / 0.5));
     --elev-float:
-      0 2px 6px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.35)),
-      0 20px 48px -16px light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.6));
+      0 2px 6px light-dark(oklch(0.25 0.02 75 / 0.08), oklch(0.08 0.01 75 / 0.35)),
+      0 20px 48px -16px light-dark(oklch(0.25 0.02 75 / 0.24), oklch(0.08 0.01 75 / 0.6));
 
     /* Solid ink clears the 3:1 non-text floor on light surfaces, where a translucent ring does not. */
     --focus-ring: 2px solid var(--brand);
@@ -272,9 +277,6 @@
       --phase-download: light-dark(oklch(0.5 0.2 263), oklch(0.72 0.155 262));
       --phase-upload: light-dark(oklch(0.63 0.17 58), oklch(0.83 0.145 66));
       --phase-bidirectional: light-dark(oklch(0.47 0.19 352), oklch(0.7 0.175 350));
-      --ok: light-dark(oklch(0.5 0.103 155), oklch(0.8 0.108 155));
-      --warn: light-dark(oklch(0.53 0.103 85), oklch(0.895 0.108 96));
-      --err: light-dark(oklch(0.52 0.151 25), oklch(0.74 0.13 22));
     }
   }
   @media (min-resolution: 2dppx) {

@@ -1,4 +1,3 @@
-// The shell's state and moves: route, panels, focus, keys, theme and starting over; the console only renders it.
 import type { App } from "../../app/app";
 import type { Theme } from "../../app/preferences";
 import { reducedMotion } from "../../lib/motion";
@@ -26,7 +25,6 @@ const PANELS = ["settings", "details"] as const satisfies readonly Panel[];
 export const SIDE: Record<Panel, Side> = { settings: "left", details: "right" };
 const MEASUREMENT = { kind: "measurement" } as const;
 
-/** Where focus goes once a route has rendered: an element, the workspace it shows, or nowhere new. */
 type Focus = HTMLElement | "workspace" | "keep";
 type Workspace = KeyFacts["workspace"];
 
@@ -62,7 +60,6 @@ export function moves(
 
 type FocusMove = { to: "title" | "invoker"; panel: Panel } | { to: "wanted" | "workspace" } | null;
 
-/** Where focus goes once a route has rendered, or null to leave it. */
 export function focusMove(facts: {
   before: Route;
   after: Route;
@@ -114,7 +111,6 @@ export function createShell(app: App, layout: Layout) {
   const panels = computed(() => visible(route(), layout.mode()));
   const shown = (panel: Panel) => panels().includes(panel);
   const docked = computed(() => layout.mode() !== "flyout");
-  /** A panel flies over the stage, which waits inert beneath it. */
   const flyout = computed(() => !docked() && panels().length > 0);
   const legalOpen = computed(() => legalOf(route()));
   const historyOpen = computed(() => workspace() === "history");

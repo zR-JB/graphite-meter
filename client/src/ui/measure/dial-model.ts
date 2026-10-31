@@ -35,6 +35,7 @@ export interface DialLayout {
   /** The whole ring, which the track and every result arc stroke. */
   track: string;
   ticks: string;
+  majorTicks: string;
   labels: (Point & { anchorX: Anchor; anchorY: Anchor })[];
   /** Where a note hung under the ring starts: just under the tick ends. */
   noteTop: number;
@@ -56,7 +57,8 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
     36,
     Math.min(
       width * 0.37,
-      (width / 2 - 25) / TICK_REACH,
+      // Leave room beyond the tick for multi-digit labels at the sides of the ring.
+      (width / 2 - 50) / TICK_REACH,
       ((height - 42) / (1 + Math.SQRT1_2) - 11) / TICK_REACH,
       // The labeled ring stays centered and its note still fits under the tick ends.
       note
@@ -77,11 +79,15 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
   const start = at(ARC_START, radius);
   const end = at(ARC_START + ARC_SWEEP, radius);
   let ticks = "";
+  let majorTicks = "";
   for (let k = 0; k <= TICKS; k++) {
     const angle = ARC_START + (k / TICKS) * ARC_SWEEP;
-    const from = at(angle, tickInner);
+    const major = k % 2 === 0;
+    const from = at(angle, major ? tickInner : tickInner + radius * 0.04);
     const to = at(angle, tickOuter);
-    ticks += `M${round(from.x)} ${round(from.y)}L${round(to.x)} ${round(to.y)}`;
+    const path = `M${round(from.x)} ${round(from.y)}L${round(to.x)} ${round(to.y)}`;
+    if (major) majorTicks += path;
+    else ticks += path;
   }
   return {
     width,
@@ -92,6 +98,7 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
     headRadius: arcWidth / 2 + 2,
     track: `M${round(start.x)} ${round(start.y)}A${round(radius)} ${round(radius)} 0 1 1 ${round(end.x)} ${round(end.y)}`,
     ticks,
+    majorTicks,
     labels: DIAL_LABELS.map((fraction) => {
       const angle = ARC_START + fraction * ARC_SWEEP;
       // The point is the label's nearest edge or corner on the tick's ray.

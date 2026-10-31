@@ -214,6 +214,7 @@ export function ResultsList(props: {
 
   function RowView({ row }: { row: Row }): Node {
     const href = `#/history/${encodeURIComponent(row.id)}`;
+    const description = `history-row-description-${row.id}`;
     let link: HTMLAnchorElement;
     if (row.kind === "unreadable")
       link = (
@@ -240,7 +241,12 @@ export function ResultsList(props: {
       if (server) cut.set(server as Element, clipped);
       const outcome = OUTCOME[row.outcome];
       link = (
-        <a class="result-row link-row" data-history-id={row.id} href={href} aria-label={row.label}>
+        <a
+          class="result-row link-row"
+          data-history-id={row.id}
+          href={href}
+          aria-describedby={description}
+        >
           <time datetime={row.iso} title={row.exact}>
             {row.primary}
             {server}
@@ -261,7 +267,16 @@ export function ResultsList(props: {
       if (links.get(row.id) === link) links.delete(row.id);
       if (current === link) current = undefined;
     });
-    return <li>{link}</li>;
+    return (
+      <li>
+        {link}
+        {row.kind === "result" && (
+          <span id={description} class="sr-only">
+            {row.label}
+          </span>
+        )}
+      </li>
+    );
   }
 
   function Head(column: HistorySort): Node {

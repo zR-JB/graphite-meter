@@ -353,3 +353,47 @@ test("a session's id is backed up by a DELETE at finish, unless a terminal recor
   await complete.receiver.finish();
   expect(complete.deletes).toEqual([]);
 });
+
+for (const route of ["http", "websocket"] as const)
+  test(`${route} progress can stay buffered while receiver checkpoints advance`, async () => {
+    jest.useFakeTimers();
+    let feed: ReturnType<typeof follow> | undefined;
+    try {
+      const open = ({ signal }: RequestInit) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode('{"type":"ready"}\n'));
+              signal!.addEventListener("abort", () => controller.error(signal!.reason));
+            },
+          }),
+        );
+      feed = follow(
+        [
+          (socket) => {
+            socket.open();
+            socket.send('{"type":"ready"}');
+          },
+          () => {},
+        ],
+        {
+          route,
+          answers: Array(20).fill(open),
+          counters: [
+            ...Array.from({ length: 20 }, (_, i) => ({ bytes: 100, nanos: (i + 1) * 1000 })),
+            ...Array.from({ length: 20 }, () => ({ bytes: 100, nanos: 20000 })),
+          ],
+        },
+      );
+      await elapse(0);
+      feed.receiver.measure();
+      await elapse(4000);
+      expect(feed.observed.length).toBeGreaterThan(5);
+      expect(feed.endings).toEqual([]);
+      for (let i = 0; i < 100 && !feed.endings.length; i++) await elapse(100);
+      expect(feed.endings[0]?.[0].reason).toBe("connection-lost");
+    } finally {
+      feed?.receiver.close();
+      jest.useRealTimers();
+    }
+  });

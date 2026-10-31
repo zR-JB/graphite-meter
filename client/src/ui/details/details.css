@@ -15,6 +15,13 @@
       color: var(--text-soft);
       font: var(--role-caption);
     }
+    /* The path is an instrument reading: keep its state distinct from the value above. */
+    & .path-status .status-dot {
+      flex: none;
+    }
+    & .kv dd {
+      font-variant-numeric: tabular-nums;
+    }
     & .list {
       display: grid;
     }

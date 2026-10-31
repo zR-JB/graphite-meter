@@ -163,6 +163,11 @@
     stroke-width: 1;
     stroke-opacity: 0.7;
   }
+  /* The longer marks name the labeled scale positions; shorter marks split them. */
+  .dial-art .major-ticks {
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+  }
   .gauge-dial.motion .dial-art .track {
     transition: stroke var(--dur-stage) var(--ease-out-head);
   }
@@ -344,6 +349,7 @@
     font-size: clamp(24px, calc(var(--face-min) * 0.17), 76px);
     font-weight: 500;
     font-variant-numeric: lining-nums tabular-nums;
+    letter-spacing: var(--track-tight);
     line-height: 1;
     white-space: nowrap;
   }
@@ -541,13 +547,17 @@
     & + & {
       border-top: var(--hairline) solid var(--border-subtle);
     }
-    /* A running stage's row washes in its hue edge to edge of the area, on its own layer. */
+    /* The active reading casts a short pool of stage color behind its name and figures. */
     &::before {
       content: "";
       position: absolute;
       z-index: -1;
       inset: 0 calc(-1 * var(--space-4));
-      background: color-mix(in oklab, var(--tone) 7%, transparent);
+      background: linear-gradient(
+        90deg,
+        color-mix(in oklab, var(--tone) 12%, transparent),
+        transparent 75%
+      );
       opacity: 0;
       transition: opacity calc(0.54 * var(--dur-graph)) var(--ease-out-head);
       pointer-events: none;
@@ -843,8 +853,7 @@
     overflow: hidden;
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--elev-tile);
+    background: var(--control-surface);
     color: var(--text);
     text-align: start;
     transition: var(--transition-control);
@@ -942,6 +951,7 @@
     display: grid;
     flex: none;
     place-items: center;
+    color: var(--tone);
     & :where(svg) {
       width: 14px;
       height: 14px;
@@ -1030,7 +1040,7 @@
     padding: 6px 8px;
   }
 
-  /* The one primary action is ink; pressed, it gives under the finger and comes up as the quiet Stop plate. */
+  /* The primary action stays integrated with the instrument; its outline and mark identify it. */
   .run-button {
     position: relative;
     isolation: isolate;
@@ -1045,11 +1055,8 @@
     border: 0;
     border-radius: var(--r-chrome);
     background: none;
-    color: var(--text-inverse);
+    color: var(--text);
     font: var(--w-strong) var(--type-md) / 1 var(--font-sans);
-    &.running {
-      color: var(--text);
-    }
     &[aria-disabled="true"] {
       opacity: 0.5;
       cursor: not-allowed;
@@ -1059,12 +1066,13 @@
       inset: 0;
       z-index: -1;
       border-radius: inherit;
-      background: var(--brand);
+      background: var(--control-surface);
+      box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
       transition:
         background-color var(--dur-hover) var(--ease-out),
         box-shadow var(--dur-hover) var(--ease-out);
       &.stop {
-        background: var(--surface-1);
+        background: var(--control-surface);
         box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
         opacity: 0;
       }
@@ -1078,16 +1086,20 @@
   }
   @media (hover: hover) {
     .run-button:hover:not(.pending, [aria-disabled="true"]) .skin {
-      background: var(--brand-strong);
-      &.stop {
-        background: linear-gradient(var(--hover-wash) 0 0), var(--surface-1);
-      }
+      background: linear-gradient(var(--hover-wash) 0 0), var(--control-surface);
     }
   }
   .run-button-content {
     display: inline-flex;
     align-items: center;
     gap: 9px;
+  }
+  .run-button:not(.running) .run-button-content::before {
+    content: "";
+    width: 9px;
+    height: 11px;
+    background: currentColor;
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
   }
   .stop-sq {
     width: 9px;
@@ -1143,7 +1155,12 @@
     padding: 10px var(--space-4) var(--space-3);
     overflow: hidden;
     border-color: var(--card-edge);
-    border-top: 2px solid var(--tone);
+    border-radius: var(--r-surface);
+    background-image: radial-gradient(
+      ellipse 85% 65% at 100% 0,
+      color-mix(in oklab, var(--tone) 9%, transparent),
+      transparent
+    );
     transition:
       background-color var(--dur-hover) var(--ease-out),
       border-color var(--dur-hover) var(--ease-out),
@@ -1163,7 +1180,7 @@
     }
     &:is(.pending, .not-run) {
       --card-edge: var(--border-subtle);
-      border-top-color: color-mix(in oklab, var(--tone) 45%, transparent);
+      background-image: none;
     }
   }
   .card .face {
@@ -1180,6 +1197,12 @@
     color: var(--text);
     font: var(--role-title);
     white-space: nowrap;
+  }
+  /* Stage glyphs are small colored instrument marks rather than miniature plates. */
+  .card .tone-icon {
+    border: 0;
+    border-radius: var(--r-full);
+    background: var(--tone-wash);
   }
   .card .status {
     display: inline-flex;

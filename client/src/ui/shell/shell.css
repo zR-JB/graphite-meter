@@ -26,6 +26,7 @@
     gap: var(--space-2);
     padding-inline: var(--gutter);
     border-bottom: var(--hairline) solid var(--border);
+    background: var(--frame);
     container: topbar / inline-size;
     & > * {
       flex-shrink: 0;
@@ -41,12 +42,13 @@
     padding: 0 6px;
     color: var(--text);
     font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
-    letter-spacing: -0.01em;
+    letter-spacing: var(--track-tight);
   }
   /* Hexagon in the latency hue, needle in the text color (favicon.svg). */
   .brand-glyph {
     width: 20px;
     height: 20px;
+    flex: none;
   }
   .brand-hex {
     fill: none;
@@ -250,7 +252,7 @@
     overflow: hidden;
     padding: 0 var(--gutter) env(safe-area-inset-bottom, 0px);
     border-top: var(--hairline) solid var(--border);
-    background: var(--surface-1);
+    background: var(--frame);
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) var(--font-sans);
     font-variant-numeric: tabular-nums;

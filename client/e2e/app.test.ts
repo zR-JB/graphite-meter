@@ -16,6 +16,50 @@ import {
 } from "./fleet";
 import { browser, seriousViolations, expect, settled, test, type Page } from "./webview";
 
+test("the theme control changes the rendered canvas and remembers its choice", async (page) => {
+  await open(page);
+  const theme = (name: string) => page.getByRole("button", { name: `Theme: ${name}`, exact: true });
+  const canvas = () =>
+    page.evaluate(() => {
+      const color = getComputedStyle(document.querySelector("#console")!).backgroundColor;
+      const sample = document.createElement("canvas");
+      sample.width = sample.height = 1;
+      const context = sample.getContext("2d")!;
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    });
+  const check = async (name: "Light" | "Dark") => {
+    await expect(theme(name)).toBeVisible();
+    await page.evaluate(settled);
+    const [r, g, b, alpha] = await canvas();
+    expect(alpha).toBe(255);
+    // Relative brightness, not a fixed color: each theme may evolve while remaining visibly light or dark.
+    const brightness = (r! + g! + b!) / (3 * 255);
+    if (name === "Dark") expect(brightness).toBeLessThan(0.2);
+    else expect(brightness).toBeGreaterThan(0.8);
+  };
+
+  await expect(theme("Auto")).toBeVisible();
+  await theme("Auto").click();
+  await check("Light");
+  await page.reload();
+  await check("Light");
+  await theme("Light").click();
+  await check("Dark");
+  await page.reload();
+  await check("Dark");
+  await theme("Dark").click();
+  await expect(theme("Auto")).toBeVisible();
+  const systemLight = await page.evaluate(
+    () => matchMedia("(prefers-color-scheme: light)").matches,
+  );
+  const [r, g, b] = await canvas();
+  const brightness = (r! + g! + b!) / (3 * 255);
+  if (systemLight) expect(brightness).toBeGreaterThan(0.8);
+  else expect(brightness).toBeLessThan(0.2);
+});
+
 test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (page) => {
   const version = await fetch(`${home.http}/version.json`);
   expect((await version.json()).label).toBe("prod");
@@ -400,6 +444,33 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
       expect(await seriousViolations(page)).toEqual([]);
       await closeSettings(page);
     }
+  // Check secondary surfaces and interactive states in both palettes on a desktop layout.
+  // The history row is a real saved result, so its data hues and selected wash are present.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  for (const scheme of ["light", "dark"]) {
+    await page.evaluate(
+      (theme) => document.documentElement.setAttribute("data-theme", theme),
+      scheme,
+    );
+    const settings = await openSettings(page);
+    const preset = settings.getByRole("button", { name: "Custom", exact: true });
+    await preset.click();
+    await preset.hover();
+    await preset.evaluate((el: HTMLElement) => el.focus());
+    expect(await seriousViolations(page)).toEqual([]);
+    await closeSettings(page);
+
+    await page.getByRole("button", { name: "Details", exact: true }).click();
+    expect(await seriousViolations(page)).toEqual([]);
+    await page.getByRole("button", { name: "Close Details" }).click();
+
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    const row = page.locator(".result-row");
+    await expect(row).toHaveCount(1);
+    await row.click();
+    expect(await seriousViolations(page)).toEqual([]);
+    await page.getByRole("button", { name: "Close History" }).click();
+  }
   await page.getByRole("button", { name: "Details" }).click();
   const about = page.getByRole("button", { name: "About & legal" });
   await about.click();

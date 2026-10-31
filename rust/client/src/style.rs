@@ -26,20 +26,21 @@ const fn tone(light: (u32, u8, u8), dark: (u32, u8, u8)) -> Tone {
     ]
 }
 
-const INK: Tone = tone((0x20242a, 235, 0), (0xe6e8eb, 254, 15));
-const TEXT: Tone = tone((0x171b20, 234, 0), (0xeef0f3, 255, 15));
-const SOFT: Tone = tone((0x5f646a, 241, 8), (0x8e9299, 246, 7));
-const GOOD: Tone = tone((0x2e734b, 29, 2), (0x88d1a2, 115, 10));
-const CAUTION: Tone = tone((0x85671f, 94, 1), (0xf0dd8f, 186, 11));
-const BAD: Tone = tone((0xab413e, 131, 1), (0xed8b88, 210, 9));
+// sRGB equivalents of the browser's warm graphite tokens.
+const INK: Tone = tone((0x2d2821, 235, 0), (0xe7e1d3, 253, 15));
+const TEXT: Tone = tone((0x211d18, 234, 0), (0xf2eee5, 255, 15));
+const SOFT: Tone = tone((0x655e54, 59, 8), (0x9f9b92, 247, 7));
+const GOOD: Tone = tone((0x236d51, 23, 2), (0x77c4a3, 115, 10));
+const CAUTION: Tone = tone((0x7c5e13, 94, 1), (0xf0dd8f, 222, 11));
+const BAD: Tone = tone((0xa83634, 131, 1), (0xf68482, 210, 9));
 /// The canvas when the terminal does not name its background.
-const CANVAS: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
-const PLATE_OFF: Tone = tone((0xdcdde0, 253, 7), (0x2a2d31, 236, 8));
-const BORDER: Tone = tone((0xcacbcf, 252, 15), (0x3e4348, 238, 8));
+const CANVAS: Tone = tone((0xf5f0e4, 255, 15), (0x060605, 232, 0));
+const PLATE_OFF: Tone = tone((0xdcd6ca, 252, 7), (0x2d2b28, 236, 8));
+const BORDER: Tone = tone((0xcac4b8, 250, 15), (0x43413b, 238, 8));
 const STAGES: [Tone; Stage::ALL.len()] = [
-    tone((0x1d7a73, 30, 6), (0x74e7e5, 87, 14)),
+    tone((0x196c66, 30, 6), (0x74e7e5, 87, 14)),
     tone((0x254ea3, 25, 4), (0x71a3ff, 75, 12)),
-    tone((0xa35d1d, 130, 1), (0xfeb66a, 215, 9)),
+    tone((0x914f18, 130, 1), (0xfeb66a, 215, 9)),
     tone((0x7f2456, 89, 1), (0xe472ac, 169, 9)),
 ];
 const TRACES: [Tone; Stage::ALL.len()] = [
@@ -113,7 +114,7 @@ impl Palette {
             },
             plate_note: Style {
                 bg: Some(pick(INK)),
-                ..Style::fg(mix(pick(INK), canvas, 0.45))
+                ..Style::fg(mix(pick(INK), canvas, 0.4))
             },
             plate_off: Style {
                 bg: Some(pick(PLATE_OFF)),

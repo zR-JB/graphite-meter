@@ -561,7 +561,9 @@ test("a partial three-server result shows every server's stages and causes, the 
   // Its row in the list keeps the partial values, each marked and named so.
   await history(page);
   const row = page.locator(`a.result-row[data-history-id="${partial.id}"]`);
-  await expect(row).toHaveAttribute("aria-label", /Upload [\d.]+ \S+, partial\./);
+  const description = await row.getAttribute("aria-describedby");
+  expect(description).toBeTruthy();
+  await expect(page.locator(`#${description}`)).toContainText(/Upload [\d.]+ \S+, partial\./);
   await expect
     .poll(() => row.locator(".metric .status-dot").all((dots) => dots.length))
     .toBeGreaterThan(0);

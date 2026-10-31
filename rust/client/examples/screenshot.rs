@@ -254,7 +254,7 @@ fn cells(buffer: &Buffer, palette: Palette) -> Value {
 
 fn main() {
     let themes =
-        [("dark", [0x0d, 0x10, 0x13]), ("light", [0xf1, 0xf2, 0xf5])].map(|(name, background)| {
+        [("dark", [0x06, 0x06, 0x05]), ("light", [0xf5, 0xf0, 0xe4])].map(|(name, background)| {
             let palette = Palette::over(Background(Some(background)));
             (name.to_owned(), cells(&console(palette), palette))
         });

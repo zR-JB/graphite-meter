@@ -13,27 +13,21 @@
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }
-  /* A stage's area is its light on the page: a rule in its hue and a fading wash, no box; kept results are panels. */
+  /* A stage's light falls behind its reading without another colored rule. */
   .stage-area {
     --wash: 0%;
-    border-top: 2px solid color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
     background: linear-gradient(
       180deg,
       color-mix(in oklab, var(--tone) var(--wash), transparent),
       transparent 180px
     );
-    transition:
-      --wash calc(0.54 * var(--dur-graph)) var(--ease-out-head),
-      border-color calc(0.54 * var(--dur-graph)) var(--ease-out-head);
+    transition: --wash calc(0.54 * var(--dur-graph)) var(--ease-out-head);
   }
   .stage-area:is(.complete, .partial, .failed, .stopped) {
     --wash: 9%;
   }
   .stage-area:is(.active, .recovering) {
     --wash: 16%;
-  }
-  .stage-area:is(.pending, .not-run) {
-    --rule: 30%;
   }
   /* A panel: one fill step above the canvas in a hairline with a light top edge, for a kept result. */
   .panel {
@@ -85,7 +79,7 @@
     padding: 0 var(--space-3);
     border: var(--hit-pad) solid transparent;
     border-radius: calc(var(--r-chrome) + var(--hit-pad));
-    background: var(--surface-2) padding-box;
+    background: var(--control-surface) padding-box;
     box-shadow:
       inset 0 0 0 var(--hairline) var(--btn-line),
       var(--elev-tile);
@@ -133,7 +127,7 @@
   }
   /* A top-bar key: a glyph plate in full ink, whichever component owns it. */
   .btn.key {
-    background-color: var(--surface-1);
+    background-color: var(--control-surface);
     color: var(--text);
   }
   .btn-inset {
@@ -373,14 +367,11 @@
     outline: none;
   }
 
-  /* A plate whose direct children are rows; a control sets its row's height. */
+  /* A group of rows on the page; a control sets its row's height. */
   .kv {
     display: grid;
     padding-inline: var(--row-inset);
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--elev-tile);
+    border-block: var(--hairline) solid var(--border);
     font: var(--role-row);
     text-wrap: pretty;
   }
@@ -568,6 +559,26 @@
   }
   input.check[type="radio"] {
     border-radius: var(--r-full);
+    background: var(--surface-inset);
+  }
+  /* The inset well keeps its edge; a solid center marks the chosen option. */
+  input.check[type="radio"]::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: var(--r-full);
+    background: var(--brand);
+    scale: 0;
+    transition: scale var(--dur-slide) var(--ease-spring);
+  }
+  input.check[type="radio"]:checked::after {
+    scale: 1;
+  }
+  @media (forced-colors: active) {
+    input.check[type="radio"]::after {
+      forced-color-adjust: none;
+      background: CanvasText;
+    }
   }
   input.check[type="checkbox"]:checked {
     border-color: var(--brand);
@@ -589,12 +600,6 @@
   input.check[type="checkbox"]:checked::after {
     scale: 1;
   }
-  /* A chosen radio's ring closes in on its center instead of snapping. */
-  input.check[type="radio"]:checked {
-    border-width: 5.5px;
-    border-color: var(--brand);
-  }
-
   .group {
     display: grid;
     gap: 6px;
@@ -642,7 +647,7 @@
     min-height: var(--control-h);
     padding: 2px;
     border-radius: var(--r-chrome);
-    background: var(--track);
+    background: var(--surface-inset);
     box-shadow: var(--elev-recess);
   }
   .segmented::before {
@@ -650,10 +655,10 @@
     z-index: -1;
     inset: 2px auto 2px 2px;
     width: calc((100% - 4px - (var(--n) - 1) * 2px) / var(--n));
-    border-radius: calc(var(--r-chrome) - 1px);
+    border-radius: calc(var(--r-chrome) - 2px);
     background: var(--surface-1);
     box-shadow:
-      inset 0 0 0 var(--hairline) var(--border),
+      inset 0 0 0 1px var(--field-edge),
       var(--elev-thumb);
     content: "";
     opacity: 0;
@@ -710,7 +715,7 @@
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;
-    border-radius: calc(var(--r-chrome) - 1px);
+    border-radius: calc(var(--r-chrome) - 2px);
     color: var(--text-muted);
     font: var(--role-control);
     text-overflow: ellipsis;
@@ -721,6 +726,7 @@
   @media (pointer: coarse) {
     .segmented > button {
       min-width: var(--hit);
+      min-height: var(--hit);
     }
   }
   .segmented > button:disabled {
@@ -880,7 +886,7 @@
     width: 100%;
     min-height: var(--control-h);
     padding: var(--space-1) var(--space-2);
-    border-radius: var(--r-well);
+    border-radius: var(--r-chrome);
     color: var(--text-muted);
     font: var(--role-row);
     text-align: start;

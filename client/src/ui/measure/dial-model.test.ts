@@ -50,6 +50,9 @@ test("the ring fills the measured face, keeps its labels inside and a hung note 
   // A bigger face draws a bigger ring, and a face too small still draws a legible one.
   expect(dialLayout(560, 482).radius).toBeGreaterThan(dialLayout(300, 320).radius);
   expect(dialLayout(0, 0).radius).toBeGreaterThan(0);
+  const scale = dialLayout(300, 320);
+  expect(scale.majorTicks.match(/M/g)).toHaveLength(DIAL_LABELS.length);
+  expect(scale.ticks.match(/M/g)).toHaveLength(DIAL_LABELS.length - 1);
   expect(
     dialLayout(300, 320).labels.map(({ anchorX, anchorY }) => `${anchorX} ${anchorY}`),
   ).toEqual(["end start", "end end", "center end", "start end", "start start"]);

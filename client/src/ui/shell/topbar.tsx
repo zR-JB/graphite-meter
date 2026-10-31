@@ -1,4 +1,3 @@
-// The top bar; Details, History and the theme move into "More controls" as it narrows (container queries).
 import type { App } from "../../app/app";
 import { Show } from "../../lib/dom";
 import { computed, onCleanup } from "../../lib/signal";
@@ -40,7 +39,6 @@ export function TopBar(props: {
     );
   const buildDetails = intent(() => ctl.visited.details.set(true));
 
-  // While History or a missing page shows, the running test is one press away.
   const live = computed(() => {
     if (measuring()) return null;
     const phase = app.run.phase();

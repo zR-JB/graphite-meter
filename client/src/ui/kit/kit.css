@@ -54,7 +54,7 @@
     }
   }
 
-  /* A plate row with the link row's wash and ring, holding the hidden checkbox so focus cannot scroll the panel; on fills the track with ink. */
+  /* A plate row holds the hidden checkbox; the key's position shows the switch state. */
   .switch {
     position: relative;
     display: flex;
@@ -77,47 +77,38 @@
     width: 38px;
     height: 22px;
     border: var(--check-edge);
-    border-radius: var(--r-full);
-    background: var(--track);
+    border-radius: var(--r-chrome);
+    background: var(--surface-inset);
     transition: var(--transition-control);
   }
-  /* Centered on the track whatever its edge rounds to, 3 px from the end it rests at. */
+  /* A solid sliding key reads by position even without a color change. */
   .switch-knob {
     position: absolute;
     top: 50%;
     left: calc(50% - 16px);
     width: 16px;
     height: 16px;
-    border-radius: var(--r-full);
-    background: var(--surface-1);
-    box-shadow: var(--elev-thumb);
+    border-radius: var(--r-well);
+    background: var(--brand);
     translate: 0 -50%;
     transition:
       translate var(--dur-graph) var(--ease-spring),
       background-color var(--dur-hover) var(--ease-out);
   }
   .switch input:checked + .switch-track {
-    border-color: var(--brand);
-    background: var(--brand);
     & .switch-knob {
       translate: 16px -50%;
-      background: var(--text-inverse);
     }
   }
   .switch-label {
     flex: 0 1 auto;
     min-width: 0;
   }
-  /* Forced colors keep the edge but drop fills; system colors draw the knob and the on state. */
+  /* System ink keeps the key's position visible in forced colors. */
   @media (forced-colors: active) {
     .switch-knob {
+      forced-color-adjust: none;
       background: CanvasText;
-    }
-    .switch input:checked + .switch-track {
-      background: Highlight;
-      & .switch-knob {
-        background: HighlightText;
-      }
     }
   }
 

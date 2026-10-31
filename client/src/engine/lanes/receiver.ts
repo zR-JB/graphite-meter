@@ -15,7 +15,7 @@ const FINAL_RETRY_MS = 100;
 const READY_POLL_MS = 50;
 /** A feed whose receiver time stood still this long is backed by a checkpoint. */
 const QUIET_MS = 250;
-/** The feed sends a record at least every second: one silent for this many quiet checks is dead and reconnects. */
+/** Reconnect after this many checks without feed traffic or advancing receiver checkpoints. */
 const SILENT_CHECKS = 6;
 
 type End = { ending: Ending; broken: boolean };
@@ -62,6 +62,7 @@ export class Receiver {
   #last: Checkpoint | null = null;
   /** Receiver time advanced since the quiet check last looked. */
   #advanced = true;
+  #heard = () => {};
   #inFlight: Promise<Checkpoint | null> | null = null;
 
   constructor(
@@ -179,7 +180,10 @@ export class Receiver {
   #observe(checkpoint: Checkpoint): boolean {
     const { bytes = 0, nanos = 0 } = this.#last ?? {};
     if (checkpoint.bytes < bytes || checkpoint.nanos < nanos) return false;
-    if (checkpoint.nanos > nanos) this.#advanced = true;
+    if (checkpoint.nanos > nanos) {
+      this.#advanced = true;
+      this.#heard();
+    }
     this.#last = checkpoint;
     this.#opened.resolve();
     this.#host.observed(checkpoint, checkpoint.bytes > bytes);
@@ -212,7 +216,7 @@ export class Receiver {
         return { ending, broken: false };
       }
       // Only an open feed promises its lines; opening one over a loaded uplink can take seconds.
-      const heard = watch(connection, () => silent.abort());
+      const heard = (this.#heard = watch(connection, () => silent.abort()));
       const last = await readRecords(response.body, (record) => this.record(record), heard);
       if (last?.type === "complete") return null;
       const ending = last
@@ -226,6 +230,7 @@ export class Receiver {
         return { ending: lost("progress stream went silent"), broken: false };
       return { ending: lost(String(error)), broken: true };
     } finally {
+      this.#heard = () => {};
       silent.abort();
     }
   }
@@ -245,6 +250,7 @@ export class Receiver {
       const closed = new AbortController();
       let heard = () => {};
       const done = (end: End | null) => {
+        this.#heard = () => {};
         closed.abort();
         signal.removeEventListener("abort", abort);
         socket.onopen = socket.onmessage = socket.onclose = null;
@@ -255,9 +261,10 @@ export class Receiver {
       signal.addEventListener("abort", abort);
       // Only an open feed promises its messages; opening one over a loaded uplink can take seconds.
       socket.onopen = () =>
-        (heard = watch(closed.signal, () =>
-          done({ ending: lost("progress socket went silent"), broken: false }),
-        ));
+        (heard = this.#heard =
+          watch(closed.signal, () =>
+            done({ ending: lost("progress socket went silent"), broken: false }),
+          ));
       socket.onmessage = ({ data }: MessageEvent<unknown>) => {
         heard();
         let record: ReturnType<typeof parse>;

@@ -144,6 +144,9 @@
       border-block: var(--hairline) solid var(--border-subtle);
       font: var(--role-row);
     }
+    & .day > :is(h3, .group-head) {
+      letter-spacing: var(--track-tight);
+    }
     & li + li {
       border-top: var(--hairline) solid var(--border-subtle);
     }
@@ -320,11 +323,12 @@
       grid-area: bar;
       align-self: center;
       width: 100%;
-      height: 4px;
-      border-radius: 1px;
+      height: 5px;
+      border-radius: var(--r-full);
       background: linear-gradient(
           270deg,
-          color-mix(in oklab, var(--tone) 62%, transparent) calc(var(--value) / var(--peak) * 100%),
+          var(--tone) 0,
+          color-mix(in oklab, var(--tone) 55%, transparent) calc(var(--value) / var(--peak) * 100%),
           var(--track) 0
         )
         no-repeat;

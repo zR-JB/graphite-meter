@@ -12,9 +12,107 @@ import {
   savedResult,
   spawnPeer,
 } from "./fleet";
-import { browser, expect, test, type Locator } from "./webview";
+import { browser, expect, settled, test, type Locator } from "./webview";
 
 const checked = (locator: Locator) => locator.evaluate((el: HTMLInputElement) => el.checked);
+
+test.chrome(
+  "settings controls retain state cues in forced colors and touch-sized targets",
+  async (page) => {
+    try {
+      await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      await open(page);
+      const settings = await openSettings(page);
+      expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+      const preset = settings.getByRole("button", { name: "Custom", exact: true });
+      const wire = settings.locator("label.switch", { hasText: "Show estimated wire rate" });
+      const radio = settings.locator('input.check[type="radio"]:checked').nth(0);
+      const radioMark = () =>
+        radio.evaluate((el: HTMLElement) => {
+          const mark = getComputedStyle(el, "::after");
+          return { scale: mark.scale, fill: mark.backgroundColor };
+        });
+      await page.evaluate(settled);
+      expect((await radioMark()).scale).toBe("1");
+      for (const control of [preset, wire]) {
+        const size = await control.evaluate((el: HTMLElement) => {
+          const { width, height } = el.getBoundingClientRect();
+          return { width, height };
+        });
+        expect(size.width).toBeGreaterThanOrEqual(44);
+        expect(size.height).toBeGreaterThanOrEqual(44);
+      }
+      await preset.click();
+      await expect(preset).toHaveAttribute("aria-pressed", "true");
+      const selectedPlate = () =>
+        preset.evaluate(
+          (el: HTMLElement) => getComputedStyle(el.parentElement!, "::before").opacity,
+        );
+      await page.evaluate(settled);
+      expect(Number(await selectedPlate())).toBeGreaterThan(0.9);
+
+      const input = settings.getByRole("switch", { name: "Show estimated wire rate" });
+      if (await checked(input)) await wire.click();
+      await page.evaluate(settled);
+      const mark = () =>
+        wire.evaluate((el: HTMLElement) => {
+          const knob = el.querySelector(".switch-knob")!;
+          return {
+            position: getComputedStyle(knob).translate,
+            fill: getComputedStyle(knob).backgroundColor,
+          };
+        });
+      const off = await mark();
+      await wire.click();
+      await page.evaluate(settled);
+      const on = await mark();
+      expect(await checked(input)).toBe(true);
+      expect(on.position).not.toBe(off.position);
+      expect(on.fill).not.toBe("rgba(0, 0, 0, 0)");
+
+      await page.cdp("Emulation.setEmulatedMedia", {
+        features: [{ name: "forced-colors", value: "active" }],
+      });
+      expect(await page.evaluate(() => matchMedia("(forced-colors: active)").matches)).toBe(true);
+      expect((await radioMark()).fill).not.toBe("rgba(0, 0, 0, 0)");
+      const forced = await wire.evaluate((el: HTMLElement) => {
+        const knob = el.querySelector(".switch-knob")!;
+        const style = getComputedStyle(knob);
+        return {
+          position: style.translate,
+          fill: style.backgroundColor,
+        };
+      });
+      expect(forced.fill).not.toBe("rgba(0, 0, 0, 0)");
+      await wire.click();
+      await page.evaluate(settled);
+      expect(
+        await wire.evaluate(
+          (el: HTMLElement) => getComputedStyle(el.querySelector(".switch-knob")!).translate,
+        ),
+      ).not.toBe(forced.position);
+      expect(
+        await preset.evaluate((el: HTMLElement) => getComputedStyle(el).forcedColorAdjust),
+      ).toBe("none");
+    } finally {
+      await page.cdp("Emulation.setEmulatedMedia", { features: [] });
+      await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
+    }
+  },
+);
+
+test("selected radio paths keep a visible center", async (page) => {
+  await open(page);
+  const settings = await openSettings(page);
+  const radio = settings.locator('input.check[type="radio"]:checked').nth(0);
+  await page.evaluate(settled);
+  const mark = await radio.evaluate((el: HTMLElement) => {
+    const style = getComputedStyle(el, "::after");
+    return { scale: style.scale, fill: style.backgroundColor };
+  });
+  expect(mark.scale).toBe("1");
+  expect(mark.fill).not.toBe("rgba(0, 0, 0, 0)");
+});
 
 test("reset settings confirms, preserves on cancel and restores defaults", async (page) => {
   await open(page);

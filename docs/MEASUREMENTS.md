@@ -67,9 +67,10 @@ contributions share the client's connection and are not independent capacity tes
   server shares belongs to the link, so nobody leaves for it, the run shows it as Recovering and the stage keeps its
   planned time. The browser times an upload receiver that still reports on that receiver's clock. It times one that
   sends no record at all only after 4 s, since its feed can lag a busy uplink. It reconnects once a progress feed
-  that sends nothing, heartbeats included, for 1.5 s. The terminal client times every direction on its own clock from
-  the boundary where the server's counted bytes last grew. At the final boundary a refused grant removes a server. So
-  does a direction still silent past the limit, or a stream still retrying a failure while that direction's bytes
+  that sends nothing, heartbeats included, for 1.5 s unless checkpoints still advance the receiver clock. The
+  terminal client times every direction on its own clock from the boundary where the server's counted bytes last grew.
+  At the final boundary a refused grant removes a server. So does a direction still silent past the limit, or a stream
+  still retrying a failure while that direction's bytes
   have not moved for 500 ms. The stage then records that failure. The interval ends at the boundary where the
   departing server's bytes last moved, so its silence is never measured, and the survivors' `dropout` interval starts
   there. In a bidirectional stage that boundary is where its first direction stopped. If its bytes never moved, the
