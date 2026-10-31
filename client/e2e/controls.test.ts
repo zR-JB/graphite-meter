@@ -12,9 +12,84 @@ import {
   savedResult,
   spawnPeer,
 } from "./fleet";
-import { browser, expect, test, type Locator } from "./webview";
+import { browser, expect, settled, test, type Locator } from "./webview";
 
 const checked = (locator: Locator) => locator.evaluate((el: HTMLInputElement) => el.checked);
+
+test.chrome(
+  "settings controls retain state cues in forced colors and touch-sized targets",
+  async (page) => {
+    try {
+      await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      await open(page);
+      const settings = await openSettings(page);
+      expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+      const preset = settings.getByRole("button", { name: "Custom", exact: true });
+      const wire = settings.locator("label.switch", { hasText: "Show estimated wire rate" });
+      for (const control of [preset, wire]) {
+        const size = await control.evaluate((el: HTMLElement) => {
+          const { width, height } = el.getBoundingClientRect();
+          return { width, height };
+        });
+        expect(size.width).toBeGreaterThanOrEqual(44);
+        expect(size.height).toBeGreaterThanOrEqual(44);
+      }
+      await preset.click();
+      await expect(preset).toHaveAttribute("aria-pressed", "true");
+      const decoration = () =>
+        preset.evaluate((el: HTMLElement) => getComputedStyle(el).textDecorationLine);
+      expect(await decoration()).toContain("underline");
+
+      const input = settings.getByRole("switch", { name: "Show estimated wire rate" });
+      if (await checked(input)) await wire.click();
+      await page.evaluate(settled);
+      const mark = () =>
+        wire.evaluate((el: HTMLElement) => {
+          const knob = el.querySelector(".switch-knob")!;
+          const shape = getComputedStyle(knob, "::after");
+          return {
+            position: getComputedStyle(knob).translate,
+            bottom: shape.borderBottomWidth,
+            left: shape.borderLeftWidth,
+          };
+        });
+      const off = await mark();
+      await wire.click();
+      await page.evaluate(settled);
+      const on = await mark();
+      expect(await checked(input)).toBe(true);
+      expect(on.position).not.toBe(off.position);
+      expect(parseFloat(on.bottom)).toBeGreaterThan(0);
+      expect(parseFloat(on.left)).toBeGreaterThan(0);
+      expect(parseFloat(off.bottom)).toBe(0);
+
+      await page.cdp("Emulation.setEmulatedMedia", {
+        features: [{ name: "forced-colors", value: "active" }],
+      });
+      expect(await page.evaluate(() => matchMedia("(forced-colors: active)").matches)).toBe(true);
+      expect(await decoration()).toContain("underline");
+      const forced = await wire.evaluate((el: HTMLElement) => {
+        const knob = el.querySelector(".switch-knob")!;
+        const style = getComputedStyle(knob);
+        const mark = getComputedStyle(knob, "::after");
+        return {
+          outline: style.outlineStyle,
+          outlineWidth: style.outlineWidth,
+          mark: mark.borderBottomStyle,
+        };
+      });
+      expect(forced.outline).not.toBe("none");
+      expect(parseFloat(forced.outlineWidth)).toBeGreaterThan(0);
+      expect(forced.mark).toBe("solid");
+      expect(
+        await preset.evaluate((el: HTMLElement) => getComputedStyle(el).forcedColorAdjust),
+      ).toBe("none");
+    } finally {
+      await page.cdp("Emulation.setEmulatedMedia", { features: [] });
+      await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
+    }
+  },
+);
 
 test("reset settings confirms, preserves on cancel and restores defaults", async (page) => {
   await open(page);
