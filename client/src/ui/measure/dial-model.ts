@@ -56,7 +56,8 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
     36,
     Math.min(
       width * 0.37,
-      (width / 2 - 25) / TICK_REACH,
+      // Leave room beyond the tick for multi-digit labels at the sides of the ring.
+      (width / 2 - 50) / TICK_REACH,
       ((height - 42) / (1 + Math.SQRT1_2) - 11) / TICK_REACH,
       // The labeled ring stays centered and its note still fits under the tick ends.
       note

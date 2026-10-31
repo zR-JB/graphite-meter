@@ -344,6 +344,7 @@
     font-size: clamp(24px, calc(var(--face-min) * 0.17), 76px);
     font-weight: 500;
     font-variant-numeric: lining-nums tabular-nums;
+    letter-spacing: var(--track-tight);
     line-height: 1;
     white-space: nowrap;
   }
@@ -541,13 +542,17 @@
     & + & {
       border-top: var(--hairline) solid var(--border-subtle);
     }
-    /* A running stage's row washes in its hue edge to edge of the area, on its own layer. */
+    /* The active reading casts a short pool of stage color behind its name and figures. */
     &::before {
       content: "";
       position: absolute;
       z-index: -1;
       inset: 0 calc(-1 * var(--space-4));
-      background: color-mix(in oklab, var(--tone) 7%, transparent);
+      background: linear-gradient(
+        90deg,
+        color-mix(in oklab, var(--tone) 12%, transparent),
+        transparent 75%
+      );
       opacity: 0;
       transition: opacity calc(0.54 * var(--dur-graph)) var(--ease-out-head);
       pointer-events: none;
@@ -941,6 +946,7 @@
     display: grid;
     flex: none;
     place-items: center;
+    color: var(--tone);
     & :where(svg) {
       width: 14px;
       height: 14px;
@@ -1145,6 +1151,11 @@
     overflow: hidden;
     border-color: var(--card-edge);
     border-radius: 10px;
+    background-image: radial-gradient(
+      ellipse 85% 65% at 100% 0,
+      color-mix(in oklab, var(--tone) 9%, transparent),
+      transparent
+    );
     transition:
       background-color var(--dur-hover) var(--ease-out),
       border-color var(--dur-hover) var(--ease-out),
@@ -1164,6 +1175,7 @@
     }
     &:is(.pending, .not-run) {
       --card-edge: var(--border-subtle);
+      background-image: none;
     }
   }
   .card .face {
@@ -1180,6 +1192,12 @@
     color: var(--text);
     font: var(--role-title);
     white-space: nowrap;
+  }
+  /* Stage glyphs are small colored instrument marks rather than miniature plates. */
+  .card .tone-icon {
+    border: 0;
+    border-radius: var(--r-full);
+    background: var(--tone-wash);
   }
   .card .status {
     display: inline-flex;

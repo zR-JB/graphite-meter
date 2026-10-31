@@ -303,14 +303,15 @@
     }
     /* The hues are data, so forced colors keep them. */
     & .strip-bar {
-      height: 4px;
+      height: 6px;
       margin-bottom: 6px;
       border-radius: var(--r-full);
       background: linear-gradient(
         90deg,
         var(--phase-warmup) var(--lead),
         transparent var(--lead) calc(var(--lead) + var(--gap)),
-        var(--tone) calc(var(--lead) + var(--gap))
+        var(--tone) calc(var(--lead) + var(--gap)),
+        color-mix(in oklab, var(--tone) 65%, var(--surface-1)) 100%
       );
       forced-color-adjust: none;
     }
@@ -319,7 +320,8 @@
       white-space: nowrap;
     }
     & .strip-time {
-      font: var(--w-normal) var(--type-md) / 16px var(--font-sans);
+      font: 500 var(--type-md) / 16px var(--font-mono);
+      font-variant-numeric: tabular-nums;
     }
     & .strip-name {
       color: var(--text-soft);
