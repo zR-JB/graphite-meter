@@ -16,6 +16,50 @@ import {
 } from "./fleet";
 import { browser, seriousViolations, expect, settled, test, type Page } from "./webview";
 
+test("the theme control changes the rendered canvas and remembers its choice", async (page) => {
+  await open(page);
+  const theme = (name: string) => page.getByRole("button", { name: `Theme: ${name}`, exact: true });
+  const canvas = () =>
+    page.evaluate(() => {
+      const color = getComputedStyle(document.querySelector("#console")!).backgroundColor;
+      const sample = document.createElement("canvas");
+      sample.width = sample.height = 1;
+      const context = sample.getContext("2d")!;
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    });
+  const check = async (name: "Light" | "Dark") => {
+    await expect(theme(name)).toBeVisible();
+    await page.evaluate(settled);
+    const [r, g, b, alpha] = await canvas();
+    expect(alpha).toBe(255);
+    // Relative brightness, not a fixed color: each theme may evolve while remaining visibly light or dark.
+    const brightness = (r! + g! + b!) / (3 * 255);
+    if (name === "Dark") expect(brightness).toBeLessThan(0.2);
+    else expect(brightness).toBeGreaterThan(0.8);
+  };
+
+  await expect(theme("Auto")).toBeVisible();
+  await theme("Auto").click();
+  await check("Light");
+  await page.reload();
+  await check("Light");
+  await theme("Light").click();
+  await check("Dark");
+  await page.reload();
+  await check("Dark");
+  await theme("Dark").click();
+  await expect(theme("Auto")).toBeVisible();
+  const systemLight = await page.evaluate(
+    () => matchMedia("(prefers-color-scheme: light)").matches,
+  );
+  const [r, g, b] = await canvas();
+  const brightness = (r! + g! + b!) / (3 * 255);
+  if (systemLight) expect(brightness).toBeGreaterThan(0.8);
+  else expect(brightness).toBeLessThan(0.2);
+});
+
 test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (page) => {
   const version = await fetch(`${home.http}/version.json`);
   expect((await version.json()).label).toBe("prod");
