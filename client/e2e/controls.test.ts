@@ -101,6 +101,19 @@ test.chrome(
   },
 );
 
+test("selected radio paths keep a visible center", async (page) => {
+  await open(page);
+  const settings = await openSettings(page);
+  const radio = settings.locator('input.check[type="radio"]:checked').nth(0);
+  await page.evaluate(settled);
+  const mark = await radio.evaluate((el: HTMLElement) => {
+    const style = getComputedStyle(el, "::after");
+    return { scale: style.scale, fill: style.backgroundColor };
+  });
+  expect(mark.scale).toBe("1");
+  expect(mark.fill).not.toBe("rgba(0, 0, 0, 0)");
+});
+
 test("reset settings confirms, preserves on cancel and restores defaults", async (page) => {
   await open(page);
   const settings = await openSettings(page);
