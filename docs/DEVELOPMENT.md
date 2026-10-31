@@ -173,7 +173,7 @@ OKLCH lightnesses are respectively .955/.12, .982/.16, .965/.19, and .925/.105; 
 darker than plates in light mode and lighter in dark mode. The run control uses the same neutral surface, a stronger
 outline and a play/stop mark. Stage hues identify measurements and states. Insets use a 4 px radius, controls 8 px,
 and outer plates 12 px; a nested surface subtracts its inset from its parent's radius where their edges align.
-Switches distinguish on and off by mark and position, and selected segments retain an underline as well as a fill.
+Switches show their state by the key's position, and selected segments use a distinct plate.
 
 When changing these rules, inspect light and dark themes at desktop and narrow widths, including hover, focus,
 disabled, selected, running and completed states. Check rendered text and control edges against their actual
