@@ -25,7 +25,8 @@
     align-items: center;
     gap: var(--space-2);
     padding-inline: var(--gutter);
-    border-bottom: var(--hairline) solid var(--border);
+    border-bottom: var(--hairline) solid var(--border-strong);
+    background: var(--frame);
     container: topbar / inline-size;
     & > * {
       flex-shrink: 0;
@@ -249,8 +250,8 @@
     min-width: 0;
     overflow: hidden;
     padding: 0 var(--gutter) env(safe-area-inset-bottom, 0px);
-    border-top: var(--hairline) solid var(--border);
-    background: var(--surface-1);
+    border-top: var(--hairline) solid var(--border-strong);
+    background: var(--frame);
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) var(--font-sans);
     font-variant-numeric: tabular-nums;

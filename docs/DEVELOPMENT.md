@@ -5,10 +5,9 @@ in the server. Everything runs through `mise`.
 
 ## Setup
 
-Install [mise](https://mise.jdx.dev/installing-mise.html) at the version in `mise.toml` (`vars.mise_version`). It
-installs the pinned Bun, Python and checkers, and rustup installs the Rust release in `rust/rust-toolchain.toml`.
-You also need Git, Bash, jq and OpenSSL. Browser tests need the pinned Chrome for Testing or Firefox, and container
-checks need Docker or Podman.
+Install [mise](https://mise.jdx.dev/installing-mise.html) at the version in `mise.toml` (`vars.mise_version`), plus
+Git, Bash, jq and OpenSSL. Mise installs the pinned Bun, Python and checkers; rustup installs the pinned Rust release.
+Browser tests also need the pinned Chrome for Testing or Firefox, and container checks need Docker or Podman.
 
 ```sh
 git clone https://github.com/zR-JB/graphite-meter.git
@@ -18,8 +17,8 @@ mise run dev        # development build on http://localhost:7246; arguments afte
 mise run tui        # terminal client; it asks for the server, or add `-- --url <url>`
 ```
 
-`mise tasks` lists every task. Run `mise run setup` in each new worktree; `node_modules`, bundles and browser
-artifacts stay local to it.
+Run `mise run setup` in each worktree; dependencies and browser artifacts stay local to it. `mise tasks` lists all
+commands.
 
 ## Commands
 
