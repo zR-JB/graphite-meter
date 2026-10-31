@@ -81,6 +81,14 @@ test.chrome(
       expect(forced.outline).not.toBe("none");
       expect(parseFloat(forced.outlineWidth)).toBeGreaterThan(0);
       expect(forced.mark).toBe("solid");
+      await wire.click();
+      await page.evaluate(settled);
+      expect(
+        await wire.evaluate(
+          (el: HTMLElement) =>
+            getComputedStyle(el.querySelector(".switch-knob")!, "::after").backgroundColor,
+        ),
+      ).not.toBe("rgba(0, 0, 0, 0)");
       expect(
         await preset.evaluate((el: HTMLElement) => getComputedStyle(el).forcedColorAdjust),
       ).toBe("none");
