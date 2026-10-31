@@ -157,13 +157,14 @@
     --space-5: 24px;
     --space-6: 32px;
 
-    /* Radii rise with elevation and stay concentric. */
-    --r-well: 2px;
-    --r-chrome: 3px;
-    --r-surface: 4px;
+    /* An instrument has three scales: inset details, controls, and outer plates.
+       Two-pixel insets keep their corners concentric with their parent. */
+    --r-well: 4px;
+    --r-chrome: 8px;
+    --r-surface: 12px;
     --r-full: 999px;
     /* A row's wash sits 2 px inside its plate, concentric with it. */
-    --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
+    --r-row: calc(var(--r-chrome) - 2px);
     --hairline: 1px;
 
     /* 10 px is the floor for any text. Only headings scale with the viewport. */
@@ -210,10 +211,12 @@
     --surface-1: light-dark(oklch(0.982 0.012 85), oklch(0.16 0.004 75));
     --surface-2: light-dark(oklch(0.965 0.015 85), oklch(0.19 0.005 75));
     --surface-inset: light-dark(oklch(0.925 0.018 85), oklch(0.105 0.003 75));
+    /* Neutral keys are distinct from plates; wells remain the deepest surface. */
+    --control-surface: var(--surface-2);
     /* The surface for what floats over the instrument, opaque because a blur costs every frame on a slow GPU. */
     --sheet: light-dark(oklch(0.972 0.013 85), oklch(0.145 0.004 75));
 
-    --frame: light-dark(oklch(0.91 0.018 85), oklch(0.17 0.004 75));
+    --frame: light-dark(oklch(0.975 0.014 85), oklch(0.17 0.004 75));
 
     --border-subtle: light-dark(oklch(0.3 0.02 75 / 0.1), oklch(0.92 0.02 85 / 0.09));
     --border: light-dark(oklch(0.3 0.02 75 / 0.18), oklch(0.92 0.02 85 / 0.15));

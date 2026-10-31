@@ -38,9 +38,9 @@ const CANVAS: Tone = tone((0xf5f0e4, 255, 15), (0x060605, 232, 0));
 const PLATE_OFF: Tone = tone((0xdcd6ca, 252, 7), (0x2d2b28, 236, 8));
 const BORDER: Tone = tone((0xcac4b8, 250, 15), (0x43413b, 238, 8));
 const STAGES: [Tone; Stage::ALL.len()] = [
-    tone((0x1d7a73, 30, 6), (0x74e7e5, 87, 14)),
+    tone((0x196c66, 30, 6), (0x74e7e5, 87, 14)),
     tone((0x254ea3, 25, 4), (0x71a3ff, 75, 12)),
-    tone((0xa35d1d, 130, 1), (0xfeb66a, 215, 9)),
+    tone((0x914f18, 130, 1), (0xfeb66a, 215, 9)),
     tone((0x7f2456, 89, 1), (0xe472ac, 169, 9)),
 ];
 const TRACES: [Tone; Stage::ALL.len()] = [
@@ -114,7 +114,7 @@ impl Palette {
             },
             plate_note: Style {
                 bg: Some(pick(INK)),
-                ..Style::fg(mix(pick(INK), canvas, 0.45))
+                ..Style::fg(mix(pick(INK), canvas, 0.4))
             },
             plate_off: Style {
                 bg: Some(pick(PLATE_OFF)),

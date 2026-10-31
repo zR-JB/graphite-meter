@@ -167,6 +167,18 @@ it. `src/app/app.ts`, mounted by `src/main.tsx`, is the one place that wires acr
 | `src/ui`       | Views: `shell`, `measure`, `settings`, `details`, `history`, `legal`, `account` and the `kit` they share.                |
 | `public`       | Fonts, and the favicon `bun run build:auth` writes, copied into the build as they are.                                   |
 
+The browser's surface and radius tokens live in `src/styles/tokens.css`. Canvas is the page, surface-1 is a
+plate, surface-2 is a neutral control or floating surface, and surface-inset is a well or track. Their light/dark
+OKLCH lightnesses are respectively .955/.12, .982/.16, .965/.19, and .925/.105; control surfaces are therefore
+darker than plates in light mode and lighter in dark mode. The run control uses the same neutral surface, a stronger
+outline and a play/stop mark. Stage hues identify measurements and states. Insets use a 4 px radius, controls 8 px,
+and outer plates 12 px; a nested surface subtracts its inset from its parent's radius where their edges align.
+
+When changing these rules, inspect light and dark themes at desktop and narrow widths, including hover, focus,
+disabled, selected, running and completed states. Check rendered text and control edges against their actual
+adjacent surfaces, including stage washes, with a contrast checker; preserve visible focus and the 4.5:1 text and
+3:1 control-edge targets. Use the browser suite and screenshot tooling described above to catch regressions.
+
 Saved data and links from earlier releases keep working, so these are compatibility boundaries: `localStorage`
 `graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at version 4
 with schema-6 records, the BroadcastChannel `graphite-meter-history`, and the hash routes (Details is `endpoint` in

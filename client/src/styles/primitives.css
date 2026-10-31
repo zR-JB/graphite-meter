@@ -79,7 +79,7 @@
     padding: 0 var(--space-3);
     border: var(--hit-pad) solid transparent;
     border-radius: calc(var(--r-chrome) + var(--hit-pad));
-    background: var(--surface-inset) padding-box;
+    background: var(--control-surface) padding-box;
     box-shadow:
       inset 0 0 0 var(--hairline) var(--btn-line),
       var(--elev-tile);
@@ -127,7 +127,7 @@
   }
   /* A top-bar key: a glyph plate in full ink, whichever component owns it. */
   .btn.key {
-    background-color: var(--surface-inset);
+    background-color: var(--control-surface);
     color: var(--text);
   }
   .btn-inset {
@@ -641,7 +641,7 @@
     z-index: -1;
     inset: 2px auto 2px 2px;
     width: calc((100% - 4px - (var(--n) - 1) * 2px) / var(--n));
-    border-radius: calc(var(--r-chrome) - 1px);
+    border-radius: calc(var(--r-chrome) - 2px);
     background: var(--surface-1);
     box-shadow:
       inset 0 0 0 var(--hairline) var(--border),
@@ -701,7 +701,7 @@
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;
-    border-radius: calc(var(--r-chrome) - 1px);
+    border-radius: calc(var(--r-chrome) - 2px);
     color: var(--text-muted);
     font: var(--role-control);
     text-overflow: ellipsis;
@@ -871,7 +871,7 @@
     width: 100%;
     min-height: var(--control-h);
     padding: var(--space-1) var(--space-2);
-    border-radius: var(--r-well);
+    border-radius: var(--r-chrome);
     color: var(--text-muted);
     font: var(--role-row);
     text-align: start;

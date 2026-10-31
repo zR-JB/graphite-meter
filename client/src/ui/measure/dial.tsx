@@ -455,16 +455,18 @@ export function Dial(props: {
       <g fill="none" stroke-linecap="round">
         <path class="track" />
         <path class="ticks" />
+        <path class="major-ticks" />
       </g>
     </svg>
   ) as SVGSVGElement;
   effect(() => {
-    const { width, height, track, ticks, arcWidth } = layout();
+    const { width, height, track, ticks, majorTicks, arcWidth } = layout();
     sizeArt(art, width, height);
-    const [trackPath, tickPath] = art.querySelectorAll("path");
+    const [trackPath, tickPath, majorTickPath] = art.querySelectorAll("path");
     trackPath!.setAttribute("d", track);
     trackPath!.setAttribute("stroke-width", String(arcWidth));
     tickPath!.setAttribute("d", ticks);
+    majorTickPath!.setAttribute("d", majorTicks);
   });
 
   const ids = `dial-${++dials}`;
