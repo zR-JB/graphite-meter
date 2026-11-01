@@ -62,9 +62,7 @@ pub struct Palette {
     pub err: Style,
     pub border: Style,
     pub cursor: Style,
-    /// The run key's plate: Stop's, and that of a key that cannot be pressed.
-    pub plate: Style,
-    pub plate_note: Style,
+    /// The run key's plate when it cannot be pressed.
     pub plate_off: Style,
     /// Tiles one step over the canvas, plates and key caps two; the pointer's wash and the focused row's.
     pub surface: Color,
@@ -107,14 +105,6 @@ impl Palette {
             cursor: Style {
                 bg: Some(pick(TEXT)),
                 ..Style::fg(canvas)
-            },
-            plate: Style {
-                bg: Some(pick(INK)),
-                ..Style::fg(canvas)
-            },
-            plate_note: Style {
-                bg: Some(pick(INK)),
-                ..Style::fg(mix(pick(INK), canvas, 0.4))
             },
             plate_off: Style {
                 bg: Some(pick(PLATE_OFF)),
