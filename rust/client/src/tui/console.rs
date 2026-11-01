@@ -200,7 +200,11 @@ impl App {
     fn controls(&self, canvas: &mut Canvas, area: Rect) {
         let width = area.width.min(CONTROLS);
         let x = area.x + (area.width - width) / 2;
-        self.run_key(canvas, Rect::new(x, area.y, width, 3));
+        let key_width = width.min(36);
+        self.run_key(
+            canvas,
+            Rect::new(x + (width - key_width) / 2, area.y, key_width, 3),
+        );
         self.chips(canvas, Rect::new(x, area.y + 4, width, 2));
     }
 
@@ -243,13 +247,18 @@ impl App {
                 } else {
                     "Start test"
                 };
-                let mut plate = palette.plate;
-                if hovered {
-                    plate.bg = plate.bg.map(|ink| mix(palette.canvas(), ink, 0.12));
-                }
+                let surface = if hovered {
+                    palette.selected
+                } else {
+                    palette.raised
+                };
+                let plate = Style {
+                    bg: Some(surface),
+                    ..palette.value
+                };
                 let faint = Style {
                     bg: plate.bg,
-                    ..palette.plate_note
+                    ..palette.muted
                 };
                 (
                     label.into(),

@@ -941,6 +941,38 @@ fn the_console_follows_a_download_and_takes_presses() {
 }
 
 #[test]
+fn the_run_key_keeps_a_neutral_surface_in_both_themes() {
+    for dark in [false, true] {
+        let now = Instant::now();
+        let mut app = App::new(
+            config(),
+            None,
+            (Profile::TrueColor, Palette::new(dark)),
+            now,
+        );
+        app.tick(now);
+        app.event(&prepared(), now);
+        let (x, y) = find(&mut app, now, "Start test");
+        let mut buffer = Buffer::empty(FULL);
+        app.draw(&mut buffer, now);
+        let ratatui_core::style::Color::Rgb(r, g, b) = buffer[(x, y)].bg else {
+            panic!("run key must have a true-color surface");
+        };
+        let key_background = buffer[(x, y)].bg;
+        let width = (0..FULL.width)
+            .filter(|column| buffer[(*column, y)].bg == key_background)
+            .count();
+        assert!(width <= 36, "run key is too wide: {width}");
+        let brightness = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
+        if dark {
+            assert!(brightness < 64, "dark run key is too bright: {brightness}");
+        } else {
+            assert!(brightness > 180, "light run key is too dark: {brightness}");
+        }
+    }
+}
+
+#[test]
 fn a_confirmed_drop_reads_on_the_card_and_in_the_report_with_its_time_and_both_rates() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
