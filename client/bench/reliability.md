@@ -18,14 +18,14 @@ The following use HTTP/1.1 throughput and WebTransport latency, with automatic l
 loopback offloads. The server-recorded paths confirmed the selected protocols. Repetitions share a browser
 page and link queue, so they are not independent trials.
 
-| Baseline scenario | Complete runs | Observation |
-| --- | ---: | --- |
-| Changing 30/8 Mbit/s link, 1 server | 2/2 | Both complete. |
-| Changing 30/8 Mbit/s link, 4 servers | 2/2 | Both complete. |
-| Two-second UDP outage during download, 1 server | 2/2 | The affected latency probes timed out, but the runs completed. |
-| Two-second UDP outage during download, 4 servers | 2/2 | The affected server's probes timed out, but the runs completed. |
-| Steady 30/1 Mbit/s link, 1 server, 10 s transfer stages | 2/2 | Both complete. |
-| Steady 30/1 Mbit/s link, 4 servers, 10 s transfer stages | 0/2 | The first run lost all upload paths at the 3.5 s readiness deadline. The next start failed its throughput checks while the queue still held packets from the prior run. |
+| Baseline scenario                                        | Complete runs | Observation                                                                                                                                                             |
+| -------------------------------------------------------- | ------------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Changing 30/8 Mbit/s link, 1 server                      |           2/2 | Both complete.                                                                                                                                                          |
+| Changing 30/8 Mbit/s link, 4 servers                     |           2/2 | Both complete.                                                                                                                                                          |
+| Two-second UDP outage during download, 1 server          |           2/2 | The affected latency probes timed out, but the runs completed.                                                                                                          |
+| Two-second UDP outage during download, 4 servers         |           2/2 | The affected server's probes timed out, but the runs completed.                                                                                                         |
+| Steady 30/1 Mbit/s link, 1 server, 10 s transfer stages  |           2/2 | Both complete.                                                                                                                                                          |
+| Steady 30/1 Mbit/s link, 4 servers, 10 s transfer stages |           0/2 | The first run lost all upload paths at the 3.5 s readiness deadline. The next start failed its throughput checks while the queue still held packets from the prior run. |
 
 On the same slow-uplink setup, the candidate with the longer preparation window got past upload setup in
 its first run, but all four upload progress feeds later went silent and HTTP recovery checks timed out.
