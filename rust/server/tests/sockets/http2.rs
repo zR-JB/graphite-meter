@@ -161,12 +161,10 @@ async fn only_an_admitted_upload_opens_the_connection_window() {
     );
     h2.server.until_active(0).await;
 
+    let id = h2.server.upload_id().await;
     let mut refused = h2.connect(0).await;
     let _held = refused.get("GET", ENDLESS).await;
-    let (id, before) = (
-        h2.server.upload_id().await,
-        super::quic::settled(&h2.server.budget).await,
-    );
+    let before = super::quic::settled(&h2.server.budget).await;
     let (answer, mut upload) = refused.open("POST", &format!("/upload?id={id}")).await;
     assert_eq!(
         answer.await.unwrap().status(),
