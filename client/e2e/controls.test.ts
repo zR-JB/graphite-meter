@@ -548,15 +548,8 @@ test("Details hides this browser's address until its key is pressed, whatever th
   await open(page);
   await ready(page);
   await page.getByRole("button", { name: "Details", exact: true }).click();
-  // A busy runner can still be sliding the sheet in, so wait for timed animations; scroll-driven ones never finish.
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime))
-        .map((a) => a.finished),
-    ),
-  );
+  // A busy runner can still be sliding the sheet in.
+  await page.evaluate(settled);
   const key = page.getByRole("button", { name: "Show your address" });
   await expect(key).toHaveAttribute("aria-pressed", "false");
   const address = page.locator(".secret-value");

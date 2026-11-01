@@ -199,15 +199,25 @@ test("a run that measured nothing reads Failed with its cause and is kept in His
       servers: [{ id: "self", url: lisbon.server.url }, porto.server],
       config: {
         ...long,
+        // The test stops both peers during this warmup, before measurement starts.
+        duration: { ...long.duration, warmupMs: 4000 },
         stages: { latency: false, download: true, upload: true, bidirectional: false },
       },
     });
     await ready(page);
+    // Hold the run clock in warmup until both servers are gone, even on a busy runner.
+    await page.evaluate(() => {
+      const now = performance.now();
+      Object.defineProperty(performance, "now", { configurable: true, value: () => now });
+    });
     const startedAt = Date.now();
     await runButton(page, "Start test").click();
-    await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+    await expect(phase(page, "warmup")).toHaveCount(1, { timeout: 10_000 });
     porto.kill("SIGKILL");
     lisbon.kill("SIGKILL");
+    await page.evaluate(() => {
+      delete (performance as Partial<Performance>).now;
+    });
     const saved = await savedResult(page, startedAt, 30_000);
     expect(saved.result.outcome).toBe("incomplete");
     await expect(page.locator(".gauge-status.error")).toHaveText("Failed");
