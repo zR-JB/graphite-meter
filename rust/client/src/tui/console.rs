@@ -200,7 +200,11 @@ impl App {
     fn controls(&self, canvas: &mut Canvas, area: Rect) {
         let width = area.width.min(CONTROLS);
         let x = area.x + (area.width - width) / 2;
-        self.run_key(canvas, Rect::new(x, area.y, width, 3));
+        let key_width = width.min(36);
+        self.run_key(
+            canvas,
+            Rect::new(x + (width - key_width) / 2, area.y, key_width, 3),
+        );
         self.chips(canvas, Rect::new(x, area.y + 4, width, 2));
     }
 

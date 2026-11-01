@@ -958,6 +958,11 @@ fn the_run_key_keeps_a_neutral_surface_in_both_themes() {
         let ratatui_core::style::Color::Rgb(r, g, b) = buffer[(x, y)].bg else {
             panic!("run key must have a true-color surface");
         };
+        let key_background = buffer[(x, y)].bg;
+        let width = (0..FULL.width)
+            .filter(|column| buffer[(*column, y)].bg == key_background)
+            .count();
+        assert!(width <= 36, "run key is too wide: {width}");
         let brightness = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
         if dark {
             assert!(brightness < 64, "dark run key is too bright: {brightness}");
