@@ -18,12 +18,46 @@ import {
   savedResult,
   spawnPeer,
 } from "./fleet";
-import { type Locator, Page, expect, test } from "./webview";
+import { type Locator, Page, expect, seriousViolations, settled, test } from "./webview";
 
 async function signIn(page: Page) {
   await page.getByRole("textbox", { name: "Operator password" }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
+
+test("sign-in uses the shared surface and control radii in both themes", async (page) => {
+  await open(page, `${locked.url}/login`, {
+    servers: [{ id: "self", url: locked.url }],
+  });
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((theme) => (document.documentElement.dataset.theme = theme), theme);
+    await page.evaluate(settled);
+    const styles = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const card = getComputedStyle(document.querySelector("main.card")!);
+      const button = getComputedStyle(document.querySelector('button[type="submit"]')!);
+      const input = getComputedStyle(document.querySelector('input[type="password"]')!);
+      const sample = document.createElement("canvas").getContext("2d")!;
+      sample.fillStyle = button.backgroundColor;
+      sample.fillRect(0, 0, 1, 1);
+      const [r, g, b] = sample.getImageData(0, 0, 1, 1).data;
+      return {
+        cardRadius: card.borderTopLeftRadius,
+        controlRadius: button.borderTopLeftRadius,
+        inputRadius: input.borderTopLeftRadius,
+        surfaceRadius: root.getPropertyValue("--r-surface").trim(),
+        chromeRadius: root.getPropertyValue("--r-chrome").trim(),
+        brightness: (r! + g! + b!) / (3 * 255),
+      };
+    });
+    expect(styles.cardRadius).toBe(styles.surfaceRadius);
+    expect(styles.controlRadius).toBe(styles.chromeRadius);
+    expect(styles.inputRadius).toBe(styles.chromeRadius);
+    if (theme === "dark") expect(styles.brightness).toBeLessThan(0.35);
+    else expect(styles.brightness).toBeGreaterThan(0.65);
+    expect(await seriousViolations(page)).toEqual([]);
+  }
+});
 
 test.chrome(
   "a signed-in protected home runs automatic, HTTP/3 and WebTransport paths",
