@@ -4,14 +4,36 @@ These are local diagnostic observations, not a failure-rate estimate or a releas
 The baseline was main `48181966bb9f062972ed0c0b40114184f97753e6`, Chrome for Testing 156.0.8078.47,
 with the Rust server and client built in the `ci` profile on Linux/WSL. The diagnostic and its options are
 in `docs/DEVELOPMENT.md`. Each scenario started a fresh local fleet; repetitions used the same browser page.
-The comparisons below used WebSocket latency to isolate throughput, so they do not cover the default WebTransport
-latency path.
+Unless otherwise stated, the original throughput comparisons used WebSocket latency to isolate throughput.
 
 The shared-link model gives all servers one 30 Mbit/s down, 8 Mbit/s up access link, 100 ms RTT, and
 0.3% configured random loss each way. For the changing-link runs, during download the link is reduced to
 5/1 Mbit/s and 1.5% loss for two seconds. Loopback TSO, GSO, GRO, UDP segmentation, and GSO-list offloads
 were disabled for the HTTP/3 comparisons.
 The queue is a synthetic Linux `netem` queue, not a Wi-Fi, cellular, tunnel, or reverse-proxy simulation.
+
+## Default browser paths
+
+The following use HTTP/1.1 throughput and WebTransport latency, with automatic lane counts and corrected
+loopback offloads. The server-recorded paths confirmed the selected protocols. Repetitions share a browser
+page and link queue, so they are not independent trials.
+
+| Baseline scenario | Complete runs | Observation |
+| --- | ---: | --- |
+| Changing 30/8 Mbit/s link, 1 server | 2/2 | Both complete. |
+| Changing 30/8 Mbit/s link, 4 servers | 2/2 | Both complete. |
+| Two-second UDP outage during download, 1 server | 2/2 | The affected latency probes timed out, but the runs completed. |
+| Two-second UDP outage during download, 4 servers | 2/2 | The affected server's probes timed out, but the runs completed. |
+| Steady 30/1 Mbit/s link, 1 server, 10 s transfer stages | 2/2 | Both complete. |
+| Steady 30/1 Mbit/s link, 4 servers, 10 s transfer stages | 0/2 | The first run lost all upload paths at the 3.5 s readiness deadline. The next start failed its throughput checks while the queue still held packets from the prior run. |
+
+On the same slow-uplink setup, the candidate with the longer preparation window got past upload setup in
+its first run, but all four upload progress feeds later went silent and HTTP recovery checks timed out.
+Its next start failed its throughput and latency checks. This demonstrates an unresolved failure, not a
+validated fix; the second attempt in each case is also a recovery observation, because the queue had not
+necessarily drained. The progress-feed watchdog currently treats 1.5 seconds without an observation as a
+lost feed, then requires an HTTP response within three seconds to reopen it. A shared congested uplink can
+delay both progress and recovery traffic, but these samples do not prove which component caused the delay.
 
 | Baseline browser scenario                                               | Complete runs | Observation                                                         |
 | ----------------------------------------------------------------------- | ------------: | ------------------------------------------------------------------- |

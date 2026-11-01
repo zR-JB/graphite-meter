@@ -88,7 +88,10 @@ clients. Latency uses WebTransport by default; `GM_DIAG_LATENCY=transport:websoc
 `GM_DIAG_CLIENT=native` to run the terminal client instead; its binary defaults to
 `rust/target/ci/graphite-meter-client` and `GM_DIAG_NATIVE_BIN` overrides it. `GM_DIAG_SHARED=0` gives each server
 its own link for comparison; in that mode, `GM_DIAG_VARY=1` changes only the first server's link. The diagnostic
-records failures rather than asserting success; compare its outcomes under the same conditions.
+accepts `GM_DIAG_DOWN_MBPS`, `GM_DIAG_UP_MBPS` and `GM_DIAG_RTT_MS` for the baseline link. Set
+`GM_DIAG_UDP_OUTAGE_MS` to drop one selected server's UDP traffic during download; `GM_DIAG_UDP_OUTAGE_SERVER`
+chooses that server by its 1-based position, defaulting to the last. It records failures rather than asserting success;
+compare its outcomes under the same conditions.
 
 For manual HTTPS and HTTP/3 runs, put certificates for the names you use in an untracked `.dev-certs/`. Chromium
 also needs the leaf's SPKI pin:
