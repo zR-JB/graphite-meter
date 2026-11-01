@@ -4,6 +4,8 @@ These are local diagnostic observations, not a failure-rate estimate or a releas
 The baseline was main `48181966bb9f062972ed0c0b40114184f97753e6`, Chrome for Testing 156.0.8078.47,
 with the Rust server and client built in the `ci` profile on Linux/WSL. The diagnostic and its options are
 in `docs/DEVELOPMENT.md`. Each scenario started a fresh local fleet; repetitions used the same browser page.
+The comparisons below used WebSocket latency to isolate throughput, so they do not cover the default WebTransport
+latency path.
 
 The shared-link model gives all servers one 30 Mbit/s down, 8 Mbit/s up access link, 100 ms RTT, and
 0.3% configured random loss each way. For the changing-link runs, during download the link is reduced to

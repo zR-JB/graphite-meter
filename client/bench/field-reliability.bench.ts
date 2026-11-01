@@ -1,5 +1,5 @@
 // A diagnostic sweep: several servers share one constrained, lossy access link.
-import { appendFileSync } from "node:fs";
+import { closeSync, constants, openSync, writeFileSync } from "node:fs";
 import {
   attempt,
   measured,
@@ -13,9 +13,11 @@ import {
 } from "../e2e/network/harness";
 import { test } from "../e2e/webview";
 
-const output = process.env.GM_DIAG_OUTPUT ?? "/tmp/graphite-reliability.jsonl";
+const output = "/tmp/graphite-reliability.jsonl";
+const label = process.env.GM_DIAG_LABEL ?? "";
 const count = Number(process.env.GM_DIAG_SERVERS ?? 1);
 const target = process.env.GM_DIAG_TARGET ?? "protocol:http1";
+const latencyTarget = process.env.GM_DIAG_LATENCY ?? "transport:webtransport";
 const repeats = Number(process.env.GM_DIAG_REPEATS ?? 3);
 const loss = Number(process.env.GM_DIAG_LOSS ?? 0.3);
 const shared = process.env.GM_DIAG_SHARED !== "0";
@@ -25,6 +27,8 @@ const stageMs = Number(process.env.GM_DIAG_STAGE_MS ?? (vary ? 5000 : 3000));
 const streams = Number(process.env.GM_DIAG_STREAMS ?? 0);
 if (!Number.isInteger(count) || count < 1 || count > 4)
   throw new Error("GM_DIAG_SERVERS must be 1 to 4");
+if (!["transport:websocket", "transport:webtransport"].includes(latencyTarget))
+  throw new Error("GM_DIAG_LATENCY must select websocket or webtransport");
 if (!Number.isInteger(repeats) || repeats < 1 || repeats > 100)
   throw new Error("GM_DIAG_REPEATS must be 1 to 100");
 if (!Number.isFinite(loss) || loss < 0 || loss > 100)
@@ -38,7 +42,18 @@ const links: Link[] = Array.from({ length: count }, () => ({
   down: direction(50, 30),
   up: direction(50, 8),
 }));
-const log = (data: unknown) => appendFileSync(output, `${JSON.stringify(data)}\n`);
+const log = (data: object) => {
+  const file = openSync(
+    output,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    writeFileSync(file, `${JSON.stringify({ label, ...data })}\n`);
+  } finally {
+    closeSync(file);
+  }
+};
 
 test(
   "diagnose reliability on a constrained access link",
@@ -93,7 +108,7 @@ test(
           page,
           fleet,
           runConfig(target, {
-            transports: { throughputTarget: target, latencyTarget: "transport:websocket" },
+            transports: { throughputTarget: target, latencyTarget },
             adaptive: false,
             ...(streams > 0 ? { transferStreams: { mode: "forced", count: streams } } : {}),
             duration: {
@@ -129,7 +144,7 @@ test(
                 "--throughput-protocol",
                 protocol,
                 "--latency-transport",
-                "websocket",
+                latencyTarget === "transport:webtransport" ? "webtransport" : "websocket",
                 "--streams",
                 String(streams || (protocol === "http1" ? 4 : 1)),
                 "--warmup",
@@ -174,6 +189,7 @@ test(
             log({
               count,
               target,
+              latencyTarget,
               loss,
               vary,
               shared,
@@ -208,6 +224,7 @@ test(
           log({
             count,
             target,
+            latencyTarget,
             loss,
             vary,
             shared,
@@ -219,9 +236,10 @@ test(
             ...measured(result),
             servers: result.servers,
             paths: result.record?.result.multiServer.servers.map(
-              ({ server, throughput, stages }) => ({
+              ({ server, throughput, latencyTarget: latencyPath, stages }) => ({
                 id: server.id,
                 throughput,
+                latency: latencyPath,
                 stages,
               }),
             ),
@@ -237,6 +255,7 @@ test(
           log({
             count,
             target,
+            latencyTarget,
             loss,
             shared,
             repeat,
@@ -247,11 +266,20 @@ test(
         }
       }
       const statistics = Bun.spawnSync(["tc", "-s", "qdisc", "show", "dev", "lo"]);
-      log({ count, target, loss, shared, vary, qdisc: statistics.stdout.toString() });
+      log({
+        count,
+        target,
+        latencyTarget,
+        loss,
+        shared,
+        vary,
+        qdisc: statistics.stdout.toString(),
+      });
     } catch (error) {
       log({
         count,
         target,
+        latencyTarget,
         loss,
         shared,
         phase: "preparation",
