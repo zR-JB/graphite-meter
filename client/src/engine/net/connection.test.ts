@@ -343,6 +343,91 @@ test("a path a run failed on is proved again at the next start, not at once", as
   expect(net.sent("/probe")).toEqual([0, 91_000]);
 });
 
+test("Start retries a transient path check once and stops retrying when cancelled", async () => {
+  let failures = 0;
+  net = fakeNet((url) => {
+    if (url.pathname === "/preflight") return { body: preflight([h(".", "http1")]) };
+    if (failures > 0) {
+      failures--;
+      return "unreachable";
+    }
+    return { body: PROBE, hop: "http/1.1" };
+  });
+  const { connection } = connect(self);
+  await net.advance(1_000);
+  connection.invalidate(["throughput"], true);
+  failures = 1;
+  const starting = connection.check({ since: net.now(), start: true });
+  await net.advance(1_000);
+  await starting;
+  expect(net.sent("/probe")).toEqual([0, 1_000, 1_300]);
+  expect(connection.view.peek().readiness).toBe("verified");
+
+  connection.invalidate(["throughput"], true);
+  failures = 2;
+  const abort = new AbortController();
+  const cancelled = connection.check({ since: net.now(), start: true, signal: abort.signal });
+  await net.advance(0);
+  abort.abort();
+  await net.advance(1_000);
+  await cancelled;
+  expect(net.sent("/probe")).toEqual([0, 1_000, 1_300, 2_000]);
+
+  failures = 3;
+  const stillDown = connection.check({ since: net.now(), start: true });
+  await net.advance(1_000);
+  await stillDown;
+  expect(net.sent("/probe")).toEqual([0, 1_000, 1_300, 2_000, 3_000, 3_300]);
+  expect(connection.view.peek().readiness).toBe("failed");
+});
+
+test("Start retries after a path probe times out within the start deadline", async () => {
+  let hang = false;
+  net = fakeNet((url) => {
+    if (url.pathname === "/preflight") return { body: preflight([h(".", "http1")]) };
+    if (hang) {
+      hang = false;
+      return "hang";
+    }
+    return { body: PROBE, hop: "http/1.1" };
+  });
+  const { connection } = connect(self);
+  await net.advance(1_000);
+  connection.invalidate(["throughput"], true);
+  hang = true;
+  const starting = connection.check({
+    since: net.now(),
+    start: true,
+    signal: AbortSignal.timeout(20_000),
+  });
+  await net.advance(13_000);
+  await starting;
+  expect(net.sent("/probe")).toEqual([0, 1_000, 3_800]);
+  expect(connection.view.peek().readiness).toBe("verified");
+});
+
+test("Start retries when its queued path check exhausts the role budget", async () => {
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")]) }
+      : { body: PROBE, hop: "http/1.1" },
+  );
+  const { connection, env } = connect(self);
+  await net.advance(1_000);
+  const owner = new AbortController();
+  const first = await env.limiter.acquire(self.url, () => 0, owner.signal);
+  const second = await env.limiter.acquire(self.url, () => 0, owner.signal);
+  connection.invalidate(["throughput"], true);
+  const starting = connection.check({ since: 0, start: true, signal: AbortSignal.timeout(20_000) });
+  await net.advance(12_000);
+  first();
+  second();
+  await net.advance(1_000);
+  await starting;
+  expect(net.sent("/probe")).toEqual([0, 13_300]);
+  expect(connection.view.peek().readiness).toBe("verified");
+});
+
 test("a parked bus that went quiet while a run held the checks is proved again once checks may run", async () => {
   net = fakeNet((url) =>
     url.pathname === "/preflight"

@@ -70,6 +70,29 @@ CPU profile and the measurements. `mise run bench-session` checks that repeated 
 `GM_PERF_RUNS` sets the count (12), `GM_PERF_BACKGROUND=1` minimizes the window during every tenth, and
 `GM_PERF_METRICS` and `GM_PERF_HEAP` name files for the samples and a final heap snapshot.
 
+The opt-in shared-link reliability diagnostic runs one to four servers behind the same 30/8 Mbit/s access link,
+100 ms round trip and 0.3% loss in each direction. It records outcomes and queue statistics as JSON lines in
+`/tmp/graphite-reliability.jsonl`. Run it only in a private network namespace, since it configures loopback:
+
+```sh
+cd client
+GM_E2E_NETWORK=1 GM_DIAG_SERVERS=4 GM_DIAG_TARGET=protocol:http1 GM_DIAG_VARY=1 \
+  unshare -rn bash -ec 'ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off tx-udp-segmentation off tx-gso-list off; \
+    bun run e2e bun test ./bench/field-reliability.bench.ts --no-orphans --timeout=300000'
+```
+
+`GM_DIAG_VARY=1` briefly reduces the link to 5/1 Mbit/s and raises loss to 1.5% during download.
+`GM_DIAG_REPEATS`, `GM_DIAG_LOSS` and `GM_DIAG_STAGE_MS` change the repetitions, baseline loss and stage duration;
+`GM_DIAG_LABEL` identifies records in the fixed output file, and `GM_DIAG_STREAMS` forces the same lane count on both
+clients. Latency uses WebTransport by default; `GM_DIAG_LATENCY=transport:websocket` selects WebSocket. Set
+`GM_DIAG_CLIENT=native` to run the terminal client instead; its binary defaults to
+`rust/target/ci/graphite-meter-client` and `GM_DIAG_NATIVE_BIN` overrides it. `GM_DIAG_SHARED=0` gives each server
+its own link for comparison; in that mode, `GM_DIAG_VARY=1` changes only the first server's link. The diagnostic
+accepts `GM_DIAG_DOWN_MBPS`, `GM_DIAG_UP_MBPS` and `GM_DIAG_RTT_MS` for the baseline link. Set
+`GM_DIAG_UDP_OUTAGE_MS` to drop one selected server's UDP traffic during download; `GM_DIAG_UDP_OUTAGE_SERVER`
+chooses that server by its 1-based position, defaulting to the last. It records failures rather than asserting success;
+compare its outcomes under the same conditions.
+
 For manual HTTPS and HTTP/3 runs, put certificates for the names you use in an untracked `.dev-certs/`. Chromium
 also needs the leaf's SPKI pin:
 

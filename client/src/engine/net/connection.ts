@@ -39,6 +39,7 @@ import {
 import { createBusSlot, IDLE_INTERVAL_MS } from "../lanes/probes";
 import { createWorkerPool } from "../lanes/pool";
 import { createLease } from "./lease";
+import { delay } from "../run/clock";
 import type { Limiter } from "./limiter";
 import type { PageConfig, PageSession } from "./page";
 import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
@@ -460,6 +461,17 @@ function connect(
       }),
     );
     await Promise.all(due.map((each) => probe(each, owner, start)));
+    // A transient failure at Start gets one more attempt within the start's own deadline.
+    if (!start || disposed || owner?.aborted || !selected.peek()) return;
+    const retry = due.filter((each) => failureHere(each)?.failure.retry === "retryable");
+    if (!retry.length) return;
+    await delay(300, owner ?? new AbortController().signal);
+    if (disposed || owner?.aborted || !selected.peek() || fault.peek() || !discovery.peek()) return;
+    await Promise.all(
+      retry
+        .filter((each) => required(each) && failureHere(each)?.failure.retry === "retryable")
+        .map((each) => probe(each, owner, start)),
+    );
   }
 
   function invalidate(which: readonly Role[], deferred = false): void {

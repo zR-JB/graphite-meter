@@ -301,7 +301,7 @@ if [[ $usage_group != network* ]]; then bun run e2e "$@"; fi
 # users one, so there GM_E2E_HOST_LOOPBACK lends them the throwaway machine's own loopback through sudo.
 if [[ $usage_group == all || $usage_group == network* ]]; then
   export GM_E2E_NETWORK=1
-  loopback='ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off'
+  loopback='ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off tx-udp-segmentation off tx-gso-list off'
   network=(bun run e2e bun test "${@:-./e2e/network}" --no-orphans --timeout=600000)
   if [[ -n ${GM_E2E_HOST_LOOPBACK:-} ]]; then
     sudo -n bash -ec "$loopback"

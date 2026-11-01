@@ -6,8 +6,8 @@ use graphite_meter_client::{
         latency::ProbeOutcome,
     },
     model::{
-        Cadence, Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult,
-        StageStatus, focus,
+        Cadence, Dir, Direction, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage,
+        StageResult, StageStatus, focus,
     },
     run::engine::{Decision, Engine, Input, Member, ProberEvent, Sample, StagePlan, lateness},
 };
@@ -187,6 +187,43 @@ impl Script {
         });
         failures.collect()
     }
+}
+
+#[test]
+fn opening_an_upload_retries_missing_checkpoints_before_removing_a_server() {
+    let mut script = Script::new(plan(Stage::Upload, &["a", "b"], false));
+    script.step(ms(0), &[sample("a"), sample("b")], &[]);
+    script.step(ms(1500), &[up("a", 100, ms(1500)), sample("b")], &[]);
+    assert!(script.removed().is_empty());
+    assert!(script.window().is_none());
+    script.step(
+        ms(2000),
+        &[up("a", 200, ms(2000)), up("b", 100, ms(2000))],
+        &[],
+    );
+    assert_eq!(script.window(), Some((ms(2000), ms(12000))));
+    assert!(script.removed().is_empty());
+    assert_eq!(script.engine.aggregate().unwrap().total(Direction::Up), 0);
+
+    let mut expired = Script::new(plan(Stage::Upload, &["a", "b"], false));
+    expired.step(ms(0), &[sample("a"), sample("b")], &[]);
+    expired.step(ms(5000), &[up("a", 200, ms(5000)), sample("b")], &[]);
+    assert_eq!(
+        expired.removed(),
+        [(ms(5000), "b", FailureReason::PathFailed)]
+    );
+    assert_eq!(expired.window(), Some((ms(5000), ms(15000))));
+
+    let mut revoked = Script::new(plan(Stage::Upload, &["a", "b"], false));
+    revoked.step(ms(0), &[sample("a"), sample("b")], &[]);
+    let mut signed_out = sample("b");
+    signed_out.missed = Some(Failure::new(FailureReason::SignInRequired, "sign-in ended"));
+    revoked.step(ms(500), &[up("a", 100, ms(500)), signed_out], &[]);
+    assert_eq!(
+        revoked.removed(),
+        [(ms(500), "b", FailureReason::SignInRequired)]
+    );
+    assert_eq!(revoked.window(), Some((ms(500), ms(10500))));
 }
 
 #[test]
