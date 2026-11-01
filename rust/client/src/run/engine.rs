@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 const TICK: Duration = Duration::from_millis(250);
 pub(crate) const READY_BOUND: Duration = Duration::from_secs(10);
 const CHECKPOINT_BUDGET: Duration = Duration::from_millis(1500);
+const OPENING_BOUND: Duration = Duration::from_secs(5);
 const FINAL_CHECKPOINT_BUDGET: Duration = Duration::from_millis(500);
 const LATE_TICK: Duration = Duration::from_millis(1500);
 /// Half a tick: a shorter window holds only a few reads, so its rates stay off the live trace.
@@ -110,7 +111,7 @@ enum Phase {
     Ready,
     Warmup(Instant),
     /// The window opens with the next tick's checkpoints.
-    Opening,
+    Opening(Instant),
     /// `last`: the current tick's checkpoints were asked for as the final boundary's.
     Measuring {
         window: Window,
@@ -227,7 +228,7 @@ impl Engine {
         match self.phase {
             Phase::Warmup(until) if input.now >= until => self.warmed(&input, &mut tick),
             Phase::Warmup(until) => tick.next = tick.next.min(until),
-            Phase::Opening => self.open(&input, &mut tick),
+            Phase::Opening(_) => self.open(&input, &mut tick),
             Phase::Measuring { .. } => self.measure(&input, &mut tick),
             Phase::Ready | Phase::Draining { .. } | Phase::Done { .. } => {}
         }
@@ -359,7 +360,7 @@ impl Engine {
             Phase::Measuring { window, .. } => Some((window, now)),
             Phase::Draining { window, ended } => Some((window, ended)),
             Phase::Done { measured, .. } => measured,
-            Phase::Ready | Phase::Warmup(_) | Phase::Opening => None,
+            Phase::Ready | Phase::Warmup(_) | Phase::Opening(_) => None,
         }
     }
 
@@ -373,7 +374,7 @@ impl Engine {
             } => Some(window),
             Phase::Ready
             | Phase::Warmup(_)
-            | Phase::Opening
+            | Phase::Opening(_)
             | Phase::Done { measured: None, .. } => None,
         }
     }
@@ -391,7 +392,7 @@ impl Engine {
             } => Some(ended),
             Phase::Ready
             | Phase::Warmup(_)
-            | Phase::Opening
+            | Phase::Opening(_)
             | Phase::Measuring { .. }
             | Phase::Done { measured: None, .. } => None,
         }
@@ -415,7 +416,7 @@ impl Engine {
             } => window.aggregate.as_mut(),
             Phase::Ready
             | Phase::Warmup(_)
-            | Phase::Opening
+            | Phase::Opening(_)
             | Phase::Done { measured: None, .. } => None,
         }
     }
@@ -591,13 +592,41 @@ impl Engine {
         if !self.plan.stage.moves(Direction::Up) {
             return self.open(input, tick);
         }
-        (self.phase, tick.next) = (Phase::Opening, input.now);
+        (self.phase, tick.next) = (Phase::Opening(input.now + OPENING_BOUND), input.now);
         tick.decisions.push(Decision::Checkpoint(CHECKPOINT_BUDGET));
     }
 
     /// Opens the window from this tick's samples; an uploading member without its first checkpoint leaves.
     fn open(&mut self, input: &Input, tick: &mut Tick) {
         let (now, uploads) = (input.now, self.plan.stage.moves(Direction::Up));
+        if let Phase::Opening(until) = self.phase {
+            for index in 0..self.seats.len() {
+                let refused = sample(input, &self.seats[index].server)
+                    .and_then(|sample| sample.missed.clone())
+                    .filter(|failure| failure.reason == FailureReason::SignInRequired);
+                if self.seats[index].present
+                    && let Some(failure) = refused
+                {
+                    self.fail(
+                        index,
+                        Scope::Throughput,
+                        failure,
+                        now,
+                        true,
+                        &mut tick.decisions,
+                    );
+                }
+            }
+            let missing = self.present().any(|seat| {
+                !sample(input, &seat.server).is_some_and(|sample| sample.reading.up.is_some())
+            });
+            if missing && now < until {
+                tick.next = (now + TICK).min(until);
+                tick.decisions
+                    .push(Decision::Checkpoint(CHECKPOINT_BUDGET.min(until - now)));
+                return;
+            }
+        }
         for index in 0..self.seats.len() {
             let sample = sample(input, &self.seats[index].server);
             if !uploads

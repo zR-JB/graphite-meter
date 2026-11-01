@@ -70,6 +70,25 @@ CPU profile and the measurements. `mise run bench-session` checks that repeated 
 `GM_PERF_RUNS` sets the count (12), `GM_PERF_BACKGROUND=1` minimizes the window during every tenth, and
 `GM_PERF_METRICS` and `GM_PERF_HEAP` name files for the samples and a final heap snapshot.
 
+The opt-in shared-link reliability diagnostic runs one to four servers behind the same 30/8 Mbit/s access link,
+100 ms round trip and 0.3% loss in each direction. It records outcomes and queue statistics as JSON lines in
+`/tmp/graphite-reliability.jsonl`. Run it only in a private network namespace, since it configures loopback:
+
+```sh
+cd client
+GM_E2E_NETWORK=1 GM_DIAG_SERVERS=4 GM_DIAG_TARGET=protocol:http3 GM_DIAG_VARY=1 \
+  unshare -rn bash -ec 'ip link set lo up mtu 1500; ethtool -K lo tso off gso off gro off tx-udp-segmentation off tx-gso-list off; \
+    bun run e2e bun test ./bench/field-reliability.bench.ts --no-orphans --timeout=300000'
+```
+
+`GM_DIAG_VARY=1` briefly reduces the link to 5/1 Mbit/s and raises loss to 1.5% during download.
+`GM_DIAG_REPEATS`, `GM_DIAG_LOSS`, `GM_DIAG_STAGE_MS` and `GM_DIAG_OUTPUT` change the repetitions, baseline loss,
+stage duration and output file; `GM_DIAG_STREAMS` forces the same lane count on both clients. Set
+`GM_DIAG_CLIENT=native` to run the terminal client instead; its binary defaults to
+`rust/target/ci/graphite-meter-client` and `GM_DIAG_NATIVE_BIN` overrides it. `GM_DIAG_SHARED=0` gives each server
+its own link for comparison; in that mode, `GM_DIAG_VARY=1` changes only the first server's link. The diagnostic
+records failures rather than asserting success; compare its outcomes under the same conditions.
+
 For manual HTTPS and HTTP/3 runs, put certificates for the names you use in an untracked `.dev-certs/`. Chromium
 also needs the leaf's SPKI pin:
 

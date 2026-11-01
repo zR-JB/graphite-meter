@@ -227,7 +227,7 @@ export interface StageSetup {
 
 /** One server's resources for one stage, shared by its warmup and measured window. */
 export interface StageResources {
-  /** Opens the carriers, receiver and probe channel, resolving once they work, within 3.5 s; loaded latency never holds throughput back. */
+  /** Opens the carriers and receiver within 10 s; loaded latency never holds throughput back. */
   prepare(signal: AbortSignal): Promise<void>;
   /** Opens the measured window at page time `at`. */
   measure(at: number): void;

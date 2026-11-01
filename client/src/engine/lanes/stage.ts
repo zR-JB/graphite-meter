@@ -25,8 +25,8 @@ import { handshakes, THROTTLED } from "../net/webtransport";
 import { Receiver, type ReceiverHost } from "./receiver";
 import { abortable, delay } from "../run/clock";
 
-/** Readiness gets a dial's budget and a margin for the workers to report within it. */
-const READY_MS = ESTABLISH_MS + 500;
+/** Stage setup shares a congested access link with every other server's setup. */
+const READY_MS = 10_000;
 /** Large enough that only the server's clock or a stop ends a download. */
 const DOWNLOAD_BYTES = 64 * 1024 ** 3;
 /** Download bodies end this long after the stage's planned end, so its last window still sees bytes flow. */
@@ -98,18 +98,11 @@ class Stage implements StageResources {
             this.#prepareUpload(budget).then((receiver) => receiver.accepted(budget)),
         ]),
       ]);
-      const probing =
-        this.#probes && this.#until(() => this.#probesReady || this.#latencyEnded, budget);
       // Loaded latency never holds throughput back. Its channel reports its own stall.
-      if (probing)
+      if (stage === "latency" && this.#probes)
         await Promise.race([
           failed,
-          stage === "latency"
-            ? probing
-            : probing.catch(() => {
-                signal.throwIfAborted();
-                this.#released.signal.throwIfAborted();
-              }),
+          this.#until(() => this.#probesReady || this.#latencyEnded, budget),
         ]);
     } catch (error) {
       throw this.#unready(error, signal);

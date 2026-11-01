@@ -147,6 +147,15 @@ test("readiness waits for every lane; a lane's failure keeps its reason; one bud
   expect(prepared).toEqual({ at: 155 });
   expect(second!.terminated).toBe(false);
 
+  // A busy shared link can delay one server's lanes beyond a single dial's budget.
+  const delayed = stage(DOWNLOAD);
+  const delayedPreparation = outcome(delayed.resources.prepare(new AbortController().signal));
+  await elapse(5_000);
+  for (const lane of delayed.lanes()) bytes(lane, 0);
+  await elapse(5);
+  expect(delayedPreparation.error).toBeUndefined();
+  expect(delayedPreparation.at).toBe(5_000);
+
   // An unexpected answer fails the preparation with its own reason, which the run reports.
   const refused = stage(DOWNLOAD);
   const failed = outcome(refused.resources.prepare(new AbortController().signal));
@@ -161,7 +170,7 @@ test("readiness waits for every lane; a lane's failure keeps its reason; one bud
   });
   expect(refused.lanes().every(stopped)).toBe(true);
 
-  // The mint gives up at 3 s. Its sign-in check answers 2.9 s later, long after the stage's 3.5 s.
+  // A hung sign-in check cannot keep preparation alive past its overall deadline.
   const hung = stage(
     { stage: "upload", transfer: ["up"], loadedLatency: false },
     {
@@ -169,16 +178,27 @@ test("readiness waits for every lane; a lane's failure keeps its reason; one bud
         new Promise((_, reject) =>
           init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
         ),
-      ended: () => new Promise((resolve) => setTimeout(() => resolve(false), 2_900)),
+      ended: () => new Promise((resolve) => setTimeout(() => resolve(false), 20_000)),
     },
   );
   const lapsed = outcome(hung.resources.prepare(new AbortController().signal));
-  await elapse(7_000);
-  expect(lapsed.at).toBe(3_500);
+  await elapse(11_000);
+  expect(lapsed.at).toBe(10_000);
   expect(lapsed.error).toMatchObject({
     reason: "path-failed",
-    message: "Connections did not become ready within 3.5 s",
+    message: "Connections did not become ready within 10 s",
   });
+});
+
+test("a slow loaded-latency channel does not hold ready throughput lanes", async () => {
+  const loaded = stage({ ...DOWNLOAD, loadedLatency: true });
+  const prepared = outcome(loaded.resources.prepare(new AbortController().signal));
+  expect(loaded.probes()).toHaveLength(1);
+  for (const lane of loaded.lanes()) bytes(lane, 0);
+  await elapse(5);
+  expect(prepared.at).toBe(0);
+  expect(prepared.error).toBeUndefined();
+  loaded.resources.discard();
 });
 
 test("a lane refused at its client limit is asked again once, after 300 ms, and its second refusal fails the stage so", async () => {
