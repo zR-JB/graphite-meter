@@ -57,8 +57,11 @@ if (![downMbps, upMbps].every((rate) => Number.isFinite(rate) && rate > 0 && rat
   throw new Error("GM_DIAG_DOWN_MBPS and GM_DIAG_UP_MBPS must be positive rates up to 10000");
 if (!Number.isFinite(rttMs) || rttMs < 0 || rttMs > 10_000)
   throw new Error("GM_DIAG_RTT_MS must be from 0 to 10000");
-if (!Number.isInteger(queueSampleMs) || (queueSampleMs !== 0 && queueSampleMs < 250))
-  throw new Error("GM_DIAG_QUEUE_MS must be 0 or at least 250");
+if (
+  !Number.isInteger(queueSampleMs) ||
+  (queueSampleMs !== 0 && (queueSampleMs < 250 || queueSampleMs > 60_000))
+)
+  throw new Error("GM_DIAG_QUEUE_MS must be 0 or between 250 and 60000");
 if (
   !Number.isInteger(queueLimit) ||
   queueLimit < 1 ||

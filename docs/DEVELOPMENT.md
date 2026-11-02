@@ -93,7 +93,7 @@ accepts `GM_DIAG_DOWN_MBPS`, `GM_DIAG_UP_MBPS` and `GM_DIAG_RTT_MS` for the base
 chooses that server by its 1-based position, defaulting to the last; set it to 0 to drop all UDP. It records failures rather than asserting success;
 compare its outcomes under the same conditions.
 Set `GM_DIAG_UDP_OUTAGE_PHASE=startup` to interrupt the selected server while the browser checks its paths.
-Set `GM_DIAG_QUEUE_MS` to 250 or more to record periodic queue snapshots during each run.
+Set `GM_DIAG_QUEUE_MS` to 250–60000 to record periodic queue snapshots during each run.
 For steady shared-link comparisons, `GM_DIAG_UP_QUEUE_PACKETS` changes the uplink's packet limit from 1000.
 
 For manual HTTPS and HTTP/3 runs, put certificates for the names you use in an untracked `.dev-certs/`. Chromium
