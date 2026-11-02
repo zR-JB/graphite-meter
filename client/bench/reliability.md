@@ -52,6 +52,10 @@ Reducing each upload lane's 128 KiB minimum POST was tested and discarded: with 
 fresh four-server runs completed and the others lost one and three servers; one 4 KiB run lost three
 servers. Those changes are not shown to provide reliable recovery or preserve fast-link measurement.
 
+One matched terminal-client run with four HTTP/1.1 lanes per server also lost all upload paths before
+measurement: receiver checkpoints did not arrive in time and the uplink queue peaked near 957 KB. This
+shows the shared-link failure can affect both clients; a single run does not compare their general reliability.
+
 One ten-second startup UDP outage affecting the fourth server recovered after the outage: all four
 servers completed with WebTransport latency, with one failed handshake recorded. When all four servers'
 UDP traffic was interrupted for ten seconds, the original page exhausted its four-failure budget and

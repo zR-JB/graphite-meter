@@ -31,7 +31,7 @@ const outagePhase = process.env.GM_DIAG_UDP_OUTAGE_PHASE ?? "download";
 const downMbps = Number(process.env.GM_DIAG_DOWN_MBPS ?? 30);
 const upMbps = Number(process.env.GM_DIAG_UP_MBPS ?? 8);
 const rttMs = Number(process.env.GM_DIAG_RTT_MS ?? 100);
-const queueSampleMs = Number(process.env.GM_DIAG_QUEUE_MS ?? 0);
+const sampleQueues = process.env.GM_DIAG_QUEUE === "1";
 const queueLimit = Number(process.env.GM_DIAG_UP_QUEUE_PACKETS ?? 1000);
 if (!Number.isInteger(count) || count < 1 || count > 4)
   throw new Error("GM_DIAG_SERVERS must be 1 to 4");
@@ -58,11 +58,6 @@ if (![downMbps, upMbps].every((rate) => Number.isFinite(rate) && rate > 0 && rat
 if (!Number.isFinite(rttMs) || rttMs < 0 || rttMs > 10_000)
   throw new Error("GM_DIAG_RTT_MS must be from 0 to 10000");
 if (
-  !Number.isInteger(queueSampleMs) ||
-  (queueSampleMs !== 0 && (queueSampleMs < 250 || queueSampleMs > 60_000))
-)
-  throw new Error("GM_DIAG_QUEUE_MS must be 0 or between 250 and 60000");
-if (
   !Number.isInteger(queueLimit) ||
   queueLimit < 1 ||
   queueLimit > 1000 ||
@@ -85,7 +80,7 @@ const log = (data: object) => {
     fchmodSync(file, 0o600);
     writeFileSync(
       file,
-      `${JSON.stringify({ label, outagePhase, queueLimit, queueSampleMs, ...data })}\n`,
+      `${JSON.stringify({ label, outagePhase, queueLimit, sampleQueues, ...data })}\n`,
     );
   } finally {
     closeSync(file);
@@ -208,9 +203,7 @@ test(
             ingress: ingress.stdout.toString(),
           });
         };
-        const sampler = queueSampleMs
-          ? setInterval(() => sampleQueue("periodic"), queueSampleMs)
-          : null;
+        const sampler = sampleQueues ? setInterval(() => sampleQueue("periodic"), 1000) : null;
         const impair = async () => {
           await Bun.sleep(1000);
           sampleQueue("before impairment");
