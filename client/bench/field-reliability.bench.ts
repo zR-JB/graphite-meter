@@ -2,6 +2,7 @@
 import { closeSync, constants, fchmodSync, openSync, writeFileSync } from "node:fs";
 import {
   attempt,
+  budget,
   measured,
   openApp,
   reached,
@@ -297,6 +298,10 @@ test(
               exitCode,
               stdout: await stdout,
               stderr: await stderr,
+              servers: fleet.logs.map((entry, i) => ({
+                id: fleet.servers[i]!.id,
+                ...budget(entry, marks[i]!, entry.mark()),
+              })),
               queues,
             });
             continue;

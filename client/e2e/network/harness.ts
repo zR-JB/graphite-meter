@@ -303,6 +303,9 @@ export interface ServerBudget {
   downloads: number;
   uploads: number;
   uploadPreflights: number;
+  /** Checkpoint replies and failed or aborted requests observed by the server. */
+  checkpointReplies: number;
+  checkpointFailures: number;
   /** Lane requests that reached the TCP side of the HTTP/3 port, which serves no transfer. */
   companionLanes: number;
   /** Answers 429 or 503. */
@@ -322,7 +325,7 @@ export interface Attempt {
 const QUIC = /quic:\s+connection from (\S+) (accepted|ended): \d+ held/;
 const REQUEST = /request:\s+(\S+) (\S+) from \S+ on (\S+): (\d+)/;
 
-function budget(log: ConnectionLog, from: number, to: number) {
+export function budget(log: ConnectionLog, from: number, to: number) {
   // The run's own connections: those accepted inside its window, by address and port.
   const own = new Set<string>();
   const counts = {
@@ -331,6 +334,8 @@ function budget(log: ConnectionLog, from: number, to: number) {
     downloads: 0,
     uploads: 0,
     uploadPreflights: 0,
+    checkpointReplies: 0,
+    checkpointFailures: 0,
     companionLanes: 0,
     refused: 0,
     requests: 0,
@@ -345,6 +350,8 @@ function budget(log: ConnectionLog, from: number, to: number) {
     if (/^\/(ws|wt)\/ping$/.test(path ?? "") && /^(101|200)$/.test(status!)) counts.buses++;
     if (path === "/download" && method === "GET") counts.downloads++;
     if (path === "/upload") counts[method === "OPTIONS" ? "uploadPreflights" : "uploads"]++;
+    if (path === "/upload/checkpoint" && method === "POST")
+      counts[status === "200" ? "checkpointReplies" : "checkpointFailures"]++;
     if (/^\/(download|upload)$/.test(path ?? "") && endpoint === "H3Companion")
       counts.companionLanes++;
     if (status === "429" || status === "503") counts.refused++;

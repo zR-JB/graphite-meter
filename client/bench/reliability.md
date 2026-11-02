@@ -66,6 +66,11 @@ In a separate control, four individually shaped 30/1 Mbit/s links completed all 
 control has 4 Mbit/s of aggregate uplink capacity, so it isolates shared-link pressure rather than keeping
 total capacity equal.
 
+Two fresh four-server browser runs with configured random loss set to zero still lost all upload paths:
+the shared uplink queue had no recorded drops in the first run and peaked around 768 KB. In the second,
+each server returned two or three successful checkpoint responses during the run. This isolates a failure
+under queue delay without injected random loss; it does not prove physical links have the same queue behavior.
+
 One ten-second startup UDP outage affecting the fourth server recovered after the outage: all four
 servers completed with WebTransport latency, with one failed handshake recorded. When all four servers'
 UDP traffic was interrupted for ten seconds, the original page exhausted its four-failure budget and
