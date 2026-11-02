@@ -323,12 +323,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - parallel:
-          - name: Set up Python
-            uses: ./.github/actions/setup-project
-          - id: buildx
-            name: Set up Buildx
-            uses: ./.github/actions/setup-buildx
+      - name: Set up Python
+        uses: ./.github/actions/setup-project
+      - id: buildx
+        name: Set up Buildx
+        uses: ./.github/actions/setup-buildx
       # The release request's build with the ci profile, as the image's: no LTO or PGO, no CI cache.
       - name: Build client archive and source offer
         env:

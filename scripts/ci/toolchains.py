@@ -144,11 +144,15 @@ def download(url: str, limit: int = 16 * 1024 * 1024, timeout: float = 30, retri
                 raise http.client.IncompleteRead(data, reply.length)
             return data
     except (OSError, http.client.HTTPException) as error:
-        if isinstance(error, urllib.error.HTTPError) and error.code < 500:
+        if isinstance(error, urllib.error.HTTPError) and error.code < 500 and error.code != 429:
             raise
         if not retries:
             raise ConnectionError(f"could not download {url}: {error!r}") from error
-        time.sleep(2)
+        retry_after = error.headers.get("Retry-After", "") if isinstance(error, urllib.error.HTTPError) else ""
+        if isinstance(error, urllib.error.HTTPError):
+            error.close()
+        delay = min(int(retry_after), 30) if retry_after.isascii() and retry_after.isdecimal() else 2
+        time.sleep(delay)
         return download(url, limit, timeout, retries - 1)
 
 

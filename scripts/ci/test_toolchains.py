@@ -1,3 +1,4 @@
+import email.message
 import hashlib
 import http.server
 import json
@@ -7,6 +8,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from toolchains import (ROOT, check, check_rust_manifest, download, latest_browsers, literal_updates, load_pins,
@@ -215,6 +217,28 @@ class ToolchainBoundaryTests(unittest.TestCase):
         bodies.append(b"whole body")
         with self.assertRaisesRegex(ValueError, "larger than 9 bytes"):
             download(url, limit=9)
+
+    def test_rate_limits_are_retried_but_other_client_errors_are_not(self) -> None:
+        url = "https://example.test/notice"
+        headers = email.message.Message()
+        headers["Retry-After"] = "45"
+        limited = urllib.error.HTTPError(url, 429, "rate limited", headers, None)
+        forbidden = urllib.error.HTTPError(url, 403, "forbidden", email.message.Message(), None)
+        self.addCleanup(limited.close)
+        self.addCleanup(forbidden.close)
+        with patch("toolchains.urllib.request.urlopen", side_effect=[limited, forbidden]) as fetch, \
+             patch("toolchains.time.sleep") as sleep:
+            with self.assertRaises(urllib.error.HTTPError) as result:
+                download(url)
+        self.assertEqual(result.exception.code, 403)
+        self.assertEqual(fetch.call_count, 2)
+        sleep.assert_called_once_with(30)
+
+        with patch("toolchains.urllib.request.urlopen", side_effect=limited) as fetch, \
+             patch("toolchains.time.sleep"):
+            with self.assertRaisesRegex(ConnectionError, "429"):
+                download(url)
+        self.assertEqual(fetch.call_count, 3)
 
 
 if __name__ == "__main__":
