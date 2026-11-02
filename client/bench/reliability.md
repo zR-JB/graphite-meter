@@ -59,6 +59,9 @@ Increasing the terminal client's opening window to 15 seconds and each opening c
 10 seconds was tested and discarded: all four uploads still failed, and the queue grew to about 1.8 MB.
 With the 64-packet queue control, one terminal run still lost all four opening checkpoints; in the one
 browser control above, three paths completed. These individual runs do not establish relative failure rates.
+A temporary terminal build reserved a control connection before starting upload lanes: on the 64-packet
+queue it reached checkpoints and entered upload, but three servers later stopped delivering data; on the
+1000-packet queue all four still failed before measurement. The experiment was discarded.
 In a separate control, four individually shaped 30/1 Mbit/s links completed all four browser paths; that
 control has 4 Mbit/s of aggregate uplink capacity, so it isolates shared-link pressure rather than keeping
 total capacity equal.
