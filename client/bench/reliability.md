@@ -70,6 +70,8 @@ Two fresh four-server browser runs with configured random loss set to zero still
 the shared uplink queue had no recorded drops in the first run and peaked around 768 KB. In the second,
 each server returned two or three successful checkpoint responses during the run. This isolates a failure
 under queue delay without injected random loss; it does not prove physical links have the same queue behavior.
+One otherwise matching 2 Mbit/s uplink run lost three upload paths despite successful checkpoints from
+all four servers and no recorded uplink queue drops; its sampled queue peaked around 897 KB.
 In one temporary combined experiment, longer progress-watchdog, checkpoint, silence, latency-recovery and
 HTTP-proof budgets changed the result from connection failures to partial uploads on all four servers:
 each covered too little of the planned measurement window. The aggregate was reported, but the broad
