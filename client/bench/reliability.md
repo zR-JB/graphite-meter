@@ -55,6 +55,11 @@ servers. Those changes are not shown to provide reliable recovery or preserve fa
 One matched terminal-client run with four HTTP/1.1 lanes per server also lost all upload paths before
 measurement: receiver checkpoints did not arrive in time and the uplink queue peaked near 957 KB. This
 shows the shared-link failure can affect both clients; a single run does not compare their general reliability.
+Increasing the terminal client's opening window to 15 seconds and each opening checkpoint's budget to
+10 seconds was tested and discarded: all four uploads still failed, and the queue grew to about 1.8 MB.
+In a separate control, four individually shaped 30/1 Mbit/s links completed all four browser paths; that
+control has 4 Mbit/s of aggregate uplink capacity, so it isolates shared-link pressure rather than keeping
+total capacity equal.
 
 One ten-second startup UDP outage affecting the fourth server recovered after the outage: all four
 servers completed with WebTransport latency, with one failed handshake recorded. When all four servers'
@@ -64,6 +69,9 @@ Tracing showed that each initial failed latency dial triggered another dial that
 cancelled. The revised check ends on the failed dial; with the page's bounded allowance raised to eight,
 two fresh shared-outage runs completed all four paths, with four failed handshakes in each. These are small
 local trials; they do not cover tunnel reconnection or reverse-proxy behavior.
+
+With a single server's UDP interrupted for eight seconds during download, both fresh four-server browser
+runs completed and the interrupted server recorded 26 and 27 timed-out download-stage latency probes.
 
 | Baseline browser scenario                                               | Complete runs | Observation                                                         |
 | ----------------------------------------------------------------------- | ------------: | ------------------------------------------------------------------- |
