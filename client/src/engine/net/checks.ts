@@ -612,7 +612,9 @@ function collectRtt(
       if (rtts.length >= PREPARATION_RTTS) finish();
     },
     interrupted() {},
-    stalled() {},
+    stalled(detail) {
+      finish(new CheckError(`Latency channel failed: ${detail}`, "retryable"));
+    },
     resumed() {},
     signInRequired: () => finish(new SignInRequired(identityOf(entry))),
   };

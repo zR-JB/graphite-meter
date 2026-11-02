@@ -554,14 +554,14 @@ test("a session whose dial and redial do not open fails the stage's preparation 
   });
 });
 
-test("a session's fourth failed handshake in the page throttles WebTransport: its redial and a new bus fail with why, loaded latency alone", async () => {
+test("a session's eighth failed handshake in the page throttles WebTransport: its redial and a new bus fail with why, loaded latency alone", async () => {
   try {
     const session = stage(DOWNLOAD, { fetch: async () => new Response(null) }, SESSION);
     void session.resources.prepare(new AbortController().signal);
     const worker = session.session();
     bytes(worker, 0);
     await elapse(0);
-    for (let failed = 0; failed < 4; failed++) worker.report({ type: "handshake", opened: false });
+    for (let failed = 0; failed < 8; failed++) worker.report({ type: "handshake", opened: false });
     worker.report({ type: "broken", detail: "webtransport session closed" });
     await elapse(300);
     expect(worker.commands.filter(({ type }) => type === "download")).toHaveLength(1);
@@ -605,16 +605,16 @@ test("a session discarded while it dials, its worker never acknowledging, counts
     outcome(delivered.resources.prepare(new AbortController().signal));
     bytes(delivered.session(), 0);
     delivered.resources.discard();
-    for (let abandoned = 0; abandoned < 3; abandoned++) {
+    for (let abandoned = 0; abandoned < 7; abandoned++) {
       const dialing = stage(DOWNLOAD, {}, SESSION);
       outcome(dialing.resources.prepare(new AbortController().signal));
       dialing.resources.discard();
     }
     await elapse(3_250);
     expect(handshakes.throttled()).toBe(false);
-    const fourth = stage(DOWNLOAD, {}, SESSION);
-    outcome(fourth.resources.prepare(new AbortController().signal));
-    fourth.resources.discard();
+    const eighth = stage(DOWNLOAD, {}, SESSION);
+    outcome(eighth.resources.prepare(new AbortController().signal));
+    eighth.resources.discard();
     await elapse(3_250);
     expect(handshakes.throttled()).toBe(true);
   } finally {

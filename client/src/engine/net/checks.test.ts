@@ -147,6 +147,23 @@ test("a latency path needs its probe and a bus answering within 3.5 s; five repl
   expect(silent.opened.every(({ disposed }) => disposed)).toBe(true);
 });
 
+test("a failed latency dial ends its check and disposes the bus before it can redial", async () => {
+  const buses = new FakeBuses();
+  buses.rttMs = null;
+  buses.stallMs = 100;
+  const result = await check(
+    checkLatency,
+    "auto",
+    { throughput: [], latency: [ws(".")] },
+    () => ({ body: PROBE }),
+    buses,
+  );
+  expect("failure" in result && result.failure.message).toBe("Latency channel failed: dial failed");
+  expect("at" in result && result.at).toBeLessThan(3_500);
+  expect(buses.opened).toHaveLength(1);
+  expect(buses.opened[0]!.disposed).toBe(true);
+});
+
 test("a throttled page's Automatic latency uses WebSocket and says why; a chosen WebTransport waits for the user", async () => {
   const offer = {
     throughput: [h(".", "http1")],

@@ -157,6 +157,7 @@ interface Bus {
 /** Latency buses answering `rttMs` after measuring starts and once per interval after each reply, or never while it is null. */
 export class FakeBuses {
   rttMs: number | null = 10;
+  stallMs: number | null = null;
   readonly opened: Bus[] = [];
   readonly open: OpenProbeChannel = (options, events) => {
     const bus: Bus = { options, events, intervalMs: options.intervalMs, disposed: false };
@@ -181,6 +182,8 @@ export class FakeBuses {
     };
     return {
       measure: () => {
+        if (this.stallMs !== null)
+          timer = setTimeout(() => bus.events.stalled("dial failed"), this.stallMs);
         if (this.rttMs !== null) reply(this.rttMs, true);
       },
       warm() {},
