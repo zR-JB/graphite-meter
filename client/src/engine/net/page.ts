@@ -16,7 +16,7 @@ export interface PageConfig {
   auth: boolean;
   /** The operator's default for saving results. The user's own choice wins. */
   historyDefault: boolean;
-  /** Changes to `throttled` after the page's fourth failed handshake in 5 minutes, which a signal tracks. */
+  /** Changes to `throttled` after the page's eighth failed handshake in 5 minutes, which a signal tracks. */
   webTransport: "available" | "insecure-page" | "no-api" | "throttled";
 }
 

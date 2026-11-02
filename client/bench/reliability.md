@@ -35,6 +35,36 @@ necessarily drained. The progress-feed watchdog currently treats 1.5 seconds wit
 lost feed, then requires an HTTP response within three seconds to reopen it. A shared congested uplink can
 delay both progress and recovery traffic, but these samples do not prove which component caused the delay.
 
+### Follow-up: upload congestion and startup outage
+
+Fresh fleets on Chrome 156.0.8078.79 and merged main `d0b3ae11` used the same 30/1 Mbit/s,
+100 ms RTT, 0.3% loss model. With four automatic HTTP/1.1 lanes per server, a sampled run lost
+all four upload paths while the uplink queue grew to about 770 KB. A matched WebSocket-latency
+run also lost all four upload paths, with a peak queue around 687 KB. With one lane per server,
+two independent runs still lost two and three servers respectively; in the sampled run the queue
+peaked around 363 KB. These few observations are not a failure-rate estimate.
+
+As a diagnostic control, limiting the synthetic uplink queue to 64 packets kept it around 60–115 KB;
+three servers completed and one missed upload preparation. This is evidence that queue delay contributes
+to the failure in this model, not a recommendation that users change their router.
+
+Reducing each upload lane's 128 KiB minimum POST was tested and discarded: with 16 KiB, one of three
+fresh four-server runs completed and the others lost one and three servers; one 4 KiB run lost three
+servers. Those changes are not shown to provide reliable recovery or preserve fast-link measurement.
+
+One matched terminal-client run with four HTTP/1.1 lanes per server also lost all upload paths before
+measurement: receiver checkpoints did not arrive in time and the uplink queue peaked near 957 KB. This
+shows the shared-link failure can affect both clients; a single run does not compare their general reliability.
+
+One ten-second startup UDP outage affecting the fourth server recovered after the outage: all four
+servers completed with WebTransport latency, with one failed handshake recorded. When all four servers'
+UDP traffic was interrupted for ten seconds, the original page exhausted its four-failure budget and
+all four latency paths stayed unavailable after the link recovered, although HTTP/1.1 transfers completed.
+Tracing showed that each initial failed latency dial triggered another dial that the readiness check then
+cancelled. The revised check ends on the failed dial; with the page's bounded allowance raised to eight,
+two fresh shared-outage runs completed all four paths, with four failed handshakes in each. These are small
+local trials; they do not cover tunnel reconnection or reverse-proxy behavior.
+
 | Baseline browser scenario                                               | Complete runs | Observation                                                         |
 | ----------------------------------------------------------------------- | ------------: | ------------------------------------------------------------------- |
 | HTTP/1.1, shared link, no change, 1 to 4 servers                        |           8/8 | Two runs at each server count; no reported failures.                |

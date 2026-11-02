@@ -90,8 +90,11 @@ clients. Latency uses WebTransport by default; `GM_DIAG_LATENCY=transport:websoc
 its own link for comparison; in that mode, `GM_DIAG_VARY=1` changes only the first server's link. The diagnostic
 accepts `GM_DIAG_DOWN_MBPS`, `GM_DIAG_UP_MBPS` and `GM_DIAG_RTT_MS` for the baseline link. Set
 `GM_DIAG_UDP_OUTAGE_MS` to drop one selected server's UDP traffic during download; `GM_DIAG_UDP_OUTAGE_SERVER`
-chooses that server by its 1-based position, defaulting to the last. It records failures rather than asserting success;
+chooses that server by its 1-based position, defaulting to the last; set it to 0 to drop all UDP. It records failures rather than asserting success;
 compare its outcomes under the same conditions.
+Set `GM_DIAG_UDP_OUTAGE_PHASE=startup` to interrupt the selected server while the browser checks its paths.
+Set `GM_DIAG_QUEUE=1` to record queue snapshots once per second during each run.
+For steady shared-link comparisons, `GM_DIAG_UP_QUEUE_PACKETS` changes the uplink's packet limit from 1000.
 
 For manual HTTPS and HTTP/3 runs, put certificates for the names you use in an untracked `.dev-certs/`. Chromium
 also needs the leaf's SPKI pin:

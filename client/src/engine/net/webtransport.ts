@@ -2,11 +2,11 @@
 import { signal, type Read } from "../../lib/signal";
 
 const WINDOW_MS = 5 * 60_000;
-/** Four failures cost at most about 120 ms of Chrome's delay; the next ones grow it exponentially. */
-const ALLOWED = 4;
+/** Leave one retry for each of four servers while bounding Chrome's exponential delay. */
+const ALLOWED = 8;
 
 export const THROTTLED =
-  "WebTransport failed 4 times on this page and is paused. Wait up to 5 minutes or reload the page, then try again.";
+  "WebTransport failed 8 times on this page and is paused. Wait up to 5 minutes or reload the page, then try again.";
 
 export class HandshakeLedger {
   #failures: number[] = [];
@@ -22,7 +22,7 @@ export class HandshakeLedger {
     this.#settle();
   }
 
-  /** Throttled while 4 failures lie within the window; lifts when the oldest of them leaves it. */
+  /** Throttled while 8 failures lie within the window; lifts when the oldest of them leaves it. */
   #settle(): void {
     const now = this.now();
     // A stamp ahead of now comes from another clock, as each test's fake one, never from this page.

@@ -2,7 +2,7 @@ import { createLease } from "./lease";
 import { afterEach, expect, test } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import { createBusSlot } from "../lanes/probes";
-import type { Discovery, ProbeChannelEvents } from "../types";
+import type { Discovery, ProbeChannelEvents, ServerAuth } from "../types";
 import { checkLatency, checkThroughput, discover, failureOf, type CheckContext } from "./checks";
 import {
   FakeBuses,
@@ -37,6 +37,7 @@ async function check<P>(
   probe: (url: URL, attempt: number) => Answer,
   buses = new FakeBuses(),
   browser = page,
+  serverAuth?: ServerAuth,
 ) {
   net?.restore();
   let attempt = 0;
@@ -46,7 +47,7 @@ async function check<P>(
       : probe(url, attempt++),
   );
   net = fake;
-  const auth = publicAuth(entry);
+  const auth = serverAuth ?? publicAuth(entry);
   const context: CheckContext = {
     entry,
     auth,
@@ -145,6 +146,41 @@ test("a latency path needs its probe and a bus answering within 3.5 s; five repl
     },
   });
   expect(silent.opened.every(({ disposed }) => disposed)).toBe(true);
+});
+
+test("a failed latency dial ends its check and disposes the bus before it can redial", async () => {
+  const buses = new FakeBuses();
+  buses.rttMs = null;
+  buses.stallMs = 100;
+  const result = await check(
+    checkLatency,
+    "auto",
+    { throughput: [], latency: [ws(".")] },
+    () => ({ body: PROBE }),
+    buses,
+  );
+  expect("failure" in result && result.failure.message).toBe("Latency channel failed: dial failed");
+  expect("at" in result && result.at).toBeLessThan(3_500);
+  expect(buses.opened).toHaveLength(1);
+  expect(buses.opened[0]!.disposed).toBe(true);
+});
+
+test("a failed latency dial reports an ended sign-in", async () => {
+  const buses = new FakeBuses();
+  buses.rttMs = null;
+  buses.stallMs = 100;
+  const auth = { ...publicAuth(entry), ended: async () => true };
+  const result = await check(
+    checkLatency,
+    "auto",
+    { throughput: [], latency: [ws(".")] },
+    () => ({ body: PROBE }),
+    buses,
+    page,
+    auth,
+  );
+  expect("failure" in result && result.failure.signIn).toBe(true);
+  expect(buses.opened[0]!.disposed).toBe(true);
 });
 
 test("a throttled page's Automatic latency uses WebSocket and says why; a chosen WebTransport waits for the user", async () => {

@@ -167,13 +167,21 @@ export async function shapedFleet(
       tc(`qdisc change ${netem(4 + 2 * index, to.down)}`);
       tc(`qdisc change ${netem(5 + 2 * index, to.up)}`);
     },
-    /** Drops every UDP packet to and from `server` for `ms`. */
-    async udpOutage(server: Server, ms: number) {
+    /** Drops UDP to and from `server`, or all UDP when null, for `ms`. */
+    async udpOutage(server: Server | null, ms: number) {
       const match = `protocol ip prio 2 u32 match ip protocol 17 0xff match ip`;
-      tc(`filter add dev lo parent ffff: ${match} dst ${address(server)}/32 action drop`);
-      tc(`filter add dev lo parent ffff: ${match} src ${address(server)}/32 action drop`);
-      await Bun.sleep(ms);
-      tc("filter del dev lo parent ffff: prio 2");
+      if (server) {
+        tc(`filter add dev lo parent ffff: ${match} dst ${address(server)}/32 action drop`);
+        tc(`filter add dev lo parent ffff: ${match} src ${address(server)}/32 action drop`);
+      } else
+        tc(
+          "filter add dev lo parent ffff: protocol ip prio 2 u32 match ip protocol 17 0xff action drop",
+        );
+      try {
+        await Bun.sleep(ms);
+      } finally {
+        tc("filter del dev lo parent ffff: prio 2");
+      }
     },
     /**
      * Another client holding `requests` requests to `url` at once, each asked again `everyMs` after its answer, read
@@ -267,6 +275,7 @@ export async function openApp(
   fleet: Fleet,
   config: Partial<TestConfig> = {},
   origin = fleet.servers[0]!.url,
+  waitForReady = true,
 ) {
   await page.clearStorage(fleet.servers.flatMap((server) => [server.http, server.url]));
   await page.addInitScript(countWorkers);
@@ -279,7 +288,7 @@ export async function openApp(
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
   }
   // Firefox's WebTransport checks behind a shaped link can take longer than the suite's usual 15 s.
-  await ready(page, 30_000);
+  if (waitForReady) await ready(page, 30_000);
 }
 
 /** A run's cost on one server, from its connection log. */

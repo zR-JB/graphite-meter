@@ -612,7 +612,18 @@ function collectRtt(
       if (rtts.length >= PREPARATION_RTTS) finish();
     },
     interrupted() {},
-    stalled() {},
+    stalled(detail) {
+      if (channel) context.bus.dispose(channel);
+      void context.auth.ended(signal).then(
+        (ended) =>
+          finish(
+            ended
+              ? new SignInRequired(identityOf(entry))
+              : new CheckError(`Latency channel failed: ${detail}`, "retryable"),
+          ),
+        () => finish(new CheckError(`Latency channel failed: ${detail}`, "retryable")),
+      );
+    },
     resumed() {},
     signInRequired: () => finish(new SignInRequired(identityOf(entry))),
   };
