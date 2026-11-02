@@ -114,3 +114,13 @@ to lose every server, and a longer initial HTTP/3 download body left all three r
 failure still needs investigation with real WANs and tunnel/proxy deployments, more repetitions, and
 transport-level traces. In particular, per-server silence while another server moves can occur on a shared
 bottleneck; it does not by itself prove the silent server or its independent path is down.
+
+In a zero-random-loss comparison using a shared 30 Mbit/s downlink, one four-server run at 2 Mbit/s up
+lost three upload paths even though all four servers returned successful checkpoints; the uplink queue
+recorded no drops and peaked around 897 KB. One run at 4 Mbit/s up completed all four paths. These single
+runs do not establish a threshold or failure rate.
+
+The server can leave one second between progress heartbeats, while the browser's feed watchdog allows
+1.5 seconds without a message. A temporary four-second watchdog changed the 2 Mbit/s result to three
+partial uploads with interrupted latency and missing progress, rather than fixing the run. The experiment
+was discarded; it does not establish that the current watchdog margin is sufficient on unstable links.
