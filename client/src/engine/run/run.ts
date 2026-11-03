@@ -82,8 +82,10 @@ const QUIET_MS = 500;
 const RAMP_MS = 100;
 /** A direction silent this long leaves, if another server moves it meanwhile. */
 const SILENCE_MS = 1_500;
+/** Upload receiver observations can lag behind other servers on the same saturated uplink. */
+const UPLOAD_SILENCE_MS = 4_000;
 /** A receiver that sends no record at all is given longer, as its feed may lag. */
-const RECEIVER_SILENCE_MS = 4_000;
+const RECEIVER_SILENCE_MS = 6_000;
 /** The one redial after a stall: its HTTP proof and its establishment, 3 s each, and their margins. */
 const LATENCY_RECOVERY_MS = 7_300;
 /** The server forgets an unused upload id after 2 minutes, so a stage starting later mints its own. */
@@ -253,7 +255,7 @@ const silence = (stage: StageRun, seat: Seat, at: number): Direction | undefined
   stage.activity.transfer.find((dir) =>
     dir === "down"
       ? at - seat.progressAt.down >= SILENCE_MS
-      : ((seat.up?.nanos ?? 0) - seat.grewNanos) / 1e6 >= SILENCE_MS ||
+      : ((seat.up?.nanos ?? 0) - seat.grewNanos) / 1e6 >= UPLOAD_SILENCE_MS ||
         at - seat.heardAt >= RECEIVER_SILENCE_MS,
   );
 

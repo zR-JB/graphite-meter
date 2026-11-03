@@ -120,7 +120,21 @@ lost three upload paths even though all four servers returned successful checkpo
 recorded no drops and peaked around 897 KB. One run at 4 Mbit/s up completed all four paths. These single
 runs do not establish a threshold or failure rate.
 
-The server can leave one second between progress heartbeats, while the browser's feed watchdog allows
-1.5 seconds without a message. A temporary four-second watchdog changed the 2 Mbit/s result to three
-partial uploads with interrupted latency and missing progress, rather than fixing the run. The experiment
-was discarded; it does not establish that the current watchdog margin is sufficient on unstable links.
+The server can leave one second between progress heartbeats, while the baseline browser's feed watchdog
+allowed 1.5 seconds without a message. A temporary watchdog-only change to four seconds changed the
+2 Mbit/s result to three partial uploads with interrupted latency and missing progress. That experiment
+was discarded; it does not establish that a four-second watchdog alone is sufficient on unstable links.
+
+A narrower upload-recovery candidate kept the original latency-recovery deadline, lengthened the feed
+watchdog and upload-only recovery and silence budgets, and retained the existing coverage rules. In two
+fresh 2 Mbit/s, 0.3% loss trials, the baseline lost three and two servers; the candidate completed one
+run and marked all four uploads partial for insufficient evidence in the other. At 1 Mbit/s without random
+loss, the candidate completed one run and marked another partial for insufficient evidence. Both browsers
+still reported a server killed during upload as a connection loss while its peers continued. These samples
+are too small to establish a failure rate, and do not resolve the more severely congested case.
+
+One complete 1 Mbit/s trial displayed about 1.06 Mbit/s; queue snapshots showed the shaper sending close
+to 1 Mbit/s. In a separate partial run displaying about 1.03 Mbit/s, the combined upload interval used
+receiver-clock component durations around 7.3 seconds for two servers and 10.2 seconds for two others.
+Those differing windows warrant further accuracy analysis; these observations alone do not identify whether
+the aggregation, the simulated link, or measurement timing explains the difference.
