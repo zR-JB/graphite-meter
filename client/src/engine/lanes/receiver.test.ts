@@ -218,7 +218,7 @@ test("feed refusals name their cause, an unknown id rotates, and a revoked socke
   ]);
 });
 
-test("a feed socket silent for 1.5 s reconnects, while heartbeats keep a quiet one open", async () => {
+test("a feed socket tolerates delayed heartbeats, then reconnects if it stays silent", async () => {
   jest.useFakeTimers();
   try {
     const feed = follow([(socket) => socket.open(), () => {}]);
@@ -229,9 +229,9 @@ test("a feed socket silent for 1.5 s reconnects, while heartbeats keep a quiet o
       await elapse(1_000);
       first!.send("");
     }
-    await elapse(1_200);
+    await elapse(3_750);
     expect(feed.endings).toEqual([]);
-    await elapse(300);
+    await elapse(250);
     expect(feed.endings).toEqual([
       [
         { reason: "connection-lost", retry: true, detail: "progress socket went silent" },
@@ -301,7 +301,7 @@ test("an HTTP feed reads split records until its terminal one, backs off refusal
   expect(ended.endings).toEqual([]);
 });
 
-test("an HTTP feed silent for 1.5 s reconnects, while heartbeats keep a quiet one open", async () => {
+test("an HTTP feed tolerates delayed heartbeats, then reconnects if it stays silent", async () => {
   jest.useFakeTimers();
   try {
     const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
@@ -322,9 +322,9 @@ test("an HTTP feed silent for 1.5 s reconnects, while heartbeats keep a quiet on
       await elapse(1_000);
       streams[0]!.enqueue(encoder.encode("\n"));
     }
-    await elapse(1_200);
+    await elapse(3_750);
     expect(feed.endings).toEqual([]);
-    await elapse(300);
+    await elapse(250);
     expect(feed.endings).toEqual([
       [
         { reason: "connection-lost", retry: true, detail: "progress stream went silent" },

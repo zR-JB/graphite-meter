@@ -27,6 +27,8 @@ import { abortable, delay } from "../run/clock";
 
 /** Stage setup shares a congested access link with every other server's setup. */
 const READY_MS = 10_000;
+/** A progress feed's HTTP recovery probe shares the loaded upload link. */
+const UPLOAD_RECOVERY_MS = 6_000;
 /** Large enough that only the server's clock or a stop ends a download. */
 const DOWNLOAD_BYTES = 64 * 1024 ** 3;
 /** Download bodies end this long after the stage's planned end, so its last window still sees bytes flow. */
@@ -395,7 +397,7 @@ class Stage implements StageResources {
     signIn: () => this.#signIn("throughput"),
   };
 
-  /** Settles a lane's or the feed's ending: one reopen once the server answers over HTTP, within 3 s; checking the sign-in after a break may outlast the silence rule. */
+  /** Settles a lane's or feed's ending: one reopen once the server answers over HTTP; sign-in checks may outlast the silence rule. */
   async #reopen(
     direction: Direction,
     label: string,
@@ -424,7 +426,12 @@ class Stage implements StageResources {
     if (broken) void this.#signedOut().then((signedOut) => signedOut && this.#signIn("throughput"));
     await delay(delayMs, signal);
     const { auth, server } = this.#setup.server;
-    const answers = await answered(server.url, auth, signal, ESTABLISH_MS);
+    const answers = await answered(
+      server.url,
+      auth,
+      signal,
+      direction === "up" ? UPLOAD_RECOVERY_MS : ESTABLISH_MS,
+    );
     // Whoever closed this lane or feed meanwhile owns its ending.
     if (signal.aborted || this.#throughputEnded) return false;
     if (!answers)

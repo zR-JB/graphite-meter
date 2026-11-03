@@ -33,6 +33,7 @@ const downMbps = Number(process.env.GM_DIAG_DOWN_MBPS ?? 30);
 const upMbps = Number(process.env.GM_DIAG_UP_MBPS ?? 8);
 const rttMs = Number(process.env.GM_DIAG_RTT_MS ?? 100);
 const sampleQueues = process.env.GM_DIAG_QUEUE === "1";
+const sampleIntervals = process.env.GM_DIAG_INTERVALS === "1";
 const queueLimit = Number(process.env.GM_DIAG_UP_QUEUE_PACKETS ?? 1000);
 if (!Number.isInteger(count) || count < 1 || count > 4)
   throw new Error("GM_DIAG_SERVERS must be 1 to 4");
@@ -333,6 +334,7 @@ test(
             elapsedMs: Date.now() - started,
             ...measured(result),
             upload: result.record?.result.upload,
+            intervals: sampleIntervals ? result.record?.result.multiServer.intervals : undefined,
             servers: result.servers,
             paths: result.record?.result.multiServer.servers.map(
               ({ server, throughput, latencyTarget: latencyPath, latencyByStage, stages }) => ({

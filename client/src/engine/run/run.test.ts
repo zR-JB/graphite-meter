@@ -1502,6 +1502,33 @@ test("a receiver feed that lags keeps its server, whose bytes arrive with its ne
   expect(result.upload?.quietMs).toBe(0);
 });
 
+test("a delayed upload receiver is retained while another server moves, then catches up", async () => {
+  const h = setup(
+    two({ silent: hole("upload", 1_000, 6_000) }),
+    { upload: true },
+    { uploadMs: 9_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toEqual([]);
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
+  expect(result.stages.upload).toBe("complete");
+});
+
+test("an upload receiver that stays silent still leaves while another server moves", async () => {
+  const h = setup(
+    two({ silent: (activity, ms) => activity.stage === "upload" && ms >= 1_000 }),
+    { upload: true },
+    { uploadMs: 10_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toMatchObject([
+    { serverId: "a", stage: "upload", reason: "timeout" },
+  ]);
+  expect(result.multiServer.participants).toEqual(["b"]);
+});
+
 test("a stage with a hole never finishes early, however steady it runs after", async () => {
   const h = setup(
     [{ id: "self", silent: hole("download", 500, 1_200) }],

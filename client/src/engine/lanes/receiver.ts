@@ -15,8 +15,8 @@ const FINAL_RETRY_MS = 100;
 const READY_POLL_MS = 50;
 /** A feed whose receiver time stood still this long is backed by a checkpoint. */
 const QUIET_MS = 250;
-/** Reconnect after this many checks without feed traffic or advancing receiver checkpoints. */
-const SILENT_CHECKS = 6;
+/** Allow delayed heartbeats through a loaded access link before reopening the feed. */
+const SILENT_CHECKS = 16;
 
 type End = { ending: Ending; broken: boolean };
 export type FeedRoute = "session" | "http" | "websocket";
