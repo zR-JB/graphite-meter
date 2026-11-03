@@ -135,13 +135,12 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       # Each job's builder starts empty and imports no cache, so a build reuses only this job's layers.
-      - parallel:
-          - name: Set up Python
-            uses: ./.github/actions/setup-project
-            with:
-              cache: 'false'
-          - name: Set up Buildx
-            uses: ./.github/actions/setup-buildx
+      - name: Set up Python
+        uses: ./.github/actions/setup-project
+        with:
+          cache: 'false'
+      - name: Set up Buildx
+        uses: ./.github/actions/setup-buildx
       - name: Build image and source offer
         env:
           CONTEXT: ${{ needs.request.outputs.context }}
@@ -185,14 +184,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - parallel:
-          - name: Set up Python
-            uses: ./.github/actions/setup-project
-            with:
-              cache: 'false'
-          - id: buildx
-            name: Set up Buildx
-            uses: ./.github/actions/setup-buildx
+      - name: Set up Python
+        uses: ./.github/actions/setup-project
+        with:
+          cache: 'false'
+      - id: buildx
+        name: Set up Buildx
+        uses: ./.github/actions/setup-buildx
       - name: Build client archive and source offer
         if: env.STABLE == 'true'
         env:
