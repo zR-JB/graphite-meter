@@ -55,6 +55,27 @@ servers. Those changes are not shown to provide reliable recovery or preserve fa
 One matched terminal-client run with four HTTP/1.1 lanes per server also lost all upload paths before
 measurement: receiver checkpoints did not arrive in time and the uplink queue peaked near 957 KB. This
 shows the shared-link failure can affect both clients; a single run does not compare their general reliability.
+Increasing the terminal client's opening window to 15 seconds and each opening checkpoint's budget to
+10 seconds was tested and discarded: all four uploads still failed, and the queue grew to about 1.8 MB.
+With the 64-packet queue control, one terminal run still lost all four opening checkpoints; in the one
+browser control above, three paths completed. These individual runs do not establish relative failure rates.
+A temporary terminal build reserved a control connection before starting upload lanes: on the 64-packet
+queue it reached checkpoints and entered upload, but three servers later stopped delivering data; on the
+1000-packet queue all four still failed before measurement. The experiment was discarded.
+In a separate control, four individually shaped 30/1 Mbit/s links completed all four browser paths; that
+control has 4 Mbit/s of aggregate uplink capacity, so it isolates shared-link pressure rather than keeping
+total capacity equal.
+
+Two fresh four-server browser runs with configured random loss set to zero still lost all upload paths:
+the shared uplink queue had no recorded drops in the first run and peaked around 768 KB. In the second,
+each server returned two or three successful checkpoint responses during the run. This isolates a failure
+under queue delay without injected random loss; it does not prove physical links have the same queue behavior.
+One otherwise matching 2 Mbit/s uplink run lost three upload paths despite successful checkpoints from
+all four servers and no recorded uplink queue drops; its sampled queue peaked around 897 KB.
+In one temporary combined experiment, longer progress-watchdog, checkpoint, silence, latency-recovery and
+HTTP-proof budgets changed the result from connection failures to partial uploads on all four servers:
+each covered too little of the planned measurement window. The aggregate was reported, but the broad
+deadline changes were discarded because they did not restore complete evidence and could delay real failures.
 
 One ten-second startup UDP outage affecting the fourth server recovered after the outage: all four
 servers completed with WebTransport latency, with one failed handshake recorded. When all four servers'
@@ -64,6 +85,9 @@ Tracing showed that each initial failed latency dial triggered another dial that
 cancelled. The revised check ends on the failed dial; with the page's bounded allowance raised to eight,
 two fresh shared-outage runs completed all four paths, with four failed handshakes in each. These are small
 local trials; they do not cover tunnel reconnection or reverse-proxy behavior.
+
+With a single server's UDP interrupted for eight seconds during download, both fresh four-server browser
+runs completed and the interrupted server recorded 26 and 27 timed-out download-stage latency probes.
 
 | Baseline browser scenario                                               | Complete runs | Observation                                                         |
 | ----------------------------------------------------------------------- | ------------: | ------------------------------------------------------------------- |
