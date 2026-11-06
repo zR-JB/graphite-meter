@@ -44,7 +44,7 @@ http-body-util = "0.1.5"
 hyper = "1.12.0"
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 ipnet = "2.12.2"
-jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff = { version = "0.2.39", default-features = false, features = ["std", "tzdb-bundle-always"] }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 nix = { version = "0.31.3", default-features = false, features = ["socket"] }
 noq = { version = "1.4.0", default-features = false }
@@ -53,7 +53,7 @@ ratatui-core = { version = "0.1.2", features = ["std"] }
 ratatui-crossterm = { version = "0.1.2", default-features = false, features = ["crossterm_0_29"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 ring = "0.17.14"
-rustfs-mimalloc = { version = "=0.7.2", features = ["no_profile"] }
+rustfs-mimalloc = { version = "=0.7.3", features = ["no_profile"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std"] }
 rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12", "ring"] }
 rustls-platform-verifier = "0.7.1"

@@ -11,7 +11,7 @@ ARG PROFILE=release
 ARG TUI_PLATFORM
 ARG PGO=train
 
-FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.1-slim-trixie@sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51 AS python
+FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.2-slim-trixie@sha256:e97b88e416c3c01eb427b21fd8cd3ebf006e6ee38afcfcc3cae1c54ee2ab0a75 AS python
 
 # The reviewed builder: legal/rust-platform-debian-trixie.json records what it links into each target.
 FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.1-trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS rust-amd64
@@ -26,6 +26,8 @@ ENV LD_LIBRARY_PATH=/usr/local/lib \
 RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20261016T180000Z\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\n' \
         debian 'trixie trixie-updates' debian-security trixie-security >/etc/apt/sources.list.d/debian.sources \
     && rm -f /etc/apt/sources.list \
+    && printf 'Acquire::Retries "5";\nAcquire::https::Timeout "30";\nAPT::Update::Error-Mode "any";\n' \
+        >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update && apt-get install -y --no-install-recommends musl-dev:amd64=1.2.5-3.1~deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
@@ -101,12 +103,17 @@ FROM pgo-ci AS pgo-windows-arm64
 FROM pgo${TUI_PLATFORM:+-}${TUI_PLATFORM%%/*}${TUI_PLATFORM:+-}${TUI_PLATFORM##*/} AS pgo-tui
 
 # The TUI archives for every TUI platform of the workspace metadata, or the TUI_PLATFORM's, each with its source offer.
-FROM rust-arm64 AS tui-build
+FROM rust-arm64 AS tui-base
+FROM rust-amd64 AS tui-base-linux-amd64
+FROM rust-arm64 AS tui-base-linux-arm64
+FROM rust-amd64 AS tui-base-windows-amd64
+FROM rust-amd64 AS tui-base-windows-arm64
+FROM tui-base${TUI_PLATFORM:+-}${TUI_PLATFORM%%/*}${TUI_PLATFORM:+-}${TUI_PLATFORM##*/} AS tui-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=14.2.0-19+27+b1 mingw-w64-x86-64-dev=12.0.0-5 \
     && rm -rf /var/lib/apt/lists/*
 # Windows arm64 links with llvm-mingw, appended to PATH so Debian's cross tools keep their names.
-ADD --checksum=sha256:55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335 https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64.tar.xz /tmp/llvm-mingw.tar.xz
+ADD --checksum=sha256:919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926 https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64.tar.xz /tmp/llvm-mingw.tar.xz
 RUN mkdir /opt/llvm-mingw && tar -xJf /tmp/llvm-mingw.tar.xz --strip-components=1 -C /opt/llvm-mingw \
     && rm /tmp/llvm-mingw.tar.xz
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \

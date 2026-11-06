@@ -61,11 +61,12 @@ runs:
         printf 'install-args=%s\n' "${tools[*]}" >> "$GITHUB_OUTPUT"
 
     - name: Install pinned mise toolchain
-      uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
       env:
         MISE_AUTO_INSTALL: '0'
+        MISE_HTTP_RETRIES: '6'
       with:
-        version: 2026.10.18
+        version: 2026.11.3
         install_args: --locked ${{ steps.tools.outputs.install-args }}
         cache: ${{ inputs.cache }}
         cache_save: ${{ github.ref == 'refs/heads/main' }}
