@@ -2,9 +2,9 @@
   {
     "ecosystem": "cargo",
     "name": "enum-assoc",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "upstreamRevision": "351b306939b150601451df752a183b077b0de85a",
+    "upstreamRevision": "5d732f47b429d382daffb0948770adbaa2de0b8c",
     "licenseExpression": "MIT OR Apache-2.0",
     "modified": false,
     "artifactScopes": [
@@ -14,7 +14,7 @@
     "localLegalFiles": [
       {
         "name": "legal/manual/rust/enum-assoc/Cargo.toml.upstream",
-        "sha256": "cbab43ef6f3d9fc83e82910f990f00580eb00389e6d4c4a9b78cca2b159a0918",
+        "sha256": "230237125cc710a619838b9e1fce40384679a7030d1b38ba073612cdf932f736",
         "kind": "notice"
       },
       {
@@ -23,14 +23,14 @@
         "kind": "license"
       }
     ],
-    "reviewNotes": "The crate and exact upstream commit omit license files. Cargo.toml.upstream is the published Cargo.toml.orig with its CRLF line endings normalized to LF and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Selected: Apache-2.0, as its approved review records. Source declaration: https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml. No upstream NOTICE file exists at that revision."
+    "reviewNotes": "The crate and exact upstream commit omit license files. Cargo.toml.upstream is the published Cargo.toml.orig with its CRLF line endings normalized to LF and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Selected: Apache-2.0, as its approved review records. Source declaration: https://github.com/Eolu/enum-assoc/blob/5d732f47b429d382daffb0948770adbaa2de0b8c/Cargo.toml. No upstream NOTICE file exists at that revision."
   },
   {
     "ecosystem": "cargo",
     "name": "rustfs-mimalloc",
-    "version": "0.7.2",
+    "version": "0.7.3",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "upstreamRevision": "26ae27f745fab3ca11fd7394f1f7a32f40a1db83",
+    "upstreamRevision": "fb6fce06ebd992f7af476a5009fc35f61d3c2cfe",
     "licenseExpression": "Apache-2.0",
     "modified": false,
     "artifactScopes": [
@@ -44,14 +44,14 @@
         "kind": "license"
       }
     ],
-    "reviewNotes": "Published crate archive SHA-256 8301a578772fc9823d68e083e42c3b414613d588a0eac594c1ca6bc0bbe0653f. Exact source: https://github.com/houseme/rustfs-mimalloc/tree/26ae27f745fab3ca11fd7394f1f7a32f40a1db83 (tag v0.7.2). The package declares Apache-2.0 but omits its root LICENSE. Retain the exact revision's LICENSE, fetched from https://raw.githubusercontent.com/houseme/rustfs-mimalloc/26ae27f745fab3ca11fd7394f1f7a32f40a1db83/LICENSE, including houseme copyright, Apache grant, patent terms and disclaimer. No root NOTICE file exists at that revision. Third-party source is unmodified."
+    "reviewNotes": "Published crate archive SHA-256 216ecfc9341b5d6e2506d47ce57c9232ae1b8020bb10264ea05286fb234286e7. Exact source: https://github.com/houseme/rustfs-mimalloc/tree/fb6fce06ebd992f7af476a5009fc35f61d3c2cfe (tag v0.7.3). The package declares Apache-2.0 but omits its root LICENSE. Retain the exact revision's LICENSE, fetched from https://raw.githubusercontent.com/houseme/rustfs-mimalloc/fb6fce06ebd992f7af476a5009fc35f61d3c2cfe/LICENSE, including houseme copyright, Apache grant, patent terms and disclaimer. No root NOTICE file exists at that revision. Third-party source is unmodified."
   },
   {
     "ecosystem": "cargo",
     "name": "rustfs-mimalloc-sys",
-    "version": "0.7.2",
+    "version": "0.7.3",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "upstreamRevision": "26ae27f745fab3ca11fd7394f1f7a32f40a1db83",
+    "upstreamRevision": "fb6fce06ebd992f7af476a5009fc35f61d3c2cfe",
     "licenseExpression": "Apache-2.0",
     "modified": false,
     "artifactScopes": [
@@ -70,7 +70,7 @@
         "kind": "license"
       }
     ],
-    "reviewNotes": "Published crate archive SHA-256 6eb4082853043cb29556b4b776b05f28c3146706f43c53869dbf1ef262e00e91. Exact source: https://github.com/houseme/rustfs-mimalloc/tree/26ae27f745fab3ca11fd7394f1f7a32f40a1db83 (tag v0.7.2). The package declares Apache-2.0 but omits its root LICENSE. Retain the exact revision's LICENSE, fetched from https://raw.githubusercontent.com/houseme/rustfs-mimalloc/26ae27f745fab3ca11fd7394f1f7a32f40a1db83/LICENSE, including houseme copyright, Apache grant, patent terms and disclaimer. No root NOTICE file exists at that revision. Third-party source is unmodified. Also retain the packaged Microsoft Corporation/Daan Leijen MIT copyright, permission and disclaimer. All 89 packaged native include/src/LICENSE files match Microsoft mimalloc commit b18ab4eef383f655e760881b02eff8af02800879 (tag v3.6.0) byte-for-byte; no upstream include/src file is missing. That commit is the wrapper revision's submodule pin and the official v3.6.0 release. Source: https://github.com/microsoft/mimalloc/tree/b18ab4eef383f655e760881b02eff8af02800879. LICENSE is unchanged since v3.5.3. Every C source and header names Microsoft Research and Daan Leijen (the Emscripten primitive also Alon Zakai) under that MIT license, except the Windows-only etw.h, a Message Compiler output carrying a Microsoft Corporation copyright, unchanged since v3.5.3 and not compiled for the musl targets that use this crate; the readme, etw.man and etw-mimalloc.wprp files carry no header. Both Apache-2.0 wrapper and MIT native obligations apply. The workspace enables only no_profile, which compiles native 30600 with MI_PROFILE=0 (no allocation sampling or MIMALLOC_PROFILE startup profiler) and MI_PROFILE_USE_BUILTIN=1 (the uncalled pprof writer stays compiled), and no override, secure, debug, debug_in_debug, no_thp or local_dynamic_tls feature; native/import closure remains subject to final release verification."
+    "reviewNotes": "Published crate archive SHA-256 fb16ad68f96883407a75cdb88252b43dc2ea592428f0fc54ff7885756de4b814. Exact source: https://github.com/houseme/rustfs-mimalloc/tree/fb6fce06ebd992f7af476a5009fc35f61d3c2cfe (tag v0.7.3). The package declares Apache-2.0 but omits its root LICENSE. Retain the exact revision's LICENSE, fetched from https://raw.githubusercontent.com/houseme/rustfs-mimalloc/fb6fce06ebd992f7af476a5009fc35f61d3c2cfe/LICENSE, including houseme copyright, Apache grant, patent terms and disclaimer. No root NOTICE file exists at that revision. Third-party source is unmodified. Also retain the packaged Microsoft Corporation/Daan Leijen MIT copyright, permission and disclaimer. All 89 packaged native include/src/LICENSE files match Microsoft mimalloc commit 56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c (tag v3.6.1) byte-for-byte; no upstream include/src file is missing. That commit is the wrapper revision's submodule pin and the official v3.6.1 release. Source: https://github.com/microsoft/mimalloc/tree/56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c. LICENSE is unchanged since v3.5.3. Every C source and header names Microsoft Research and Daan Leijen (the Emscripten primitive also Alon Zakai) under that MIT license, except the Windows-only etw.h, a Message Compiler output carrying a Microsoft Corporation copyright, unchanged since v3.5.3 and not compiled for the musl targets that use this crate; the readme, etw.man and etw-mimalloc.wprp files carry no header. Both Apache-2.0 wrapper and MIT native obligations apply. The workspace enables only no_profile, which compiles native 30601 with MI_PROFILE=0 (no allocation sampling or MIMALLOC_PROFILE startup profiler) and MI_PROFILE_USE_BUILTIN=1 (the uncalled pprof writer stays compiled), and no override, secure, debug, debug_in_debug, no_thp or local_dynamic_tls feature; native/import closure remains subject to final release verification."
   },
   {
     "ecosystem": "cargo",
