@@ -2,12 +2,14 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directories: ["/", "/.github/actions/*"]
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:
       default-days: 2
   - package-ecosystem: cargo
     directory: /rust
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:
@@ -17,6 +19,7 @@ updates:
         patterns: ["*"]
   - package-ecosystem: bun
     directory: /client
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:

@@ -7,9 +7,6 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
-  # Pull requests test the pinned browsers; the daily run tests the latest stable ones.
-  schedule:
-    - cron: '17 4 * * *'
 
 permissions:
   contents: read
@@ -51,9 +48,7 @@ jobs:
 
       - id: browsers
         name: Select the browsers to test
-        env:
-          COMMAND: ${{ github.event_name == 'schedule' && 'latest-browsers' || 'browsers' }}
-        run: python3 scripts/ci/toolchains.py "$COMMAND" >> "$GITHUB_OUTPUT"
+        run: python3 scripts/ci/toolchains.py browsers >> "$GITHUB_OUTPUT"
 
   checks:
     name: Checks
@@ -448,13 +443,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
       - parallel:
-          # A scheduled run's caches would reach every pull request.
           - name: Set up E2E toolchain
             uses: ./.github/actions/setup-project
             with:
               bun: 'true'
               client-deps: 'true'
-              cache: ${{ github.event_name != 'schedule' }}
           - id: chrome
             name: Install Chrome for Testing
             if: matrix.browser == 'chrome'
