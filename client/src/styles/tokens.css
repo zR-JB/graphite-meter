@@ -206,30 +206,30 @@
     --icon: 16px;
     --icon-sm: 13px;
 
-    /* Warm paper and graphite; opaque surfaces keep motion cheap. */
-    --canvas: light-dark(oklch(0.955 0.016 85), oklch(0.12 0.003 75));
-    --surface-1: light-dark(oklch(0.982 0.012 85), oklch(0.16 0.004 75));
-    --surface-2: light-dark(oklch(0.965 0.015 85), oklch(0.19 0.005 75));
-    --surface-inset: light-dark(oklch(0.925 0.018 85), oklch(0.105 0.003 75));
+    /* Neutral graphite; opaque surfaces keep motion cheap. */
+    --canvas: light-dark(oklch(0.955 0.003 255), oklch(0.12 0.002 255));
+    --surface-1: light-dark(oklch(0.982 0.003 255), oklch(0.16 0.002 255));
+    --surface-2: light-dark(oklch(0.965 0.003 255), oklch(0.19 0.002 255));
+    --surface-inset: light-dark(oklch(0.925 0.003 255), oklch(0.105 0.002 255));
     /* Neutral keys are distinct from plates; wells remain the deepest surface. */
-    --control-surface: var(--surface-2);
+    --control-surface: light-dark(oklch(0.93 0.003 255), oklch(0.26 0.003 255));
     /* The surface for what floats over the instrument, opaque because a blur costs every frame on a slow GPU. */
-    --sheet: light-dark(oklch(0.972 0.013 85), oklch(0.145 0.004 75));
+    --sheet: light-dark(oklch(0.972 0.003 255), oklch(0.145 0.002 255));
 
-    --frame: light-dark(oklch(0.975 0.014 85), oklch(0.17 0.004 75));
+    --frame: light-dark(oklch(0.975 0.003 255), oklch(0.17 0.002 255));
 
-    --border-subtle: light-dark(oklch(0.3 0.02 75 / 0.1), oklch(0.92 0.02 85 / 0.09));
-    --border: light-dark(oklch(0.3 0.02 75 / 0.18), oklch(0.92 0.02 85 / 0.15));
-    --border-strong: light-dark(oklch(0.3 0.02 75 / 0.3), oklch(0.92 0.02 85 / 0.25));
+    --border-subtle: light-dark(oklch(0.3 0.003 255 / 0.1), oklch(0.92 0.003 255 / 0.09));
+    --border: light-dark(oklch(0.3 0.003 255 / 0.18), oklch(0.92 0.003 255 / 0.15));
+    --border-strong: light-dark(oklch(0.3 0.003 255 / 0.3), oklch(0.92 0.003 255 / 0.25));
 
-    --text: light-dark(oklch(0.235 0.012 75), oklch(0.95 0.013 85));
-    --text-muted: light-dark(oklch(0.385 0.015 75), oklch(0.81 0.012 85));
-    --text-soft: light-dark(oklch(0.485 0.018 75), oklch(0.69 0.014 85));
-    --text-inverse: light-dark(oklch(0.982 0.012 85), oklch(0.195 0.006 75));
+    --text: light-dark(oklch(0.235 0.003 255), oklch(0.95 0.003 255));
+    --text-muted: light-dark(oklch(0.385 0.003 255), oklch(0.81 0.003 255));
+    --text-soft: light-dark(oklch(0.485 0.003 255), oklch(0.69 0.003 255));
+    --text-inverse: light-dark(oklch(0.982 0.003 255), oklch(0.195 0.002 255));
 
     /* Graphite makes controls and selection ink, so a hue on screen always names a stage or a state. */
-    --brand: light-dark(oklch(0.28 0.015 75), oklch(0.91 0.02 85));
-    --brand-strong: light-dark(oklch(0.22 0.012 75), oklch(0.97 0.013 85));
+    --brand: light-dark(oklch(0.28 0.003 255), oklch(0.91 0.003 255));
+    --brand-strong: light-dark(oklch(0.22 0.003 255), oklch(0.97 0.003 255));
     --brand-soft: color-mix(in oklab, var(--brand) 12%, transparent);
 
     /* Teal, blue, amber and rose identify the same stages everywhere. */
@@ -248,7 +248,7 @@
     --err-line: color-mix(in oklab, var(--err) 45%, var(--border));
     --scrim: color-mix(in oklab, var(--canvas) 55%, transparent);
     /* The edge that identifies a field or check holds 3:1 on every surface, no brighter. */
-    --field-edge: light-dark(oklch(0.45 0.018 75 / 0.75), oklch(0.74 0.014 85 / 0.65));
+    --field-edge: light-dark(oklch(0.45 0.003 255 / 0.75), oklch(0.74 0.003 255 / 0.65));
     --check-edge: 1.5px solid var(--field-edge);
     --track: color-mix(in oklab, var(--text) 8%, transparent);
     --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
@@ -256,16 +256,16 @@
 
     /* Only what floats casts a shadow. Panels and keys are flat fills with a hairline. */
     --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
-    --shade: light-dark(oklch(0.25 0.02 75), oklch(0.08 0.01 75));
+    --shade: light-dark(oklch(0.25 0.003 255), oklch(0.08 0.002 255));
     --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
     --elev-recess: inset 0 1px 2px color-mix(in oklab, var(--shade) 6%, transparent);
-    --elev-thumb: 0 1px 2px light-dark(oklch(0.25 0.02 75 / 0.1), oklch(0.08 0.01 75 / 0.35));
+    --elev-thumb: 0 1px 2px light-dark(oklch(0.25 0.003 255 / 0.1), oklch(0.08 0.002 255 / 0.35));
     --elev-tooltip:
       var(--elev-thumb),
-      0 8px 20px -6px light-dark(oklch(0.25 0.02 75 / 0.2), oklch(0.08 0.01 75 / 0.5));
+      0 8px 20px -6px light-dark(oklch(0.25 0.003 255 / 0.2), oklch(0.08 0.002 255 / 0.5));
     --elev-float:
-      0 2px 6px light-dark(oklch(0.25 0.02 75 / 0.08), oklch(0.08 0.01 75 / 0.35)),
-      0 20px 48px -16px light-dark(oklch(0.25 0.02 75 / 0.24), oklch(0.08 0.01 75 / 0.6));
+      0 2px 6px light-dark(oklch(0.25 0.003 255 / 0.08), oklch(0.08 0.002 255 / 0.35)),
+      0 20px 48px -16px light-dark(oklch(0.25 0.003 255 / 0.24), oklch(0.08 0.002 255 / 0.6));
 
     /* Solid ink clears the 3:1 non-text floor on light surfaces, where a translucent ring does not. */
     --focus-ring: 2px solid var(--brand);

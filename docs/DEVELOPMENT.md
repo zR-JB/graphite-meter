@@ -195,10 +195,10 @@ it. `src/app/app.ts`, mounted by `src/main.tsx`, is the one place that wires acr
 | `public`       | Fonts, and the favicon `bun run build:auth` writes, copied into the build as they are.                                   |
 
 The browser's surface and radius tokens live in `src/styles/tokens.css`. Canvas is the page, surface-1 is a
-plate, surface-2 is a neutral control or floating surface, and surface-inset is a well or track. Their light/dark
-OKLCH lightnesses are respectively .955/.12, .982/.16, .965/.19, and .925/.105; control surfaces are therefore
-darker than plates in light mode and lighter in dark mode. The run control uses the same neutral surface, a stronger
-outline and a play/stop mark. Stage hues identify measurements and states. Insets use a 4 px radius, controls 8 px,
+plate, surface-2 is a secondary surface, and surface-inset is a well or track. Filled keys use control-surface
+(.93 light and .26 dark in OKLCH), darker than the canvas and plates in light mode and lighter in dark mode.
+The run control uses the same fill, a stronger outline and a play/stop mark. Stage hues identify measurements
+and states. Insets use a 4 px radius, controls 8 px,
 and outer plates 12 px; a nested surface subtracts its inset from its parent's radius where their edges align.
 Switches show their state by the key's position, and selected segments use a distinct plate.
 
