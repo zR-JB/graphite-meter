@@ -273,7 +273,7 @@ shell = "bash -e -o pipefail -c"
 description = "Run the browser suite against one local server fleet (GM_E2E_BROWSER=chrome|firefox)"
 usage = '''
 arg "[server]" default="rust/target/ci/graphite-meter-server" help="The server executable; mise run e2e-server builds the default"
-arg "[group]" default="all" help="all; reversals or heavy: halves of performance.test.ts; rest-1 or rest-2: halves of the other files; network, network-smoke, or network-1 to network-3: shaped links and faults"
+arg "[group]" default="all" help="all; reversals or heavy: halves of performance.test.ts; rest-1 or rest-2: halves of the other files; network, or network-1 to network-3: shaped links and faults"
 '''
 run = '''
 export GM_E2E_SERVER_BIN=$(realpath "$usage_server")
@@ -282,7 +282,6 @@ export GM_E2E_SERVER_BIN=$(realpath "$usage_server")
 reversals='rapid surface reversals release resources at (1600|390)px'
 case "$usage_group" in
   all|network) set -- ;;
-  network-smoke) set -- ./e2e/network/lockout.test.ts ;;
   network-[123]) files=$(cd client && find e2e/network -name '*.test.ts' | LC_ALL=C sort | jq -Rnr \
       --slurpfile timings e2e/timings.json --argjson shard "${usage_group#network-}" '
     [inputs | {file: ., ms: ($timings[0].files[.] // 0)}] | sort_by(-.ms)
@@ -294,7 +293,7 @@ case "$usage_group" in
   heavy) set -- bun test ./e2e/performance.test.ts --no-orphans --timeout=60000 -t "^(?!$reversals)" ;;
   rest-[12]) set -- bun test ./e2e --parallel=3 --no-orphans --timeout=60000 '--path-ignore-patterns=**/performance.test.ts' \
     '--path-ignore-patterns=**/network/**' "--shard=${usage_group#rest-}/2" --timings=e2e/timings.json ;;
-  *) echo "group must be all, reversals, heavy, rest-1, rest-2 or network[-smoke|-1 to -3]" >&2; exit 2 ;;
+  *) echo "group must be all, reversals, heavy, rest-1, rest-2 or network[-1 to -3]" >&2; exit 2 ;;
 esac
 cd client
 if [[ $usage_group != network* ]]; then bun run e2e "$@"; fi
