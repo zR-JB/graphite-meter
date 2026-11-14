@@ -1,5 +1,5 @@
 name: CI
-run-name: CI · ${{ github.event_name }} · ${{ github.ref_name }} · ${{ github.sha }}
+run-name: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'CI (Beta browsers)' || 'CI' }} · ${{ github.event_name }} · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   pull_request:
@@ -7,6 +7,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  schedule:
+    - cron: '17 6 * * 2'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,7 +18,7 @@ env:
   MISE_AUTO_INSTALL: '0'
 
 concurrency:
-  group: ci-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.sha }}
+  group: ci-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('beta-{0}', github.ref) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -48,7 +51,14 @@ jobs:
 
       - id: browsers
         name: Select the browsers to test
-        run: python3 scripts/ci/toolchains.py browsers >> "$GITHUB_OUTPUT"
+        env:
+          BETA: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [ "$BETA" = true ]; then
+            python3 scripts/ci/toolchains.py latest-browsers --beta
+          else
+            python3 scripts/ci/toolchains.py browsers
+          fi >> "$GITHUB_OUTPUT"
 
   checks:
     name: Checks
@@ -449,7 +459,7 @@ jobs:
               bun: 'true'
               client-deps: 'true'
           - id: browser
-            name: Set up pinned browser
+            name: Set up selected browser
             uses: ./.github/actions/setup-browser
             with:
               browser: ${{ matrix.browser }}
