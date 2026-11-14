@@ -150,6 +150,10 @@ impl Session {
                 .headers_mut()
                 .insert("sec-webtransport-http3-draft", draft);
         }
+        // Firefox applies content sniffing to CONNECT, which carries capsules.
+        response
+            .headers_mut()
+            .remove(http::header::X_CONTENT_TYPE_OPTIONS);
         // The driver writes it before any capsule.
         stream.send.queue_response(response)?;
         Self::register(stream, Code::H3_REQUEST_REJECTED, Phase::Opening)
