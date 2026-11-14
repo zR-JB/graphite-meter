@@ -7,18 +7,18 @@ locked = true
 bun = "1.4.4"
 python = "3.15.2"
 "aqua:gitleaks/gitleaks" = "8.30.1"
-"aqua:astral-sh/ty" = "0.0.98"
-"github:jdx/jactionlint" = "2.5.0"
+"aqua:astral-sh/ty" = "0.0.102"
+"github:jdx/jactionlint" = "2.6.0"
 "aqua:zizmorcore/zizmor" = "1.32.0"
-"aqua:biomejs/biome" = "2.6.5"
+"aqua:biomejs/biome" = "2.6.7"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.151"
 
 [vars]
-mise_version = "2026.11.3"
-buildx_version = "v0.38.2"
+mise_version = "2026.11.8"
+buildx_version = "v0.39.0"
 
-browser_chrome = "157.0.8103.38"
+browser_chrome = "157.0.8103.78"
 browser_firefox = "159.0.1"
 # SHA-256 of ftp.mozilla.org's linux-x86_64/en-US/firefox-<version>.tar.xz, from the release's SHA256SUMS.
 browser_firefox_sha256 = "469ce17120018e1c95411d254cf3c5f8db2dd1768a7acde5a2a089b00072ac65"
@@ -29,7 +29,7 @@ image_skopeo = """
 quay.io/containers/skopeo:v1.22.3-immutable\
 @sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"""
 image_bun = "docker.io/oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d"
-image_buildkit = "docker.io/moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe"
+image_buildkit = "docker.io/moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 # The image's builder (container/Dockerfile).
 image_python = "docker.io/library/python:3.15.2-slim-trixie@sha256:e97b88e416c3c01eb427b21fd8cd3ebf006e6ee38afcfcc3cae1c54ee2ab0a75"

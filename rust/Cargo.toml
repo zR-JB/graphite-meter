@@ -44,7 +44,7 @@ http-body-util = "0.1.5"
 hyper = "1.12.0"
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 ipnet = "2.12.2"
-jiff = { version = "0.2.39", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff = { version = "0.2.43", default-features = false, features = ["std", "tzdb-bundle-always"] }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 nix = { version = "0.31.3", default-features = false, features = ["socket"] }
 noq = { version = "1.4.0", default-features = false }
@@ -66,7 +66,7 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio-util = { version = "0.7.20", default-features = false }
 unicode-width = "0.2.2"
-webpki = { package = "rustls-webpki", version = "0.103.16", default-features = false }
+webpki = { package = "rustls-webpki", version = "0.103.17", default-features = false }
 zeroize = "1.9.1"
 
 [workspace.lints.rust]
