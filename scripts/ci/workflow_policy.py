@@ -22,7 +22,7 @@ DEVELOPMENT_BUILDS = ("--development", "scripts.build")
 NAMING = ("scripts/legal/rust.py", "scripts/ci/workflow_policy.py")
 
 TRIGGERS = {
-    "advisories.yml": {"workflow_dispatch"},
+    "advisories.yml": {"schedule", "workflow_dispatch"},
     "ci.yml": {"pull_request", "push"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},

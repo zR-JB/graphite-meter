@@ -48,7 +48,7 @@ Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no
 unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.
 `rust-check` checks the locked crates and the Cargo forks' advisory verdicts against the RustSec database it
 fetches, and CI checks the client packages against the registry's advisories, so a new advisory fails every pull
-request that runs the code checks. Run the Advisories workflow manually to check the current lockfiles on demand.
+request that runs the code checks. The daily Advisories workflow also checks the lockfiles when no code has changed.
 `rust-deny-fetch` retries a failed fetch twice and never falls back to an older copy. Pull requests and pushes test
 the browsers `mise.toml` pins. Use `mise run browser-bump` to move the pins to the latest stable Chrome for Testing and
 Firefox.
