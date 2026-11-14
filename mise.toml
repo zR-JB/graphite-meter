@@ -19,9 +19,9 @@ mise_version = "2026.11.8"
 buildx_version = "v0.39.0"
 
 browser_chrome = "157.0.8103.78"
-browser_firefox = "159.0.1"
+browser_firefox = "160.0"
 # SHA-256 of ftp.mozilla.org's linux-x86_64/en-US/firefox-<version>.tar.xz, from the release's SHA256SUMS.
-browser_firefox_sha256 = "469ce17120018e1c95411d254cf3c5f8db2dd1768a7acde5a2a089b00072ac65"
+browser_firefox_sha256 = "fde774e9757c8878534c05ec210db592bf6a1b244c57941ffb2e364c04f35fcd"
 
 codeql = "2.27.4"
 
