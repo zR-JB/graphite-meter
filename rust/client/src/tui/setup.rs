@@ -62,8 +62,7 @@ const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
 impl Row {
     fn text(self) -> (&'static str, &'static str) {
         let row = ROWS.iter().find(|(_, row, ..)| *row == self);
-        row.map(|(.., label, help)| (*label, *help))
-            .unwrap_or_default()
+        row.map_or_default(|(.., label, help)| (*label, *help))
     }
 
     pub(super) fn label(self) -> &'static str {

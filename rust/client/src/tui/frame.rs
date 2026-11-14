@@ -526,12 +526,7 @@ impl App {
                 &editor.line(usize::from(field.width - 2), palette),
             );
         }
-        let host = self
-            .config
-            .url
-            .as_ref()
-            .map(format::authority)
-            .unwrap_or_default();
+        let host = self.config.url.as_ref().map_or_default(format::authority);
         let failure = self.start_failure();
         let warn = |text: String| Line::styled(text, palette.warn);
         let [said, next] = match (

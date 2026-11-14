@@ -14,7 +14,7 @@ ARG PGO=train
 FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.2-slim-trixie@sha256:e97b88e416c3c01eb427b21fd8cd3ebf006e6ee38afcfcc3cae1c54ee2ab0a75 AS python
 
 # The reviewed builder: legal/rust-platform-debian-trixie.json records what it links into each target.
-FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.1-trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS rust-amd64
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.100.0-trixie@sha256:e19840879045c951c905d0eaa9887f3439c62000e429963371b376bac8d38c31 AS rust-amd64
 COPY --from=python /usr/local /usr/local
 ENV LD_LIBRARY_PATH=/usr/local/lib \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \

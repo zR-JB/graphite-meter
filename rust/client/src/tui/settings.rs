@@ -109,12 +109,7 @@ impl App {
             }
             Row::Address => self.edit(
                 row,
-                &self
-                    .config
-                    .url
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
+                &self.config.url.as_ref().map_or_default(ToString::to_string),
             ),
             Row::Streams => {
                 let count = self.config.streams.shown().to_string();

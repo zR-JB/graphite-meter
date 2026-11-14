@@ -739,7 +739,7 @@ impl Engine {
                 .as_ref()
                 .is_some_and(|window| window.shortest() >= LIVE_WINDOW)
         {
-            tick.live = Some(window.map(|window| window.rates).unwrap_or_default());
+            tick.live = Some(window.map_or_default(|window| window.rates));
         }
         for (seat, before) in self.seats.iter_mut().zip(before) {
             for direction in Direction::BOTH {
