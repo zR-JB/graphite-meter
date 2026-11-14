@@ -1,0 +1,42 @@
+name: Set up test browser
+description: Install the selected Chrome for Testing or checksum-verified Firefox
+inputs:
+  browser:
+    description: chrome or firefox
+    required: true
+  version:
+    description: Exact browser version
+    required: true
+  firefox-sha256:
+    description: SHA-256 of Mozilla's Firefox Linux archive
+    required: false
+outputs:
+  chrome-path:
+    description: Chrome executable path
+    value: ${{ steps.chrome.outputs.chrome-path }}
+  firefox-path:
+    description: Firefox executable path
+    value: ${{ steps.firefox.outputs.firefox-path }}
+runs:
+  using: composite
+  steps:
+    - id: chrome
+      name: Install Chrome for Testing
+      if: inputs.browser == 'chrome'
+      uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+      with:
+        chrome-version: ${{ inputs.version }}
+    - id: firefox
+      name: Install Firefox
+      if: inputs.browser == 'firefox'
+      shell: bash
+      env:
+        FIREFOX_VERSION: ${{ inputs.version }}
+        FIREFOX_SHA256: ${{ inputs.firefox-sha256 }}
+      run: |
+        archive="$RUNNER_TEMP/firefox.tar.xz"
+        curl -fsSL --connect-timeout 20 --max-time 60 --retry 3 --retry-all-errors -o "$archive" \
+          "https://ftp.mozilla.org/pub/firefox/releases/$FIREFOX_VERSION/linux-x86_64/en-US/firefox-$FIREFOX_VERSION.tar.xz"
+        printf '%s  %s\n' "$FIREFOX_SHA256" "$archive" | sha256sum -c -
+        tar -xJf "$archive" -C "$RUNNER_TEMP"
+        printf 'firefox-path=%s\n' "$RUNNER_TEMP/firefox/firefox" >> "$GITHUB_OUTPUT"

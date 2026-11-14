@@ -7,6 +7,7 @@ use http::{HeaderMap, HeaderValue, header};
 use std::sync::LazyLock;
 
 const STYLES: &str = include_str!("assets/auth.css");
+const THEME_COLORS: &str = include_str!("assets/theme-colors.html");
 const THEME: &str = include_str!("assets/theme.js");
 const PENDING: &str = include_str!("assets/pending.js");
 const ICON: &str = include_str!("assets/icon.html");
@@ -245,9 +246,8 @@ fn page(title: &str, head: &str, class: &str, main: &str, forms: bool) -> String
     };
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" \
-         content=\"width=device-width,initial-scale=1\">{ICON}{head}<title>{title} · Graphite Meter</title><meta \
-         name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"#0d1013\"><meta \
-         name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"#f1f2f5\"><script>{THEME}</script>\
+         content=\"width=device-width,initial-scale=1\">{ICON}{head}<title>{title} · Graphite Meter</title>\
+         {THEME_COLORS}<script>{THEME}</script>\
          <style>{STYLES}</style></head><body><main class=\"{class}\">{BRAND}{main}</main>{pending}</body></html>"
     )
 }

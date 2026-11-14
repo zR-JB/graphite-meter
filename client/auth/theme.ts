@@ -7,6 +7,9 @@ export function prePaintTheme(): void {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}").theme;
     const system = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-    document.documentElement.dataset.theme = saved === "light" || saved === "dark" ? saved : system;
+    const theme = saved === "light" || saved === "dark" ? saved : system;
+    document.documentElement.dataset.theme = theme;
+    for (const meta of document.querySelectorAll<HTMLMetaElement>("meta[data-scheme]"))
+      meta.media = meta.dataset.scheme === theme ? "all" : "not all";
   } catch {}
 }

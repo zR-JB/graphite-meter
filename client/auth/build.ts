@@ -169,6 +169,13 @@ async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> 
 async function generated(): Promise<Map<string, string>> {
   const { css, tokens } = await stylesheet();
   const svg = favicon(tokens.get("--phase-latency")!, tokens.get("--text")!);
+  const shell = await Bun.file(join(here, "../index.html")).text();
+  const themeColors = ["dark", "light"].map((scheme) => {
+    const [meta] =
+      shell.match(new RegExp(`<meta name="theme-color" data-scheme="${scheme}" [^>]+>`)) ?? [];
+    if (!meta) throw new Error(`The app shell must declare its ${scheme} theme color`);
+    return meta;
+  });
   const assets: Record<string, string> = {
     "auth.css": css,
     "theme.js": await themeScript(),
@@ -177,6 +184,7 @@ async function generated(): Promise<Map<string, string>> {
       "client/auth/build.ts makes these files and client/public/favicon.svg: edit its sources and run `bun run build:auth` in client.\n",
     "icon.html": `<link rel="icon" href="data:image/svg+xml;base64,${btoa(svg)}">`,
     "brand.html": BRAND_LINE,
+    "theme-colors.html": themeColors.join(""),
   };
   const files = new Map(Object.entries(assets).map(([name, text]) => [join(output, name), text]));
   return files.set(join(here, "../public/favicon.svg"), svg);
