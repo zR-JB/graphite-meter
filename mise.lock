@@ -68,157 +68,157 @@ url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/carg
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471599057"
 
 [[tools."aqua:astral-sh/ty"]]
-version = "0.0.98"
+version = "0.0.102"
 backend = "aqua:astral-sh/ty"
-specifiers = ["0.0.98"]
+specifiers = ["0.0.102"]
 
 [tools."aqua:astral-sh/ty"."platforms.linux-arm64"]
-checksum = "sha256:411dafe3a09354ee199c0453140273cf9a50025eae91af693d2dab56f3ea4a27"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248735"
+checksum = "sha256:c026cb215269f1c0f62e49afb722f1945cf0c868f54da1c94a8f7cf4c7365f9d"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278045"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.linux-arm64-musl"]
-checksum = "sha256:3213fa41b170eb436f45d3943cb863ce9f16605985b163ede5caf29ed8f9e6c2"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248745"
+checksum = "sha256:a5d2a5d8d14d132309ca17256fb9e28822c6be7650406f6a4e12af79ab3bff94"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278059"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.linux-x64"]
-checksum = "sha256:e5f52f0da4f536d41f3414e0b153476f94fc8004e5ba06bc1fcf1dc2906c78e9"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714249046"
+checksum = "sha256:2ffb60d6b2f83cb02cfb183af86fefcb411dd5f6f710eac699dc25a19105b563"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278340"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.linux-x64-baseline"]
-checksum = "sha256:e5f52f0da4f536d41f3414e0b153476f94fc8004e5ba06bc1fcf1dc2906c78e9"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714249046"
+checksum = "sha256:2ffb60d6b2f83cb02cfb183af86fefcb411dd5f6f710eac699dc25a19105b563"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278340"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.linux-x64-musl"]
-checksum = "sha256:f311df485ba23cbb76388624a3b2c053c3c10d33b1eb817e208745911f29c85a"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714249077"
+checksum = "sha256:f6b2200892c1271fd98839e73866a38326449263fdc201087a4266db9ebbd7a0"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278374"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:f311df485ba23cbb76388624a3b2c053c3c10d33b1eb817e208745911f29c85a"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714249077"
+checksum = "sha256:f6b2200892c1271fd98839e73866a38326449263fdc201087a4266db9ebbd7a0"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278374"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.macos-arm64"]
-checksum = "sha256:f442260e735f8edc2e8df47afde4513ca1ba00afe1d519498545abf5f71cbefa"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248697"
+checksum = "sha256:da0fead6652ab9e5b1837e0ed057123e478ffc022292fce041e6b4513a63b6b7"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278006"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.macos-x64"]
-checksum = "sha256:b717dd57d4ef2f332bad8f1d39c7cf876e5e82886f3935ccca95ce523b31f9ee"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248984"
+checksum = "sha256:2b390aa6ce7d7b3b3760928349823d9364ea5b58f122eb612e95a5c13a06363b"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278311"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.macos-x64-baseline"]
-checksum = "sha256:b717dd57d4ef2f332bad8f1d39c7cf876e5e82886f3935ccca95ce523b31f9ee"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248984"
+checksum = "sha256:2b390aa6ce7d7b3b3760928349823d9364ea5b58f122eb612e95a5c13a06363b"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278311"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.windows-arm64"]
-checksum = "sha256:fc65cb32800cef83c2f33273951a7a64cdb2140e45f9f2d5c050b6bda6915f86"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-aarch64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248715"
+checksum = "sha256:7dc953b75764c792b1a61404f78ca210234ec3c41c26aa69ffb1468ae969cb77"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-aarch64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278027"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.windows-x64"]
-checksum = "sha256:6ffe0fe8a0e417c52a893fab5bf0787f5f0a25e34c5cb3048ee93589c8bbfae8"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248998"
+checksum = "sha256:155cf7255c11632605e90f5ab336b7938ab15cfddb0ebc166666cfbad9317eaa"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278329"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/ty"."platforms.windows-x64-baseline"]
-checksum = "sha256:6ffe0fe8a0e417c52a893fab5bf0787f5f0a25e34c5cb3048ee93589c8bbfae8"
-url = "https://github.com/astral-sh/ty/releases/download/0.0.98/ty-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/714248998"
+checksum = "sha256:155cf7255c11632605e90f5ab336b7938ab15cfddb0ebc166666cfbad9317eaa"
+url = "https://github.com/astral-sh/ty/releases/download/0.0.102/ty-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/astral-sh/ty/releases/assets/741278329"
 provenance = "github-attestations"
 
 [[tools."aqua:biomejs/biome"]]
-version = "2.6.5"
+version = "2.6.7"
 backend = "aqua:biomejs/biome"
-specifiers = ["2.6.5"]
+specifiers = ["2.6.7"]
 
 [tools."aqua:biomejs/biome"."platforms.linux-arm64"]
-checksum = "sha256:5d57334b79e00d312e0363a71157ad00d3a66f2a6b35ca707b065e3b32099235"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-linux-arm64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482731"
+checksum = "sha256:9fb030ad316bbbf9a7379e52c0a1d2ad44d6b97cc7fec91745f4901961804732"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-linux-arm64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014628"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.linux-arm64-musl"]
-checksum = "sha256:5d57334b79e00d312e0363a71157ad00d3a66f2a6b35ca707b065e3b32099235"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-linux-arm64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482731"
+checksum = "sha256:9fb030ad316bbbf9a7379e52c0a1d2ad44d6b97cc7fec91745f4901961804732"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-linux-arm64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014628"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.linux-x64"]
-checksum = "sha256:0653fd798e50565efac8b1958c9a2786fada55cc6c362b7da4f16efff8dd30d8"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-linux-x64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482723"
+checksum = "sha256:d924b8407471748465121f0a2dc1a0bc277038b0b89142e77583e3ce0dda3746"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-linux-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014619"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.linux-x64-baseline"]
-checksum = "sha256:0653fd798e50565efac8b1958c9a2786fada55cc6c362b7da4f16efff8dd30d8"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-linux-x64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482723"
+checksum = "sha256:d924b8407471748465121f0a2dc1a0bc277038b0b89142e77583e3ce0dda3746"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-linux-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014619"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.linux-x64-musl"]
-checksum = "sha256:0653fd798e50565efac8b1958c9a2786fada55cc6c362b7da4f16efff8dd30d8"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-linux-x64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482723"
+checksum = "sha256:d924b8407471748465121f0a2dc1a0bc277038b0b89142e77583e3ce0dda3746"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-linux-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014619"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:0653fd798e50565efac8b1958c9a2786fada55cc6c362b7da4f16efff8dd30d8"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-linux-x64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482723"
+checksum = "sha256:d924b8407471748465121f0a2dc1a0bc277038b0b89142e77583e3ce0dda3746"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-linux-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014619"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.macos-arm64"]
-checksum = "sha256:fd40c9c679c7a75a8fcef8a4883ab50ef1b8663995c5b3069e26922473671899"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-darwin-arm64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482727"
+checksum = "sha256:5ea2cd7d212b10132ee960ce480fc33aab761d0d6b658a1112c36c2657ed0957"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-darwin-arm64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014629"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.macos-x64"]
-checksum = "sha256:29ecb9534d3c31a13a1fbd7ae391b00f215aa27a7289d610d7f1fde6465b09a6"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-darwin-x64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482724"
+checksum = "sha256:eecc983ea441eb10fc6045ed99bd2c113f7a05703fedbe4566970eff88cd19ef"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-darwin-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014621"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.macos-x64-baseline"]
-checksum = "sha256:29ecb9534d3c31a13a1fbd7ae391b00f215aa27a7289d610d7f1fde6465b09a6"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-darwin-x64"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482724"
+checksum = "sha256:eecc983ea441eb10fc6045ed99bd2c113f7a05703fedbe4566970eff88cd19ef"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-darwin-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014621"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.windows-arm64"]
-checksum = "sha256:ca9750e1cbce443d9a1f85219cec05022436a2f1d0cc6d595166634191c4589c"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-win32-arm64.exe"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482730"
+checksum = "sha256:d016fdc0beeb265c8d9068584501334ee8e45a0480d8093e66abf6198f3e729b"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-win32-arm64.exe"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014623"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.windows-x64"]
-checksum = "sha256:e5d5afe715de1ea71768f0954448fbb9c11a0d8f5167fe9fd6cac336fa5667a1"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-win32-x64.exe"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482720"
+checksum = "sha256:36725369c94245889e9b40ee12e7740563dd2e98fd9b95a62cd986deb9ec132e"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-win32-x64.exe"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014632"
 provenance = "github-attestations"
 
 [tools."aqua:biomejs/biome"."platforms.windows-x64-baseline"]
-checksum = "sha256:e5d5afe715de1ea71768f0954448fbb9c11a0d8f5167fe9fd6cac336fa5667a1"
-url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.5/biome-win32-x64.exe"
-url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/709482720"
+checksum = "sha256:36725369c94245889e9b40ee12e7740563dd2e98fd9b95a62cd986deb9ec132e"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.6.7/biome-win32-x64.exe"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/737014632"
 provenance = "github-attestations"
 
 [[tools."aqua:gitleaks/gitleaks"]]
@@ -494,80 +494,80 @@ checksum = "sha256:0f20ce6674d4f2dbcc8c5d59fdf99f7ba45f8c3b367e0f5781cbfa30a1c78
 url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64-baseline.zip"
 
 [[tools."github:jdx/jactionlint"]]
-version = "2.5.0"
+version = "2.6.0"
 backend = "github:jdx/jactionlint"
-specifiers = ["2.5.0"]
+specifiers = ["2.6.0"]
 
 [tools."github:jdx/jactionlint"."platforms.linux-arm64"]
-checksum = "sha256:ad7e33b6264cea16b7e83ad2bb004824d5b1c15aedb35ba0dc84917f791c5525"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298511"
+checksum = "sha256:c726185a85f26d09aa94ea556509a19827979074b35d65f357f3a4947573e934"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515805"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.linux-arm64-musl"]
-checksum = "sha256:ad7e33b6264cea16b7e83ad2bb004824d5b1c15aedb35ba0dc84917f791c5525"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298511"
+checksum = "sha256:c726185a85f26d09aa94ea556509a19827979074b35d65f357f3a4947573e934"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515805"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.linux-x64"]
-checksum = "sha256:5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298541"
+checksum = "sha256:d5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515801"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.linux-x64-baseline"]
-checksum = "sha256:5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298541"
+checksum = "sha256:d5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515801"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.linux-x64-musl"]
-checksum = "sha256:5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298541"
+checksum = "sha256:d5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515801"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298541"
+checksum = "sha256:d5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515801"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.macos-arm64"]
-checksum = "sha256:15b47d53e3b1aafbd674cca0e8fff0d5952f3cf2a7d7501a8f67576ef76397b4"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298455"
+checksum = "sha256:c3f373c7eac668aacb390b9c802cf4b5e2ad1a11b0b0c0aea6b04ca0cfa0c018"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515965"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.macos-x64"]
-checksum = "sha256:f8f10def21260aa9515974f0aa145f5a6741efd60efe1f880c8c6f53a4ba676c"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_darwin_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298456"
+checksum = "sha256:aa89c49ad5c9530f2308f18333166050f97f14d420f478a8225d043bef1e2cab"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515909"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.macos-x64-baseline"]
-checksum = "sha256:f8f10def21260aa9515974f0aa145f5a6741efd60efe1f880c8c6f53a4ba676c"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_darwin_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298456"
+checksum = "sha256:aa89c49ad5c9530f2308f18333166050f97f14d420f478a8225d043bef1e2cab"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515909"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.windows-arm64"]
-checksum = "sha256:d446527b6fbe1247401f19baa540ff2e6489671616c9721bd9e7d7caa986d2f3"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_windows_arm64.zip"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298676"
+checksum = "sha256:18fc5bd05e94b2fef1ebf76e7e763d0624f93223cc582a2f159d42c471d97730"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_windows_arm64.zip"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740516057"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.windows-x64"]
-checksum = "sha256:6f6202d6fc476cbe3978c7dd2349c881cfcfa98257593cb2f1bde87004f054c6"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_windows_amd64.zip"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298686"
+checksum = "sha256:e939dd8c0eeeb620e70d30aa9aa21c671be078876660a831a82d07e372f0fa4d"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_windows_amd64.zip"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740516065"
 provenance = "github-attestations"
 
 [tools."github:jdx/jactionlint"."platforms.windows-x64-baseline"]
-checksum = "sha256:6f6202d6fc476cbe3978c7dd2349c881cfcfa98257593cb2f1bde87004f054c6"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_windows_amd64.zip"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298686"
+checksum = "sha256:e939dd8c0eeeb620e70d30aa9aa21c671be078876660a831a82d07e372f0fa4d"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_windows_amd64.zip"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740516065"
 provenance = "github-attestations"
 
 [[tools.python]]
