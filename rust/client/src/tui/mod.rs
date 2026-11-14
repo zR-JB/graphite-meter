@@ -255,12 +255,7 @@ impl App {
     }
 
     fn ask_for_server(&mut self) {
-        let address = self
-            .config
-            .url
-            .as_ref()
-            .map(ToString::to_string)
-            .unwrap_or_default();
+        let address = self.config.url.as_ref().map_or_default(ToString::to_string);
         self.overlay = Overlay::Connect(Editor::new(Row::Address, &address));
     }
 

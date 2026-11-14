@@ -212,9 +212,7 @@ fn line(
         .split_once("::")
         .map(|(_, path)| path)
         .filter(|_| matches!(level, Level::Warn | Level::Error));
-    let source = module
-        .map(|module| format!(" ({module})"))
-        .unwrap_or_default();
+    let source = module.map_or_default(|module| format!(" ({module})"));
     let (topic, label) = (format!("{topic}:"), level.label());
     match style {
         Style::Plain => format!("{time} {label:<5} {topic:<TOPIC_WIDTH$} {text}{source}\n"),

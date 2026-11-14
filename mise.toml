@@ -33,10 +33,10 @@ image_buildkit = "docker.io/moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb772
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 # The image's builder (container/Dockerfile).
 image_python = "docker.io/library/python:3.15.2-slim-trixie@sha256:e97b88e416c3c01eb427b21fd8cd3ebf006e6ee38afcfcc3cae1c54ee2ab0a75"
-image_rust = "docker.io/library/rust:1.99.1-trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc"
+image_rust = "docker.io/library/rust:1.100.0-trixie@sha256:e19840879045c951c905d0eaa9887f3439c62000e429963371b376bac8d38c31"
 
 # SHA-256 of static.rust-lang.org/dist/channel-rust-<channel>.toml for rust/rust-toolchain.toml's channel.
-rust_manifest_sha256 = "fb152be80975c194aa5fc684b2aec3a6e14e2b855efe2faa4e5f8ae6e590f463"
+rust_manifest_sha256 = "3051e859570f64a8c5acb9d09e87425db52c7d97287c67e8f6d57d7d34ef9258"
 # The llvm-mingw release that cross-links the Windows arm64 client, and the SHA-256 of its
 # llvm-mingw-<release>-ucrt-ubuntu-22.04-x86_64.tar.xz.
 llvm_mingw = "20261104"

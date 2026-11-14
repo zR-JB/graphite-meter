@@ -1234,10 +1234,9 @@ impl App {
                     palette.warn,
                 )
             }
-            Some(Outcome::Partial | Outcome::Incomplete) => Line::styled(
-                run.map(|run| self.ending(run)).unwrap_or_default(),
-                palette.warn,
-            ),
+            Some(Outcome::Partial | Outcome::Incomplete) => {
+                Line::styled(run.map_or_default(|run| self.ending(run)), palette.warn)
+            }
             _ => Line::default(),
         }
     }

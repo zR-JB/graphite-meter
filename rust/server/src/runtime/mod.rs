@@ -76,9 +76,7 @@ impl Server {
             count => format!("{count} other servers"),
         };
         let location = Some(config.location()).filter(|location| !location.is_empty());
-        let location = location
-            .map(|location| format!(" ({location})"))
-            .unwrap_or_default();
+        let location = location.map_or_default(|location| format!(" ({location})"));
         log!(
             Info,
             "config",

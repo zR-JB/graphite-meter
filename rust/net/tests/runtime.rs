@@ -30,10 +30,7 @@ async fn a_current_thread_runtime_is_refused_and_an_inline_pool_serves_on_the_ca
     assert_eq!(refused.kind(), std::io::ErrorKind::Unsupported);
     let pool = Pool::inline();
     assert!(pool.runtimes().is_empty());
-    let caller = std::thread::current()
-        .name()
-        .map(str::to_owned)
-        .unwrap_or_default();
+    let caller = std::thread::current().name().map_or_default(str::to_owned);
     assert_eq!(thread_of(pool.next()).await, caller);
 }
 

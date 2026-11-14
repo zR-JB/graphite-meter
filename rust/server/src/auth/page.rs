@@ -256,7 +256,7 @@ fn page(title: &str, head: &str, class: &str, main: &str, forms: bool) -> String
 pub(super) fn protect(headers: &mut HeaderMap, secure: bool, forms: Option<&str>) {
     static HASHES: LazyLock<[String; 3]> = LazyLock::new(|| [STYLES, THEME, PENDING].map(sha256));
     let [styles, theme, pending] = &*HASHES;
-    let forms = forms.map(|origin| format!(" {origin}")).unwrap_or_default();
+    let forms = forms.map_or_default(|origin| format!(" {origin}"));
     let policy = format!(
         "default-src 'none'; style-src 'sha256-{styles}'; font-src 'self'; script-src 'sha256-{theme}' \
          'sha256-{pending}'; connect-src 'self'; img-src data:; form-action 'self'{forms}; frame-ancestors 'none'; \
