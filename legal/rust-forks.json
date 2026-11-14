@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.4.0",
-    "rev": "b868d09b61b261b6fb932351bb42dadb220b7984",
+    "rev": "9791b55b074aa2149ac795471404cb0dc0eb2c15",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.4.0",
     "base": "34f75c49f93de5e2ff943483cabc5b6d0c5df918",
-    "diffSha256": "28fb15c84b49817caa5b1a2724d279675b3cf3150af8a1346ab229f2b55c098e",
+    "diffSha256": "f99e99321b9a58a745626a57ddd71e392e93e607f8f2514789c25bc21253415d",
     "modifiedPackages": [
       "noq",
       "noq-proto",
@@ -24,7 +24,10 @@
       "RUSTSEC-2026-0340": "Fixed by the fork's port of quinn #2868, and unreachable: the server leaves ack_frequency_config unset.",
       "RUSTSEC-2026-0341": "Not affected: every reassembly fragment's allocation is charged to the fork's receive budget, and gaps of a stream read out of order are capped by the fork commit \"Cap the gaps of a stream read out of order\".",
       "RUSTSEC-2026-0342": "Fixed upstream in noq 1.4.0, whose DatagramBuffer counts each entry in both directions; received datagrams also charge their own budget, by the fork commit \"Charge received datagrams to a budget of their own\".",
-      "RUSTSEC-2026-0343": "Not affected: DatagramBuffer subtracts an evicted datagram once, in pop_front."
+      "RUSTSEC-2026-0343": "Not affected: DatagramBuffer subtracts an evicted datagram once, in pop_front.",
+      "RUSTSEC-2026-0523": "Fixed by \"Validate peer stream limits in MAX_STREAM_DATA\", with the existing limit guard in ensure_remote.",
+      "RUSTSEC-2026-0524": "Fixed by \"proto: reject Initial tokens that prevent packet construction\" and \"proto: reserve close frame space after large Initial headers\".",
+      "RUSTSEC-2026-0538": "Fixed by \"udp: handle receive errors before truncation flags\", also present upstream as noq #884."
     },
     "commits": [
       {"subject": "feat: reset_stream_at TransportParameter", "purpose": "Adds the reset_stream_at transport parameter and its endpoint option and 0-RTT compatibility check.", "origin": "n0-computer/noq#805 b7a4d3663e904d5d9b20fa3d2fa28295aacfb4f5"},
@@ -118,7 +121,8 @@
       {"subject": "Charge a floorless budget's shared bytes in small steps", "purpose": "Charges a floorless budget's shared bytes in 4 KiB steps, so a held datagram does not hold a 64 KiB step of the shared budget.", "origin": "graphite-meter"},
       {"subject": "Drop data buffered past a reliable reset's size", "purpose": "Drops data buffered past the reliable size when a RESET_STREAM_AT arrives or lowers it.", "origin": "graphite-meter"},
       {"subject": "Drop a lowered reliable size's tail only once it halves", "purpose": "Drops a lowered reliable size's buffered tail only once the undelivered span has halved since the last drop, so byte-by-byte reductions cannot cost quadratic time.", "origin": "graphite-meter"},
-      {"subject": "Release a reassembly heap that a reset emptied", "purpose": "Releases the reassembly heap's charged capacity once dropping a reset's tail empties it.", "origin": "graphite-meter"}
+      {"subject": "Release a reassembly heap that a reset emptied", "purpose": "Releases the reassembly heap's charged capacity once dropping a reset's tail empties it.", "origin": "graphite-meter"},
+      {"subject": "Validate peer stream limits in MAX_STREAM_DATA", "purpose": "Closes the connection when MAX_STREAM_DATA names a peer-initiated bidirectional stream above the advertised limit.", "origin": "quinn-rs/quinn 3eb7465d9e11d7a245e99cde1a4eb872ec26d264"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
@@ -130,11 +134,11 @@
   {
     "fork": "https://github.com/zR-JB/h2",
     "branch": "graphite-meter/h2-v0.4.20",
-    "rev": "7a7c2527475965cfd4da2130ef4bf5fe361f6431",
+    "rev": "10b63a0b662d7b9278f8b48e00e00a8623c9f8a1",
     "upstream": "https://github.com/hyperium/h2",
     "baseTag": "v0.4.20",
     "base": "b0e890842ac16d3c76836fd4fcc06421acb15fa7",
-    "diffSha256": "4432d689dd2f6a1dbfefcb424f169d02c93e79cab5d49c51f75232a6dc6adf5b",
+    "diffSha256": "2ac0ad083533b5132ec133ee5e91249a995ca859de4c2f0ef36f81c28877318d",
     "modifiedPackages": [
       "h2"
     ],
@@ -198,7 +202,9 @@
       {"subject": "Refresh large receive windows once a mebibyte is unclaimed", "purpose": "Caps the WINDOW_UPDATE threshold at 1 MiB so a large receive window stays nearly full over a long path, as Go refreshes after 4 KiB.", "origin": "graphite-meter"},
       {"subject": "Scale the large-window refresh with the window", "purpose": "Refreshes a window once a sixteenth of it, at least 1 MiB, is unclaimed, so a 64 MiB window does not send an update per mebibyte.", "origin": "graphite-meter"},
       {"subject": "fix: preserve received END_STREAM on connection error and EOF (#977)", "purpose": "Keeps a received END_STREAM when the connection errors, sends GOAWAY or reaches EOF.", "origin": "hyperium/h2#977 e8b92c9273a011bf1093cbf09ab639e121b11057"},
-      {"subject": "Hold v0.4.20's code to the fork's strict lints", "purpose": "Moves recv.rs's impls back before its tests and asserts with assert! in v0.4.20's code.", "origin": "graphite-meter"}
+      {"subject": "Hold v0.4.20's code to the fork's strict lints", "purpose": "Moves recv.rs's impls back before its tests and asserts with assert! in v0.4.20's code.", "origin": "graphite-meter"},
+      {"subject": "fix: requeue released credit on recv window shrink (#1002)", "purpose": "Queues WINDOW_UPDATE when shrinking the receive window makes released stream credit eligible.", "origin": "hyperium/h2#1002 59126f1be224824da480f751e9473b87b3c8cd09"},
+      {"subject": "Keep header fragmentation test socket open through response", "purpose": "Waits for the client to read the response before dropping the test socket.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"

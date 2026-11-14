@@ -23,7 +23,6 @@ from scripts.legal.rust_inventory import compiled, components, selected
 from scripts.legal.rust_platform import SYSROOT
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
-NOQ = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
 
 
 class Scratch(unittest.TestCase):
@@ -61,20 +60,24 @@ class InventoryTests(Scratch):
                 selected(metadata, crates)
 
     def test_registry_reviews_span_versions_git_reviews_bind_the_fork_and_workspace_crates_need_none(self) -> None:
-        packages = [self.package("ring", "0.17.15", REGISTRY), self.package("noq", "1.3.0", NOQ),
+        forks = json.loads((ROOT / "legal/rust-forks.json").read_text())
+        fork = next(item for item in forks if "noq" in item["modifiedPackages"])
+        revision = fork["rev"]
+        source = f"git+{fork['fork']}?rev={revision}#{revision}"
+        packages = [self.package("ring", "0.17.15", REGISTRY), self.package("noq", "1.3.0", source),
                     self.package("graphite-meter-net", "0.0.0", None)]
         metadata = {"packages": packages, "workspace_members": ["graphite-meter-net@0.0.0"]}
         builds: dict[str, Any] = {item["id"]: {} for item in packages}
         reviews = [self.review("ring", "0.16.20"), self.review("ring", "0.17.14"),
-                   self.review("noq", "1.3.0", NOQ, True)]
+                   self.review("noq", "1.3.0", source, True)]
         found, inventory, failures = components(metadata, builds, reviews, [])
         self.assertEqual(failures, {})
         self.assertEqual([(item.name, item.modified) for item in found], [("noq", True), ("ring", False)])
-        self.assertEqual(inventory[0]["upstreamRevision"], "b868d09b61b261b6fb932351bb42dadb220b7984")
+        self.assertEqual(inventory[0]["upstreamRevision"], revision)
         _, _, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
-                                                       self.review("noq", "1.2.0", NOQ, True)], [])
-        self.assertEqual(list(failures), [("noq", "1.3.0", NOQ)])
-        other = NOQ.replace(NOQ[-40:], "0" * 40)
+                                                       self.review("noq", "1.2.0", source, True)], [])
+        self.assertEqual(list(failures), [("noq", "1.3.0", source)])
+        other = source.replace(revision, "0" * 40)
         with self.assertRaisesRegex(LegalError, "unreviewed Cargo git source"):
             components({"packages": [self.package("noq", "1.3.0", other)], "workspace_members": []},
                        {"noq@1.3.0": {}}, [], [])

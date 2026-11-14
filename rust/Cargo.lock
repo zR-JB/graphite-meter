@@ -741,7 +741,7 @@ dependencies = [
 [[package]]
 name = "h2"
 version = "0.4.20"
-source = "git+https://github.com/zR-JB/h2?rev=7a7c2527475965cfd4da2130ef4bf5fe361f6431#7a7c2527475965cfd4da2130ef4bf5fe361f6431"
+source = "git+https://github.com/zR-JB/h2?rev=10b63a0b662d7b9278f8b48e00e00a8623c9f8a1#10b63a0b662d7b9278f8b48e00e00a8623c9f8a1"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1171,7 +1171,7 @@ dependencies = [
 [[package]]
 name = "noq"
 version = "1.4.0"
-source = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
+source = "git+https://github.com/zR-JB/noq?rev=9791b55b074aa2149ac795471404cb0dc0eb2c15#9791b55b074aa2149ac795471404cb0dc0eb2c15"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -1192,7 +1192,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.4.0"
-source = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
+source = "git+https://github.com/zR-JB/noq?rev=9791b55b074aa2149ac795471404cb0dc0eb2c15#9791b55b074aa2149ac795471404cb0dc0eb2c15"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1217,7 +1217,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.4.0"
-source = "git+https://github.com/zR-JB/noq?rev=b868d09b61b261b6fb932351bb42dadb220b7984#b868d09b61b261b6fb932351bb42dadb220b7984"
+source = "git+https://github.com/zR-JB/noq?rev=9791b55b074aa2149ac795471404cb0dc0eb2c15#9791b55b074aa2149ac795471404cb0dc0eb2c15"
 dependencies = [
  "cfg_aliases",
  "libc",
