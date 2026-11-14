@@ -156,18 +156,19 @@ def download(url: str, limit: int = 16 * 1024 * 1024, timeout: float = 30, retri
         return download(url, limit, timeout, retries - 1)
 
 
-def latest_browsers(fetch: Callable[[str], bytes] = download) -> dict[str, str]:
-    """The newest stable Chrome for Testing and Firefox, with Mozilla's SHA-256 of Firefox's Linux archive."""
+def latest_browsers(fetch: Callable[[str], bytes] = download, *, beta: bool = False) -> dict[str, str]:
+    """Exact Chrome for Testing and Firefox releases, with Mozilla's Linux archive digest."""
     def exact(name: str, value: object) -> str:
-        if not isinstance(value, str) or re.fullmatch(PIN_PATTERNS["browser"][name], value) is None:
+        pattern = r"\d+\.\d+b\d+" if beta and name == "firefox" else PIN_PATTERNS["browser"][name]
+        if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
             raise ValueError(f"the latest {name} is not an exact release: {value!r}")
         return value
 
     try:
         chrome = json.loads(fetch("https://googlechromelabs.github.io/chrome-for-testing/"
-                                  "last-known-good-versions.json"))["channels"]["Stable"]["version"]
+                                  "last-known-good-versions.json"))["channels"]["Beta" if beta else "Stable"]["version"]
         firefox = json.loads(fetch("https://product-details.mozilla.org/1.0/firefox_versions.json"))[
-            "LATEST_FIREFOX_VERSION"]
+            "LATEST_FIREFOX_RELEASED_DEVEL_VERSION" if beta else "LATEST_FIREFOX_VERSION"]
     except (KeyError, TypeError) as exc:
         raise ValueError(f"unexpected browser release metadata: {exc!r}") from exc
     firefox = exact("firefox", firefox)
@@ -277,7 +278,10 @@ def main() -> None:
                                  "verify-rust", "llvm-mingw"))
     parser.add_argument("name", nargs="?")
     parser.add_argument("--write", action="store_true", help="pin the latest browsers in mise.toml")
+    parser.add_argument("--beta", action="store_true", help="resolve released Beta versions without changing pins")
     args = parser.parse_args()
+    if args.beta and (args.command != "latest-browsers" or args.write):
+        parser.error("--beta applies to latest-browsers without --write")
     if args.write and args.command != "latest-browsers":
         parser.error("--write applies to latest-browsers")
     try:
@@ -287,7 +291,7 @@ def main() -> None:
                     parser.error("get requires a section.name")
                 print(pin(args.name))
             case "browsers" | "latest-browsers":
-                browsers = load_pins()["browser"] if args.command == "browsers" else latest_browsers()
+                browsers = load_pins()["browser"] if args.command == "browsers" else latest_browsers(beta=args.beta)
                 if args.write:
                     write_browsers(browsers)
                 print("\n".join(f"{name}={value}" for name, value in browsers.items()))

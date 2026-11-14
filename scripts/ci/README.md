@@ -51,7 +51,10 @@ fetches, and CI checks the client packages against the registry's advisories, so
 request that runs the code checks. The daily Advisories workflow also checks the lockfiles when no code has changed.
 `rust-deny-fetch` retries a failed fetch twice and never falls back to an older copy. Pull requests and pushes test
 the browsers `mise.toml` pins. Use `mise run browser-bump` to move the pins to the latest stable Chrome for Testing and
-Firefox.
+Firefox. The separate Browser Beta smoke workflow runs on Tuesdays at 06:17 UTC and can also be dispatched from
+main. It builds the reviewed server once and runs the signed-in, cross-origin WebTransport scenario with the current
+Firefox and Chrome for Testing Betas. Failures show in Actions with browser and server diagnostics. This workflow
+leaves the merge gate and committed browser pins alone.
 
 ## Releases
 

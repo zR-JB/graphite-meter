@@ -189,6 +189,19 @@ class ToolchainBoundaryTests(unittest.TestCase):
             with self.subTest(body=body), self.assertRaisesRegex(ValueError, error):
                 latest_browsers((released | {url: body}).__getitem__)
 
+    def test_beta_browsers_use_published_versions_and_the_matching_firefox_archive(self) -> None:
+        chrome = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json"
+        firefox = "https://product-details.mozilla.org/1.0/firefox_versions.json"
+        sums = "https://ftp.mozilla.org/pub/firefox/releases/161.0b3/SHA256SUMS"
+        digest = "ab" * 32
+        released = {
+            chrome: b'{"channels":{"Stable":{"version":"157.0.8103.78"},"Beta":{"version":"159.0.8154.6"}}}',
+            firefox: b'{"LATEST_FIREFOX_RELEASED_DEVEL_VERSION":"161.0b3","LATEST_FIREFOX_DEVEL_VERSION":"161.0b4"}',
+            sums: f"{digest}  linux-x86_64/en-US/firefox-161.0b3.tar.xz\n".encode(),
+        }
+        self.assertEqual(latest_browsers(released.__getitem__, beta=True),
+                         {"chrome": "159.0.8154.6", "firefox": "161.0b3", "firefox_sha256": digest})
+
     def test_a_download_cut_short_is_retried_and_one_too_large_refused(self) -> None:
         bodies = [b"cut", b"whole body", b"cut", b"cut", b"cut"]
 
