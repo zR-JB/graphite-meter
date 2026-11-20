@@ -162,7 +162,7 @@ try {
         ...process.env,
         GM_E2E: JSON.stringify({ fleet, password, passwordHash }),
         GM_E2E_LAUNCH: JSON.stringify(launched),
-        ...(network && { GM_E2E_CA: ca }),
+        GM_E2E_CA: ca,
         BUN_CHROME_ARGS: [
           process.env.BUN_CHROME_ARGS ?? "",
           `--ignore-certificate-errors-spki-list=${spki}`,

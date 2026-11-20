@@ -18,62 +18,61 @@ const paths = [
   ],
 ] as const;
 
-// Only Chrome takes the run's certificate for QUIC. These stages run their planned time, so downloads end on the server's
-// clock and no worker ends mid-download.
+// These stages run their planned time, so downloads end on the server's clock and no worker ends mid-download.
 for (const [name, at, throughputTarget, origin, transport, protocol] of paths)
-  (protocol === "h3" ? test.chrome : test)(
-    `${name} carries both directions over ${protocol}`,
-    async (page) => {
-      // Latency's WebTransport path is the datagram bus too, so this cell carries both.
-      const datagrams = transport === "webtransport-datagram";
-      await open(page, at, {
-        config: {
-          transports: {
-            throughputTarget,
-            latencyTarget: datagrams ? "transport:webtransport" : "transport:websocket",
-          },
-          stages: { ...baseConfig.stages, latency: datagrams },
+  test(`${name} carries both directions over ${protocol}`, async (page) => {
+    const quic = protocol === "h3";
+    await open(page, at, {
+      config: {
+        transports: {
+          throughputTarget,
+          latencyTarget: quic ? "transport:webtransport" : "transport:websocket",
         },
-      });
-      await ready(page);
-      await page.evaluate(() => {
-        const feeds = new Set<string>();
-        const fetch = window.fetch.bind(window);
-        window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-          const url = new URL(String(input), location.href);
-          if (url.pathname === "/upload/progress" && !init?.method)
-            feeds.add(url.origin + url.pathname);
-          return fetch(input, init);
-        }) as typeof fetch;
-        window.WebSocket = class extends WebSocket {
-          constructor(at: string | URL, protocols?: string | string[]) {
-            super(at, protocols);
-            const url = new URL(at);
-            if (url.pathname === "/ws/progress") feeds.add(url.origin + url.pathname);
-          }
-        };
-        Object.assign(window, { feeds });
-      });
-      const saved = await run(page);
-      expect(saved.result.outcome).toBe("complete");
-      expect(saved.result.multiServer.failures).toEqual([]);
-      const server = saved.result.multiServer.servers[0]!;
-      expect(server.throughput).toMatchObject({
-        origin,
-        transport,
-        protocol: PROTOCOL[protocol],
-        browserProtocol: protocol,
-      });
-      expect(server.download?.reportedBytesPerSec).toBeGreaterThan(0);
-      expect(server.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-      // An upload's feed goes to the discovery origin, the page's here, over its WebSocket as it serves HTTP/1.1.
-      const feed = `${at.replace(/^http/, "ws")}/ws/progress`;
-      expect(await page.evaluate(() => [...(window as any).feeds])).toEqual(
-        transport === "fetch-stream" ? [feed] : [],
-      );
-      if (datagrams) {
-        expect(server.latencyTarget).toEqual({ origin: home.h3, transport: "webtransport" });
-        expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
-      }
-    },
-  );
+        stages: { ...baseConfig.stages, latency: quic, bidirectional: quic },
+      },
+    });
+    await ready(page);
+    await page.evaluate(() => {
+      const feeds = new Set<string>();
+      const fetch = window.fetch.bind(window);
+      window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), location.href);
+        if (url.pathname === "/upload/progress" && !init?.method)
+          feeds.add(url.origin + url.pathname);
+        return fetch(input, init);
+      }) as typeof fetch;
+      window.WebSocket = class extends WebSocket {
+        constructor(at: string | URL, protocols?: string | string[]) {
+          super(at, protocols);
+          const url = new URL(at);
+          if (url.pathname === "/ws/progress") feeds.add(url.origin + url.pathname);
+        }
+      };
+      Object.assign(window, { feeds });
+    });
+    const saved = await run(page);
+    expect(saved.result.outcome).toBe("complete");
+    expect(saved.result.multiServer.failures).toEqual([]);
+    const server = saved.result.multiServer.servers[0]!;
+    expect(server.throughput).toMatchObject({
+      origin,
+      transport,
+      protocol: PROTOCOL[protocol],
+    });
+    expect(server.throughput.browserProtocol).toBe(
+      transport === "fetch-stream" ? protocol : undefined,
+    );
+    expect(server.download?.reportedBytesPerSec).toBeGreaterThan(0);
+    expect(server.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+    // An upload's feed goes to the discovery origin, the page's here, over its WebSocket as it serves HTTP/1.1.
+    const feed = `${at.replace(/^http/, "ws")}/ws/progress`;
+    expect(await page.evaluate(() => [...(window as any).feeds])).toEqual(
+      transport === "fetch-stream" ? [feed] : [],
+    );
+    if (quic) {
+      expect(server.latencyTarget).toEqual({ origin: home.h3, transport: "webtransport" });
+      expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
+      expect(server.bidirectional?.down?.reportedBytesPerSec).toBeGreaterThan(0);
+      expect(server.bidirectional?.up?.reportedBytesPerSec).toBeGreaterThan(0);
+    }
+  });

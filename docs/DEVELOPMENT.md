@@ -48,8 +48,8 @@ executables say `UNREVIEWED DEVELOPMENT BUILD` and are not distributable. `serve
 argument and a group second: `all` (the default, network group included), `reversals` or `heavy` (halves of the
 performance tests), `rest-1` or `rest-2` (halves of the rest), or `network` and `network-1` to `network-3`. The
 network group shapes loopback in a private user and network namespace, so it needs `unshare`, `ip`, `ethtool` and
-`tc`, and `certutil` for Firefox. `client/scripts/e2e.ts` starts five servers with an ephemeral certificate. They
-are a home server with a catalog, three public peers and a password-protected peer. The script drives the browser
+`tc`. Every Firefox group needs `certutil` to trust its ephemeral certificate. `client/scripts/e2e.ts` starts five
+servers: a home server with a catalog, three public peers and a password-protected peer. The script drives the browser
 through `client/e2e/webview.ts`. It drives Chrome over its DevTools Protocol, where `BUN_CHROME_PATH` names another
 build, or with `GM_E2E_BROWSER=firefox` it drives Firefox over WebDriver BiDi, where `GM_FIREFOX_PATH` names another
 build. Tests written `test.chrome` need the DevTools Protocol, so Firefox skips them. Failures keep a screenshot,
