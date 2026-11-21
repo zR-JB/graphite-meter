@@ -32,42 +32,8 @@ fn embed() -> Result<(), String> {
             );
         }
         println!("cargo:rerun-if-changed={}", root.display());
-        const MAX_GZIP_INFLATE_BYTES: usize = 8 << 20;
-        let scanned = scan::scan(&root, reviewed.is_some())?;
-        let by_name: std::collections::HashMap<&str, &[u8]> = scanned
-            .iter()
-            .map(|file| (file.name.as_str(), file.bytes.as_slice()))
-            .collect();
-        let mut elide_plain = std::collections::HashSet::new();
-        for file in &scanned {
-            let Some(base) = file.name.strip_suffix(".gz") else {
-                continue;
-            };
-            let inflated =
-                graphite_meter_legal::gunzip_single_member(&file.bytes, MAX_GZIP_INFLATE_BYTES)
-                    .ok_or_else(|| {
-                        format!(
-                            "invalid or oversized gzip browser asset (must be single-member RFC 1952 <= {MAX_GZIP_INFLATE_BYTES} B): {}",
-                            file.name
-                        )
-                    })?;
-            if let Some(plain) = by_name.get(base)
-                && inflated.as_slice() != *plain
-            {
-                return Err(format!(
-                    "gzip browser asset {} does not match sibling {base}",
-                    file.name
-                ));
-            }
-            if base != "index.html" {
-                elide_plain.insert(base);
-            }
-        }
+        let scanned = scan::validate_and_elide_gzip(scan::scan(&root, reviewed.is_some())?)?;
         for (number, file) in scanned.iter().enumerate() {
-            // Skip validated uncompressed plain copies when a matching .gz copy exists (except index.html).
-            if elide_plain.contains(file.name.as_str()) {
-                continue;
-            }
             // rustc includes this checked copy, never the source file.
             let snapshot = format!("browser-asset-{number}");
             fs::write(output.join(&snapshot), &file.bytes)

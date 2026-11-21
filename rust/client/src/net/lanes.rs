@@ -36,18 +36,6 @@ const MOVED_BYTES: u64 = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
 const CHUNKS_PER_READ: usize = 32;
 
-#[cfg(target_os = "linux")]
-use nix::{libc, setsockopt_impl, sockopt_impl};
-
-#[cfg(target_os = "linux")]
-sockopt_impl!(
-    ReadLowWater,
-    SetOnly,
-    libc::SOL_SOCKET,
-    libc::SO_RCVLOWAT,
-    libc::c_int
-);
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThroughputPath {
     pub origin: Origin,
@@ -854,19 +842,11 @@ async fn direct_download(
     tally: &Tally,
     disable_direct: &AtomicBool,
 ) -> Result<bool, Fault> {
+    use graphite_meter_net::lowat::{BulkRead, READ_LOWAT_MIN};
     use http::header;
-    use nix::{libc, sys::socket::setsockopt};
     use rustix::net::{RecvFlags, recv};
     use tokio::io::{AsyncWriteExt, Interest};
 
-    const LOWAT_MIN: u64 = 4 << 10;
-    const LOWAT_MAX: u64 = 16 << 10;
-    const SMALL_BURST: u64 = 4 << 10;
-    const SAMPLE_BYTES: u64 = 32 << 10;
-    const SAMPLE_WAITS: u8 = 12;
-    const SAMPLE_TIME: Duration = Duration::from_millis(25);
-    const TARGET_WAIT_US: u128 = 2_000;
-    const FALLBACK_WAIT: Duration = Duration::from_millis(5);
     const YIELD_BYTES: u64 = 4 << 20;
 
     let head = client.head(request)?;
@@ -919,17 +899,15 @@ async fn direct_download(
     let mut remaining = total - initial;
     // Linux `MSG_TRUNC` never writes to this buffer; uninitialized capacity touches zero physical pages.
     let mut discard: Vec<u8> = Vec::with_capacity(256 << 10);
-    let mut sample_started = Instant::now();
-    let mut sample_bytes: u64 = 0;
-    let mut burst: u64 = 0;
-    let mut short_waits: u8 = 0;
-    let mut total_waits: u32 = 0;
-    let mut batched_lowat: u64 = 0;
+    let mut bulk_read = if remaining > READ_LOWAT_MIN {
+        BulkRead::sample()
+    } else {
+        BulkRead::Ordinary
+    };
     let mut since_yield: u64 = 0;
     while remaining > 0 {
-        if batched_lowat > 0 && remaining <= batched_lowat {
-            let _ = setsockopt(&socket, ReadLowWater, &1);
-            batched_lowat = 0;
+        if bulk_read.is_batched() && remaining <= bulk_read.lowat() {
+            let _ = bulk_read.finish(&socket);
         }
         let cap = remaining.min(discard.capacity() as u64) as usize;
         let read = socket.try_io(Interest::READABLE, || {
@@ -941,16 +919,16 @@ async fn direct_download(
             Ok(len)
         });
         match read {
-            Ok(0) => return Err(Fault::Lost),
+            Ok(0) => {
+                let _ = bulk_read.finish(&socket);
+                return Err(Fault::Lost);
+            }
             Ok(n) => {
                 let n = n.min(cap);
                 tally.bytes.fetch_add(n as u64, Ordering::Relaxed);
                 lane.moved = true;
                 remaining -= n as u64;
-                if batched_lowat == 0 {
-                    sample_bytes += n as u64;
-                    burst += n as u64;
-                }
+                bulk_read.on_read(n);
                 since_yield += n as u64;
                 if since_yield >= YIELD_BYTES {
                     since_yield = 0;
@@ -959,62 +937,30 @@ async fn direct_download(
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 since_yield = 0;
-                if batched_lowat == 0 {
-                    total_waits = total_waits.saturating_add(1);
-                    if (1..=SMALL_BURST).contains(&std::mem::take(&mut burst)) {
-                        short_waits = short_waits.saturating_add(1);
-                    }
-                    if sample_bytes >= SAMPLE_BYTES {
-                        let now = Instant::now();
-                        let elapsed = now.saturating_duration_since(sample_started);
-                        let avg_small = sample_bytes <= u64::from(total_waits) * SMALL_BURST;
-                        if short_waits >= SAMPLE_WAITS && avg_small && elapsed <= SAMPLE_TIME {
-                            let target = ((sample_bytes as u128 * TARGET_WAIT_US)
-                                / elapsed.as_micros().max(1))
-                            .min(LOWAT_MAX as u128) as u64;
-                            let cap_lowat = remaining.saturating_sub(1).min(LOWAT_MAX);
-                            let lowat = target.min(cap_lowat);
-                            if lowat >= LOWAT_MIN
-                                && remaining > lowat
-                                && setsockopt(&socket, ReadLowWater, &(lowat as libc::c_int))
-                                    .is_ok()
-                            {
-                                batched_lowat = lowat;
-                            } else {
-                                sample_started = now;
-                                sample_bytes = 0;
-                                short_waits = 0;
-                                total_waits = 0;
-                            }
-                        } else {
-                            sample_started = now;
-                            sample_bytes = 0;
-                            short_waits = 0;
-                            total_waits = 0;
-                        }
-                    }
+                if !bulk_read.is_batched() {
+                    bulk_read.on_would_block(&socket, remaining);
                 }
-                if batched_lowat > 0 {
-                    match timeout(FALLBACK_WAIT, socket.readable()).await {
+                if bulk_read.is_batched() {
+                    match timeout(BulkRead::WAIT, socket.readable()).await {
                         Ok(Ok(())) => {}
-                        Ok(Err(_)) => return Err(Fault::Lost),
-                        Err(_) => {
-                            let _ = setsockopt(&socket, ReadLowWater, &1);
-                            batched_lowat = 0;
-                            sample_started = Instant::now();
-                            sample_bytes = 0;
-                            burst = 0;
-                            short_waits = 0;
-                            total_waits = 0;
+                        Ok(Err(_)) => {
+                            let _ = bulk_read.finish(&socket);
+                            return Err(Fault::Lost);
                         }
+                        Err(_) => bulk_read.reset_after_timeout(&socket),
                     }
-                } else {
-                    socket.readable().await.map_err(|_| Fault::Lost)?;
+                } else if socket.readable().await.is_err() {
+                    let _ = bulk_read.finish(&socket);
+                    return Err(Fault::Lost);
                 }
             }
-            Err(_) => return Err(Fault::Lost),
+            Err(_) => {
+                let _ = bulk_read.finish(&socket);
+                return Err(Fault::Lost);
+            }
         }
     }
+    let _ = bulk_read.finish(&socket);
     Ok(true)
 }
 

@@ -11,6 +11,49 @@ pub struct File {
     pub bytes: Vec<u8>,
 }
 
+/// Maximum uncompressed size of a precompressed `.gz` asset that the server may inflate on demand.
+pub const MAX_GZIP_INFLATE_BYTES: usize = 8 << 20;
+
+/// Validates every `.gz` asset as single-member RFC 1952 within `MAX_GZIP_INFLATE_BYTES`, verifies byte equality with
+/// any plain sibling, and drops redundant non-`index.html` plain copies that have a validated `.gz` sibling.
+pub fn validate_and_elide_gzip(files: Vec<File>) -> Result<Vec<File>, String> {
+    use std::collections::{HashMap, HashSet};
+
+    let by_name: HashMap<&str, &[u8]> = files
+        .iter()
+        .map(|file| (file.name.as_str(), file.bytes.as_slice()))
+        .collect();
+    let mut elide_plain: HashSet<String> = HashSet::new();
+    for file in &files {
+        let Some(base) = file.name.strip_suffix(".gz") else {
+            continue;
+        };
+        let inflated =
+            graphite_meter_legal::gunzip_single_member(&file.bytes, MAX_GZIP_INFLATE_BYTES)
+                .ok_or_else(|| {
+                    format!(
+                        "invalid or oversized gzip browser asset (must be single-member RFC 1952 <= {MAX_GZIP_INFLATE_BYTES} B): {}",
+                        file.name
+                    )
+                })?;
+        if let Some(plain) = by_name.get(base)
+            && inflated.as_slice() != *plain
+        {
+            return Err(format!(
+                "gzip browser asset {} does not match sibling {base}",
+                file.name
+            ));
+        }
+        if base != "index.html" {
+            elide_plain.insert(base.to_owned());
+        }
+    }
+    Ok(files
+        .into_iter()
+        .filter(|file| !elide_plain.contains(&file.name))
+        .collect())
+}
+
 /// Lists `root`'s files by name. Unreviewed builds omit the browser's notices, reviewed ones serve the report's.
 pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
     let mut paths = Vec::new();
@@ -225,5 +268,75 @@ mod tests {
         scratch.file("favicon.svg", "<svg/>").unwrap();
         let refusal = "the browser asset directory has no index.html";
         assert_eq!(scan(scratch.path(), false).err().as_deref(), Some(refusal));
+    }
+
+    fn make_gzip(plain: &[u8]) -> Vec<u8> {
+        let raw = miniz_oxide::deflate::compress_to_vec(plain, 6);
+        let mut out = Vec::with_capacity(10 + raw.len() + 8);
+        out.extend_from_slice(&[0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 0xff]);
+        out.extend_from_slice(&raw);
+        out.extend_from_slice(&graphite_meter_legal::crc32(plain).to_le_bytes());
+        out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn gzip_validation_elides_matching_plain_siblings_and_refuses_corrupt_or_stale_gz() {
+        let js = b"export const ok = true;\n";
+        let index = INDEX.as_bytes();
+        let valid = vec![
+            File {
+                name: "index.html".into(),
+                content_type: "text/html; charset=utf-8",
+                bytes: index.to_vec(),
+            },
+            File {
+                name: "index.html.gz".into(),
+                content_type: "text/html; charset=utf-8",
+                bytes: make_gzip(index),
+            },
+            File {
+                name: "assets/app.js".into(),
+                content_type: "text/javascript; charset=utf-8",
+                bytes: js.to_vec(),
+            },
+            File {
+                name: "assets/app.js.gz".into(),
+                content_type: "text/javascript; charset=utf-8",
+                bytes: make_gzip(js),
+            },
+        ];
+        let kept = validate_and_elide_gzip(valid).unwrap();
+        let names: Vec<&str> = kept.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["index.html", "index.html.gz", "assets/app.js.gz"]);
+
+        let corrupt = vec![File {
+            name: "assets/app.js.gz".into(),
+            content_type: "text/javascript; charset=utf-8",
+            bytes: b"not-gzip".to_vec(),
+        }];
+        assert!(validate_and_elide_gzip(corrupt).is_err());
+
+        let stale = vec![
+            File {
+                name: "assets/app.js".into(),
+                content_type: "text/javascript; charset=utf-8",
+                bytes: b"new version".to_vec(),
+            },
+            File {
+                name: "assets/app.js.gz".into(),
+                content_type: "text/javascript; charset=utf-8",
+                bytes: make_gzip(b"old version"),
+            },
+        ];
+        let err = validate_and_elide_gzip(stale).err().unwrap();
+        assert!(err.contains("does not match sibling"), "{err}");
+
+        let oversized = vec![File {
+            name: "assets/huge.js.gz".into(),
+            content_type: "text/javascript; charset=utf-8",
+            bytes: make_gzip(&vec![0u8; MAX_GZIP_INFLATE_BYTES + 1]),
+        }];
+        assert!(validate_and_elide_gzip(oversized).is_err());
     }
 }
