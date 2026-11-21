@@ -29,22 +29,12 @@ use tokio::{runtime::Handle, sync::watch, task::JoinSet, time::timeout};
 use tokio_util::sync::CancellationToken;
 
 const STREAM_BYTES: u64 = 64 << 20;
-/// The block an upload repeats; an attempt that handed on more than one moved bytes.
+/// The block a direct upload repeats; 256 KiB cuts syscall overhead on fast links.
 const BLOCK_BYTES: usize = 256 << 10;
+/// An upload attempt that handed on more than this counts as having moved bytes when deciding retries.
+const MOVED_BYTES: u64 = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
 const CHUNKS_PER_READ: usize = 32;
-
-#[cfg(target_os = "linux")]
-use nix::{libc, setsockopt_impl, sockopt_impl};
-
-#[cfg(target_os = "linux")]
-sockopt_impl!(
-    ReadLowWater,
-    SetOnly,
-    libc::SOL_SOCKET,
-    libc::SO_RCVLOWAT,
-    libc::c_int
-);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThroughputPath {
@@ -304,7 +294,7 @@ impl Group {
             let (started, sent) = (Instant::now(), lane.sent.load(Ordering::Relaxed));
             lane.moved = false;
             let result = self.attempt(&mut lane, &tally).await;
-            let moved = lane.moved || lane.sent.load(Ordering::Relaxed) - sent > BLOCK_BYTES as u64;
+            let moved = lane.moved || lane.sent.load(Ordering::Relaxed) - sent > MOVED_BYTES;
             let fault = match result {
                 Ok(()) if moved => {
                     retry = Retry::default();
@@ -615,6 +605,7 @@ async fn read_h1_response_head<R: tokio::io::AsyncRead + Unpin>(
         let code = rest
             .split(' ')
             .next()
+            .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()))
             .and_then(|code| code.parse::<u16>().ok())
             .and_then(|code| StatusCode::from_u16(code).ok())
             .ok_or_else(|| Fault::Malformed("invalid HTTP status code".into()))?;
@@ -734,7 +725,7 @@ async fn drain_chunked(
             since_yield += buffered as u64;
         }
         while remaining > 0 {
-            let cap = (remaining as usize).min(read_buf.len());
+            let cap = remaining.min(read_buf.len() as u64) as usize;
             let n = socket
                 .read(&mut read_buf[..cap])
                 .await
@@ -762,6 +753,85 @@ async fn drain_chunked(
     }
 }
 
+/// Drains a close-delimited HTTP/1.1 body until EOF so a relay without Content-Length never wastes a GET.
+#[cfg(target_os = "linux")]
+async fn drain_close_delimited(
+    socket: &mut tokio::net::TcpStream,
+    trailing: Vec<u8>,
+    lane: &mut Lane,
+    tally: &Tally,
+) -> Result<(), Fault> {
+    use rustix::net::{RecvFlags, recv};
+    use tokio::io::Interest;
+
+    const YIELD_BYTES: u64 = 4 << 20;
+
+    if !trailing.is_empty() {
+        tally
+            .bytes
+            .fetch_add(trailing.len() as u64, Ordering::Relaxed);
+        lane.moved = true;
+    }
+    let mut discard: Vec<u8> = Vec::with_capacity(256 << 10);
+    let mut since_yield: u64 = 0;
+    loop {
+        let cap = discard.capacity();
+        let read = socket.try_io(Interest::READABLE, || {
+            let (_, len) = recv(
+                &*socket,
+                &mut discard.spare_capacity_mut()[..cap],
+                RecvFlags::TRUNC,
+            )?;
+            Ok(len)
+        });
+        match read {
+            Ok(0) => return Ok(()),
+            Ok(n) => {
+                let n = n.min(cap);
+                tally.bytes.fetch_add(n as u64, Ordering::Relaxed);
+                lane.moved = true;
+                since_yield += n as u64;
+                if since_yield >= YIELD_BYTES {
+                    since_yield = 0;
+                    tokio::task::yield_now().await;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                since_yield = 0;
+                socket.readable().await.map_err(|_| Fault::Lost)?;
+            }
+            Err(_) => return Err(Fault::Lost),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn parse_content_length_headers(headers: &http::HeaderMap) -> Result<Option<u64>, ()> {
+    let mut values = headers.get_all(http::header::CONTENT_LENGTH).iter();
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    let mut parsed: Option<u64> = None;
+    for header in std::iter::once(first).chain(values) {
+        let text = header.to_str().map_err(|_| ())?;
+        for part in text.split(',') {
+            let trimmed = part.trim_matches(|c| matches!(c, ' ' | '\t'));
+            if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(());
+            }
+            let len = trimmed.parse::<u64>().map_err(|_| ())?;
+            if let Some(prev) = parsed {
+                if prev != len {
+                    return Err(());
+                }
+            } else {
+                parsed = Some(len);
+            }
+        }
+    }
+    Ok(parsed)
+}
+
 /// Zero-copy plain HTTP/1.1 download using `MSG_TRUNC` and adaptive `SO_RCVLOWAT`; returns `Ok(false)` to fall back.
 #[cfg(target_os = "linux")]
 async fn direct_download(
@@ -772,19 +842,11 @@ async fn direct_download(
     tally: &Tally,
     disable_direct: &AtomicBool,
 ) -> Result<bool, Fault> {
+    use graphite_meter_net::lowat::{BulkRead, READ_LOWAT_MIN};
     use http::header;
-    use nix::{libc, sys::socket::setsockopt};
     use rustix::net::{RecvFlags, recv};
     use tokio::io::{AsyncWriteExt, Interest};
 
-    const LOWAT_MIN: u64 = 4 << 10;
-    const LOWAT_MAX: u64 = 16 << 10;
-    const SMALL_BURST: u64 = 4 << 10;
-    const SAMPLE_BYTES: u64 = 32 << 10;
-    const SAMPLE_WAITS: u8 = 12;
-    const SAMPLE_TIME: Duration = Duration::from_millis(25);
-    const TARGET_WAIT_US: u128 = 2_000;
-    const FALLBACK_WAIT: Duration = Duration::from_millis(5);
     const YIELD_BYTES: u64 = 4 << 20;
 
     let head = client.head(request)?;
@@ -814,20 +876,20 @@ async fn direct_download(
         }
         return Ok(false);
     }
-    let mut lengths = headers.get_all(header::CONTENT_LENGTH).iter();
-    let Some(first_len) = lengths
-        .next()
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-    else {
-        disable_direct.store(true, Ordering::Relaxed);
-        return Ok(false);
+    let total = match parse_content_length_headers(&headers) {
+        Ok(Some(len)) => len,
+        Ok(None) => {
+            // Close-delimited HTTP/1.1 response: consume this first body directly, then stay on Hyper.
+            disable_direct.store(true, Ordering::Relaxed);
+            lane.announce(tally);
+            drain_close_delimited(&mut socket, trailing, lane, tally).await?;
+            return Ok(true);
+        }
+        Err(()) => {
+            disable_direct.store(true, Ordering::Relaxed);
+            return Ok(false);
+        }
     };
-    if lengths.any(|v| v.to_str().ok().and_then(|s| s.parse::<u64>().ok()) != Some(first_len)) {
-        disable_direct.store(true, Ordering::Relaxed);
-        return Ok(false);
-    }
-    let total = first_len;
     lane.announce(tally);
     let initial = (trailing.len() as u64).min(total);
     if initial > 0 {
@@ -837,19 +899,17 @@ async fn direct_download(
     let mut remaining = total - initial;
     // Linux `MSG_TRUNC` never writes to this buffer; uninitialized capacity touches zero physical pages.
     let mut discard: Vec<u8> = Vec::with_capacity(256 << 10);
-    let mut sample_started = Instant::now();
-    let mut sample_bytes: u64 = 0;
-    let mut burst: u64 = 0;
-    let mut short_waits: u8 = 0;
-    let mut total_waits: u32 = 0;
-    let mut batched_lowat: u64 = 0;
+    let mut bulk_read = if remaining > READ_LOWAT_MIN {
+        BulkRead::sample()
+    } else {
+        BulkRead::Ordinary
+    };
     let mut since_yield: u64 = 0;
     while remaining > 0 {
-        if batched_lowat > 0 && remaining <= batched_lowat {
-            let _ = setsockopt(&socket, ReadLowWater, &1);
-            batched_lowat = 0;
+        if bulk_read.is_batched() && remaining <= bulk_read.lowat() {
+            let _ = bulk_read.finish(&socket);
         }
-        let cap = (remaining as usize).min(discard.capacity());
+        let cap = remaining.min(discard.capacity() as u64) as usize;
         let read = socket.try_io(Interest::READABLE, || {
             let (_, len) = recv(
                 &socket,
@@ -859,16 +919,16 @@ async fn direct_download(
             Ok(len)
         });
         match read {
-            Ok(0) => return Err(Fault::Lost),
+            Ok(0) => {
+                let _ = bulk_read.finish(&socket);
+                return Err(Fault::Lost);
+            }
             Ok(n) => {
                 let n = n.min(cap);
                 tally.bytes.fetch_add(n as u64, Ordering::Relaxed);
                 lane.moved = true;
                 remaining -= n as u64;
-                if batched_lowat == 0 {
-                    sample_bytes += n as u64;
-                    burst += n as u64;
-                }
+                bulk_read.on_read(n);
                 since_yield += n as u64;
                 if since_yield >= YIELD_BYTES {
                     since_yield = 0;
@@ -877,58 +937,30 @@ async fn direct_download(
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 since_yield = 0;
-                if batched_lowat == 0 {
-                    total_waits = total_waits.saturating_add(1);
-                    if (1..=SMALL_BURST).contains(&std::mem::take(&mut burst)) {
-                        short_waits = short_waits.saturating_add(1);
-                    }
-                    if sample_bytes >= SAMPLE_BYTES {
-                        let now = Instant::now();
-                        let elapsed = now.saturating_duration_since(sample_started);
-                        let avg_small = sample_bytes <= u64::from(total_waits) * SMALL_BURST;
-                        if short_waits >= SAMPLE_WAITS && avg_small && elapsed <= SAMPLE_TIME {
-                            let target = ((sample_bytes as u128 * TARGET_WAIT_US)
-                                / elapsed.as_micros().max(1))
-                            .min(LOWAT_MAX as u128) as u64;
-                            let cap_lowat = remaining.saturating_sub(1).min(LOWAT_MAX);
-                            let lowat = target.min(cap_lowat);
-                            if lowat >= LOWAT_MIN
-                                && remaining > lowat
-                                && setsockopt(&socket, ReadLowWater, &(lowat as libc::c_int))
-                                    .is_ok()
-                            {
-                                batched_lowat = lowat;
-                            } else {
-                                sample_started = now;
-                                sample_bytes = 0;
-                                short_waits = 0;
-                                total_waits = 0;
-                            }
-                        } else {
-                            sample_started = now;
-                            sample_bytes = 0;
-                            short_waits = 0;
-                            total_waits = 0;
-                        }
-                    }
+                if !bulk_read.is_batched() {
+                    bulk_read.on_would_block(&socket, remaining);
                 }
-                if batched_lowat > 0 {
-                    if timeout(FALLBACK_WAIT, socket.readable()).await.is_err() {
-                        let _ = setsockopt(&socket, ReadLowWater, &1);
-                        batched_lowat = 0;
-                        sample_started = Instant::now();
-                        sample_bytes = 0;
-                        burst = 0;
-                        short_waits = 0;
-                        total_waits = 0;
+                if bulk_read.is_batched() {
+                    match timeout(BulkRead::WAIT, socket.readable()).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => {
+                            let _ = bulk_read.finish(&socket);
+                            return Err(Fault::Lost);
+                        }
+                        Err(_) => bulk_read.reset_after_timeout(&socket),
                     }
-                } else {
-                    socket.readable().await.map_err(|_| Fault::Lost)?;
+                } else if socket.readable().await.is_err() {
+                    let _ = bulk_read.finish(&socket);
+                    return Err(Fault::Lost);
                 }
             }
-            Err(_) => return Err(Fault::Lost),
+            Err(_) => {
+                let _ = bulk_read.finish(&socket);
+                return Err(Fault::Lost);
+            }
         }
     }
+    let _ = bulk_read.finish(&socket);
     Ok(true)
 }
 
@@ -948,19 +980,34 @@ async fn direct_upload(
     lane.announce(tally);
     let (mut reader, mut writer) = socket.split();
     let mut answer = std::pin::pin!(read_h1_response_head(&mut reader));
-    if writer.write_all(&wire).await.is_err() {
-        if let Ok(Ok((status, headers, _))) = timeout(Duration::from_secs(1), &mut answer).await
-            && let Some(fault) = client.refusal(request, status, &headers)
-        {
-            return Err(fault);
+    let head_sent = tokio::select! {
+        biased;
+        res = &mut answer => {
+            let (status, headers, _) = res?;
+            if let Some(fault) = client.refusal(request, status, &headers) {
+                return Err(fault);
+            }
+            return Ok(());
         }
-        return Err(Fault::Lost);
+        res = timeout(CONTROL_TIMEOUT, writer.write_all(&wire)) => res,
+    };
+    match head_sent {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            if let Ok(Ok((status, headers, _))) = timeout(Duration::from_secs(1), &mut answer).await
+                && let Some(fault) = client.refusal(request, status, &headers)
+            {
+                return Err(fault);
+            }
+            return Err(Fault::Lost);
+        }
+        Err(_) => return Err(Fault::TimedOut("upload answer")),
     }
     let mut remaining = TRANSFER_BYTES;
     let mut offset = 0usize;
     let mut write_failed = false;
     while remaining > 0 {
-        let len = (block.len() - offset).min(remaining as usize);
+        let len = ((block.len() - offset) as u64).min(remaining) as usize;
         tokio::select! {
             biased;
             res = &mut answer => {
@@ -1227,6 +1274,89 @@ mod tests {
                             break;
                         }
                     }
+                });
+            }
+        });
+
+        let client = Client::new(false, Arc::new(graphite_meter_net::Pool::inline()));
+        let origin = Origin::parse(&format!("http://127.0.0.1:{}", addr.port())).unwrap();
+        let plan = GroupPlan {
+            path: ThroughputPath {
+                origin,
+                transport: ThroughputTransport::FetchStream,
+                protocol: Protocol::Http1,
+            },
+            direction: Direction::Down,
+            carrier: Carrier::Dialed,
+            lanes: 0..1,
+        };
+        let group = Group {
+            client,
+            plan,
+            work: Work::Download,
+            block: Bytes::new(),
+            conn: Slot(Default::default()),
+            session: Slot(Default::default()),
+            direct_down_disabled: AtomicBool::new(false),
+        };
+        let tally = Tally::default();
+        let mut lane = Lane {
+            number: 0,
+            announced: false,
+            moved: false,
+            sent: Arc::default(),
+        };
+
+        for _ in 0..4 {
+            lane.moved = false;
+            group.attempt(&mut lane, &tally).await.unwrap();
+            assert!(lane.moved);
+        }
+        assert!(group.direct_down_disabled.load(Ordering::Relaxed));
+        assert_eq!(requests.load(Ordering::Relaxed), 4);
+        assert_eq!(tally.bytes.load(Ordering::Relaxed), 4 * 11);
+        server.abort();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn close_delimited_download_counts_bytes_without_duplicating_requests() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let served = requests.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut peer, _)) = listener.accept().await else {
+                    break;
+                };
+                let served = served.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let mut head = Vec::new();
+                    loop {
+                        let Ok(n) = peer.read(&mut buf).await else {
+                            return;
+                        };
+                        if n == 0 {
+                            return;
+                        }
+                        head.extend_from_slice(&buf[..n]);
+                        if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    served.fetch_add(1, Ordering::Relaxed);
+                    let resp = concat!(
+                        "HTTP/1.1 200 OK\r\n",
+                        "Connection: close\r\n",
+                        "\r\n",
+                        "hello world",
+                    );
+                    let _ = peer.write_all(resp.as_bytes()).await;
+                    let _ = peer.shutdown().await;
                 });
             }
         });

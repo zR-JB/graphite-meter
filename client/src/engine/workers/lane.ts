@@ -164,8 +164,8 @@ async function upload(
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;
-  // No POST returns sooner than its round trip, so the quickest one bounds it where the server's RTT is unknown.
-  let turnaround = rttMs ?? Infinity;
+  // Subtract turnaround only when a measured RTT exists; otherwise an unknown RTT would treat POST #1's transfer time as RTT.
+  let turnaround = rttMs;
   for (;;) {
     const startedAt = performance.now();
     try {
@@ -182,13 +182,17 @@ async function upload(
       const elapsedMs = performance.now() - startedAt;
       post({ type: "posted", bytes, elapsedMs });
       if (!(elapsedMs > 0)) continue;
-      turnaround = Math.min(turnaround, elapsedMs);
-      // Estimate wire send speed without turnaround overhead so small initial POSTs on long RTT paths ramp promptly.
-      const sendTimeMs = Math.max(elapsedMs - turnaround, elapsedMs * 0.25);
+      let sendTimeMs = elapsedMs;
+      let sendMs = TARGET_POST_MS;
+      if (turnaround != null) {
+        turnaround = Math.min(turnaround, elapsedMs);
+        // Estimate wire send speed without turnaround overhead so small initial POSTs on long RTT paths ramp promptly.
+        sendTimeMs = Math.max(elapsedMs - turnaround, elapsedMs * 0.25);
+        sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
+      }
       const instant = (bytes * 1000) / sendTimeMs;
       const weight = bytes < largest && elapsedMs < TARGET_POST_MS / 2 ? 0.5 : 0.3;
       rate = rate ? weight * instant + (1 - weight) * rate : instant;
-      const sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
       const want = (rate * sendMs) / 1000;
       const grow = elapsedMs < sendMs / 2 ? bytes * 4 : bytes * 2;
       bytes = Math.floor(

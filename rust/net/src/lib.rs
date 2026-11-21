@@ -2,6 +2,8 @@
 mod connect;
 mod crypto;
 mod dial;
+#[cfg(target_os = "linux")]
+pub mod lowat;
 mod proxy;
 pub mod quic;
 mod runtime;

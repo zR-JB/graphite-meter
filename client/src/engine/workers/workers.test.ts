@@ -750,3 +750,40 @@ test("a WebTransport bus whose datagrams failed waits for its close: a revocatio
   await elapse(0);
   expect(probe.types()).toEqual(["handshake", "sign-in"]);
 });
+
+test("an upload lane without a measured RTT sizes from elapsed time without 4x overshoot", async () => {
+  const sizes: number[] = [];
+  let resolveSecond!: () => void;
+  const lane = await boot<LaneCommand>("./lane.ts", {
+    fetch: async (_url: string, init: RequestInit) => {
+      const size = (init.body as Blob).size;
+      sizes.push(size);
+      if (sizes.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        return new Response("ok");
+      }
+      await new Promise<void>((resolve) => {
+        resolveSecond = resolve;
+        init.signal?.addEventListener("abort", () => resolve());
+      });
+      throw new DOMException("aborted", "AbortError");
+    },
+  });
+  lane.send({
+    type: "upload",
+    url: "https://peer.example/upload",
+    request: RECIPE,
+    streams: 6,
+    sharing: 1,
+    rttMs: null,
+  });
+  await elapse(600);
+  expect(sizes.length).toBe(2);
+  // 128 KiB in 600 ms -> ~218 KiB/s -> 2 s target wants ~437 KiB (not 512 KiB from 4x overshoot).
+  expect(sizes[0]).toBe(128 * 1024);
+  expect(sizes[1]).toBeGreaterThan(400 * 1024);
+  expect(sizes[1]).toBeLessThan(460 * 1024);
+  lane.send({ type: "stop" });
+  resolveSecond();
+  await elapse(0);
+});

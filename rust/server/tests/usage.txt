@@ -54,4 +54,4 @@ Environment only:
   TZ                                 Time zone name for log times, such as Europe/Berlin (default: UTC)
   HTTPS_PROXY, HTTP_PROXY, NO_PROXY  Proxy for OIDC requests
   SSL_CERT_FILE, SSL_CERT_DIR        CA roots for OIDC requests (default: the system's)
-  TOKIO_WORKER_THREADS               Runtime worker threads (default: one per CPU)
+  TOKIO_WORKER_THREADS               Override runtime and transfer worker counts (default: up to 2 runtime + 1 transfer per CPU)

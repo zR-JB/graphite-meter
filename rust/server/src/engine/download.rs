@@ -16,6 +16,8 @@ pub const BLOCK_BYTES: usize = 256 << 10;
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 pub(crate) struct Sendfile {
+    /// Retains the shared block allocation so `start..start + len` remains live as long as `Sendfile` exists.
+    _backing: Bytes,
     start: usize,
     len: usize,
     file: Arc<OwnedFd>,
@@ -81,6 +83,7 @@ impl Block {
         let bytes: Bytes = bytes.into();
         #[cfg(target_os = "linux")]
         let sendfile = create_memfd(&bytes).map(|file| Sendfile {
+            _backing: bytes.clone(),
             start: bytes.as_ptr() as usize,
             len: bytes.len(),
             file,

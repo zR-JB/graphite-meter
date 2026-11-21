@@ -38,9 +38,6 @@ tokio-rustls.workspace = true
 [build-dependencies]
 graphite-meter-legal = { workspace = true, features = ["build"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-nix.workspace = true
-
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["event", "net"] }
 

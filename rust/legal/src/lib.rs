@@ -55,16 +55,20 @@ impl Notices {
             if let Some((offset, browser_len)) = self.browser {
                 let prefix_len = length.checked_sub(browser_len).expect("valid browser len");
                 out.extend_from_slice(
-                    &gunzip_member(&compressed[..offset], prefix_len)
+                    &gunzip_single_member(&compressed[..offset], prefix_len)
+                        .filter(|bytes| bytes.len() == prefix_len)
                         .expect("the build embeds a valid report prefix"),
                 );
                 out.extend_from_slice(
-                    &gunzip_member(&compressed[offset..], browser_len)
+                    &gunzip_single_member(&compressed[offset..], browser_len)
+                        .filter(|bytes| bytes.len() == browser_len)
                         .expect("the build embeds a valid browser notice"),
                 );
             } else {
                 out.extend_from_slice(
-                    &gunzip_member(compressed, length).expect("the build embeds a complete report"),
+                    &gunzip_single_member(compressed, length)
+                        .filter(|bytes| bytes.len() == length)
+                        .expect("the build embeds a complete report"),
                 );
             }
             assert_eq!(out.len(), length, "the build embeds a complete report");
@@ -85,21 +89,45 @@ impl Notices {
         let gz = self.browser_gzip()?;
         let (_, browser_len) = self.browser?;
         let plain = self.browser_plain.get_or_init(|| {
-            gunzip_member(gz, browser_len).expect("the build embeds a valid browser notice")
+            gunzip_single_member(gz, browser_len)
+                .filter(|out| out.len() == browser_len)
+                .expect("the build embeds a valid browser notice")
         });
         Some(plain)
     }
 }
 
-fn gunzip_member(gz: &[u8], expected_len: usize) -> Option<Vec<u8>> {
+/// Computes the IEEE 802.3 CRC-32 checksum used by RFC 1952 gzip trailers.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Inflates a single RFC 1952 gzip member, checking reserved flags, header CRC16, exact stream end, CRC32, and ISIZE.
+pub fn gunzip_single_member(gz: &[u8], limit: usize) -> Option<Vec<u8>> {
+    use miniz_oxide::{
+        DataFormat, MZFlush, MZStatus,
+        inflate::stream::{InflateState, inflate},
+    };
+
     if gz.len() < 18 || gz[0] != 0x1f || gz[1] != 0x8b || gz[2] != 8 {
         return None;
     }
     let flags = gz[3];
+    if flags & 0xe0 != 0 {
+        return None;
+    }
     let mut pos = 10usize;
     if flags & 0x04 != 0 {
         let xlen = u16::from_le_bytes([*gz.get(pos)?, *gz.get(pos + 1)?]) as usize;
-        pos = pos.checked_add(2 + xlen)?;
+        pos = pos.checked_add(2)?.checked_add(xlen)?;
     }
     if flags & 0x08 != 0 {
         pos = gz.get(pos..)?.iter().position(|&b| b == 0)? + pos + 1;
@@ -108,15 +136,48 @@ fn gunzip_member(gz: &[u8], expected_len: usize) -> Option<Vec<u8>> {
         pos = gz.get(pos..)?.iter().position(|&b| b == 0)? + pos + 1;
     }
     if flags & 0x02 != 0 {
+        let header_crc = u16::from_le_bytes([*gz.get(pos)?, *gz.get(pos + 1)?]);
+        if header_crc != (crc32(&gz[..pos]) as u16) {
+            return None;
+        }
         pos = pos.checked_add(2)?;
     }
     let end = gz.len().checked_sub(8)?;
     if pos > end {
         return None;
     }
-    let out =
-        miniz_oxide::inflate::decompress_to_vec_with_limit(&gz[pos..end], expected_len).ok()?;
-    (out.len() == expected_len).then_some(out)
+
+    let deflate = &gz[pos..end];
+    let mut state = InflateState::new_boxed(DataFormat::Raw);
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 16 << 10];
+    let mut in_pos = 0usize;
+    loop {
+        let res = inflate(&mut state, &deflate[in_pos..], &mut chunk, MZFlush::None);
+        in_pos += res.bytes_consumed;
+        if out.len().checked_add(res.bytes_written)? > limit {
+            return None;
+        }
+        out.extend_from_slice(&chunk[..res.bytes_written]);
+        match res.status {
+            Ok(MZStatus::StreamEnd) => break,
+            Ok(MZStatus::Ok) => {
+                if res.bytes_consumed == 0 && res.bytes_written == 0 {
+                    return None;
+                }
+            }
+            Ok(MZStatus::NeedDict) | Err(_) => return None,
+        }
+    }
+    if in_pos != deflate.len() {
+        return None;
+    }
+    let expected_crc = u32::from_le_bytes(gz[end..end + 4].try_into().ok()?);
+    let expected_isize = u32::from_le_bytes(gz[end + 4..end + 8].try_into().ok()?);
+    if crc32(&out) != expected_crc || (out.len() as u32) != expected_isize {
+        return None;
+    }
+    Some(out)
 }
 
 /// Writes `report` and returns the exit status, 141 into a closed pipe on Unix, as a process killed by SIGPIPE, else 0.
@@ -142,5 +203,34 @@ mod tests {
         let mut out = Vec::new();
         assert_eq!(print(&mut out, b"notices").unwrap(), 0);
         assert_eq!(out, b"notices");
+    }
+
+    #[test]
+    fn gunzip_single_member_validates_flags_crc_isize_limit_and_trailing_bytes() {
+        let plain = b"graphite-meter rfc1952 single member check";
+        let gz = build::gzip_member(plain);
+        assert_eq!(
+            gunzip_single_member(&gz, plain.len()).as_deref(),
+            Some(&plain[..])
+        );
+        assert!(gunzip_single_member(&gz, plain.len() - 1).is_none());
+
+        let mut bad_flags = gz.clone();
+        bad_flags[3] |= 0x20;
+        assert!(gunzip_single_member(&bad_flags, 1024).is_none());
+
+        let mut bad_crc = gz.clone();
+        let crc_pos = bad_crc.len() - 8;
+        bad_crc[crc_pos] ^= 1;
+        assert!(gunzip_single_member(&bad_crc, 1024).is_none());
+
+        let mut bad_isize = gz.clone();
+        let isize_pos = bad_isize.len() - 4;
+        bad_isize[isize_pos] ^= 1;
+        assert!(gunzip_single_member(&bad_isize, 1024).is_none());
+
+        let mut multi = gz.clone();
+        multi.extend_from_slice(&gz);
+        assert!(gunzip_single_member(&multi, 1024).is_none());
     }
 }

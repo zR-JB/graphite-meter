@@ -138,9 +138,9 @@ default `GM_MAX_CONNECTIONS` of 4096 therefore needs a little over 6 GiB. A smal
 `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the server at start
 with the values that fit.
 
-Connections run on one thread per runtime worker, and by default there is one worker per CPU. Tokio's own
-`TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run five nice
-steps lower, so transfers yield to the host's other services and to the server's own probes.
+Connections run on pinned transfer workers (by default one per CPU) beside up to two base Tokio runtime workers.
+Setting `TOKIO_WORKER_THREADS` overrides both counts on a host shared with other services. On Linux those transfer
+threads run five nice steps lower, so transfers yield to the host's other services and to the server's own probes.
 
 ## Logs
 

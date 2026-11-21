@@ -41,6 +41,7 @@ h2 = "0.4.20"
 http = "1.5.0"
 http-body = "1.1.0"
 http-body-util = "0.1.5"
+httparse = "1.10.1"
 hyper = "1.12.0"
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 ipnet = "2.12.2"

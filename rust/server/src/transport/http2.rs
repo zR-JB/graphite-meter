@@ -53,8 +53,8 @@ const MAX_CONCURRENT_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.
 const FRAME_BYTES: usize = 64 << 10;
 const PREFACE_BOUND: Duration = Duration::from_secs(10);
-/// Unsent downloads wait in h2's scheduler while still allowing full 16 KiB TLS records without per-ACK wakeups.
-const NOTSENT_LOWAT: u32 = 256 << 10;
+/// Unsent downloads wait in h2's scheduler so control replies and probes overtake them without head-of-line delay.
+const NOTSENT_LOWAT: u32 = 64 << 10;
 
 #[derive(Clone)]
 pub struct Http2 {

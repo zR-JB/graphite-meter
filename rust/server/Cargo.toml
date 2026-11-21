@@ -42,6 +42,7 @@ zeroize.workspace = true
 graphite-meter-legal = { workspace = true, features = ["build"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+httparse.workspace = true
 nix.workspace = true
 
 [target.'cfg(target_env = "musl")'.dependencies]

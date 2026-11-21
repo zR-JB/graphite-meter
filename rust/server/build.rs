@@ -32,16 +32,8 @@ fn embed() -> Result<(), String> {
             );
         }
         println!("cargo:rerun-if-changed={}", root.display());
-        let scanned = scan::scan(&root, reviewed.is_some())?;
-        let gzipped: std::collections::HashSet<&str> = scanned
-            .iter()
-            .filter_map(|file| file.name.strip_suffix(".gz"))
-            .collect();
+        let scanned = scan::validate_and_elide_gzip(scan::scan(&root, reviewed.is_some())?)?;
         for (number, file) in scanned.iter().enumerate() {
-            // Skip uncompressed plain copies when a .gz copy exists (except index.html); server inflates .gz on demand.
-            if file.name != "index.html" && gzipped.contains(file.name.as_str()) {
-                continue;
-            }
             // rustc includes this checked copy, never the source file.
             let snapshot = format!("browser-asset-{number}");
             fs::write(output.join(&snapshot), &file.bytes)
