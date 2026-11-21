@@ -290,31 +290,9 @@ fn trusted_types_policy(html: &[u8]) -> Option<&str> {
     (!name.is_empty() && name.bytes().all(valid)).then_some(name)
 }
 
-/// Inflates a standard gzip stream (RFC 1952) for the rare client that requests an uncompressed asset.
+/// Inflates a validated single-member RFC 1952 gzip stream for the rare client that declines gzip.
 fn gunzip(gz: &[u8]) -> Option<Vec<u8>> {
-    if gz.len() < 18 || gz[0] != 0x1f || gz[1] != 0x8b || gz[2] != 8 {
-        return None;
-    }
-    let flags = gz[3];
-    let mut pos = 10usize;
-    if flags & 0x04 != 0 {
-        let xlen = u16::from_le_bytes([*gz.get(pos)?, *gz.get(pos + 1)?]) as usize;
-        pos = pos.checked_add(2 + xlen)?;
-    }
-    if flags & 0x08 != 0 {
-        pos = gz.get(pos..)?.iter().position(|&b| b == 0)? + pos + 1;
-    }
-    if flags & 0x10 != 0 {
-        pos = gz.get(pos..)?.iter().position(|&b| b == 0)? + pos + 1;
-    }
-    if flags & 0x02 != 0 {
-        pos = pos.checked_add(2)?;
-    }
-    let end = gz.len().checked_sub(8)?;
-    if pos > end {
-        return None;
-    }
-    miniz_oxide::inflate::decompress_to_vec_with_limit(&gz[pos..end], 8 << 20).ok()
+    graphite_meter_legal::gunzip_single_member(gz, 8 << 20)
 }
 
 /// The quoted base64 of the first 12 bytes of the SHA-256 of `bytes`.
@@ -401,7 +379,8 @@ mod tests {
         const PLAIN: &[u8] = b"console.log('graphite-meter');\n";
         let mut gz = vec![0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 0xff];
         gz.extend_from_slice(&miniz_oxide::deflate::compress_to_vec(PLAIN, 6));
-        gz.extend_from_slice(&[0; 8]); // CRC32 + ISIZE trailer
+        gz.extend_from_slice(&graphite_meter_legal::crc32(PLAIN).to_le_bytes());
+        gz.extend_from_slice(&(PLAIN.len() as u32).to_le_bytes());
         let gz: &'static [u8] = Box::leak(gz.into_boxed_slice());
         let files: &'static [Asset] = Box::leak(Box::new([Asset {
             path: "assets/app.js.gz",

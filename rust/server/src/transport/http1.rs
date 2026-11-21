@@ -266,7 +266,7 @@ fn parse_fast_head(buf: &[u8], split: usize) -> Option<ParsedFastHead> {
     use http::{HeaderName, HeaderValue, Uri, Version, header};
 
     const MIN_FAST_UPLOAD: u64 = 64 << 10;
-    const MAX_FAST_HEADERS: usize = 64;
+    const MAX_FAST_HEADERS: usize = 100;
     const MAX_URI_LEN: usize = (u16::MAX - 1) as usize;
 
     let raw = buf.get(..split + 4)?;
@@ -361,61 +361,122 @@ fn parse_fast_head(buf: &[u8], split: usize) -> Option<ParsedFastHead> {
 }
 
 #[cfg(target_os = "linux")]
-fn encode_h1_head(response: &Response<Body>, force_close: bool) -> Vec<u8> {
+fn write_h1_head(
+    wire: &mut Vec<u8>,
+    response: &Response<Body>,
+    body_len: Option<usize>,
+    force_close: bool,
+) {
     use http::header;
     use std::io::Write;
 
     let status = response.status();
     let reason = status.canonical_reason().unwrap_or("");
-    let mut wire = Vec::with_capacity(512);
-    let _ = write!(wire, "HTTP/1.1 {} {}\r\n", status.as_u16(), reason);
-    let mut has_conn = false;
-    for (name, value) in response.headers() {
-        if name == header::CONNECTION {
-            has_conn = true;
-        }
-        let _ = write!(wire, "{}: ", name.as_str());
-        wire.extend_from_slice(value.as_bytes());
-        wire.extend_from_slice(b"\r\n");
-    }
-    if force_close && !has_conn {
-        wire.extend_from_slice(b"connection: close\r\n");
-    }
-    wire.extend_from_slice(b"\r\n");
-    wire
-}
-
-#[cfg(target_os = "linux")]
-fn encode_h1_response(response: &Response<Body>, force_close: bool) -> Vec<u8> {
-    use http::header;
-    use std::io::Write;
-
-    let body = response.body().full_bytes().unwrap_or(&[]);
-    let status = response.status();
-    let reason = status.canonical_reason().unwrap_or("");
-    let mut wire = Vec::with_capacity(512 + body.len());
     let _ = write!(wire, "HTTP/1.1 {} {}\r\n", status.as_u16(), reason);
     let mut has_cl = false;
     let mut has_conn = false;
+    let mut has_date = false;
     for (name, value) in response.headers() {
         if name == header::CONTENT_LENGTH {
             has_cl = true;
         } else if name == header::CONNECTION {
             has_conn = true;
+        } else if name == header::DATE {
+            has_date = true;
         }
         let _ = write!(wire, "{}: ", name.as_str());
         wire.extend_from_slice(value.as_bytes());
         wire.extend_from_slice(b"\r\n");
     }
-    if !has_cl {
-        let _ = write!(wire, "content-length: {}\r\n", body.len());
+    if let Some(len) = body_len
+        && !has_cl
+    {
+        let _ = write!(wire, "content-length: {len}\r\n");
+    }
+    if !has_date {
+        let now = jiff::Timestamp::now();
+        let _ = write!(
+            wire,
+            "date: {}\r\n",
+            now.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        );
     }
     if force_close && !has_conn {
         wire.extend_from_slice(b"connection: close\r\n");
     }
     wire.extend_from_slice(b"\r\n");
+}
+
+#[cfg(target_os = "linux")]
+fn encode_h1_head(response: &Response<Body>, force_close: bool) -> Vec<u8> {
+    let mut wire = Vec::with_capacity(512);
+    write_h1_head(&mut wire, response, None, force_close);
+    wire
+}
+
+#[cfg(target_os = "linux")]
+fn encode_h1_response(response: &Response<Body>, force_close: bool) -> Vec<u8> {
+    let body = response.body().full_bytes().unwrap_or(&[]);
+    let mut wire = Vec::with_capacity(512 + body.len());
+    write_h1_head(&mut wire, response, Some(body.len()), force_close);
     wire.extend_from_slice(body);
     wire
+}
+
+/// Half-closes writes and briefly drains unread upload bytes (RFC 9112 §9.6) so Linux does not RST away a refusal.
+#[cfg(target_os = "linux")]
+async fn close_after_reply(socket: &mut TcpStream, drain_unread: bool) {
+    use rustix::net::{RecvFlags, recv};
+    use std::time::Duration;
+    use tokio::{
+        io::{AsyncWriteExt, Interest},
+        time::{timeout, timeout_at},
+    };
+
+    const DRAIN_TIMEOUT: Duration = Duration::from_millis(50);
+    const DRAIN_CAP: usize = 256 << 10;
+
+    let _ = timeout(DRAIN_TIMEOUT, socket.shutdown()).await;
+    if !drain_unread {
+        return;
+    }
+    let deadline = Instant::now() + DRAIN_TIMEOUT;
+    let mut discard: Vec<u8> = Vec::with_capacity(16 << 10);
+    let mut drained = 0usize;
+    while drained < DRAIN_CAP {
+        let cap = (DRAIN_CAP - drained).min(discard.capacity());
+        let read = socket.try_io(Interest::READABLE, || {
+            let (_, len) = recv(
+                &*socket,
+                &mut discard.spare_capacity_mut()[..cap],
+                RecvFlags::TRUNC,
+            )?;
+            Ok(len)
+        });
+        match read {
+            Ok(0) => break,
+            Ok(n) => drained += n.min(cap),
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                if !matches!(timeout_at(deadline, socket.readable()).await, Ok(Ok(()))) {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_fast_prefix(buf: &[u8]) -> bool {
+    const PREFIXES: &[&[u8]] = &[
+        b"POST /upload ",
+        b"POST /upload?",
+        b"GET /download ",
+        b"GET /download?",
+    ];
+    PREFIXES
+        .iter()
+        .any(|prefix| buf.starts_with(prefix) || prefix.starts_with(buf))
 }
 
 #[cfg(target_os = "linux")]
@@ -448,10 +509,7 @@ impl Http1 {
             first = false;
 
             let split = loop {
-                if buf.len() >= 13
-                    && !buf.starts_with(b"POST /upload")
-                    && !buf.starts_with(b"GET /download")
-                {
+                if !buf.is_empty() && !is_fast_prefix(&buf) {
                     return self
                         .serve(
                             Prefixed::new(buf, socket),
@@ -461,6 +519,15 @@ impl Http1 {
                         .await;
                 }
                 if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    if pos + 4 > MAX_PEEK {
+                        return self
+                            .serve(
+                                Prefixed::new(buf, socket),
+                                connection,
+                                request_started.unwrap_or_else(Instant::now),
+                            )
+                            .await;
+                    }
                     break pos;
                 }
                 if buf.len() >= MAX_PEEK {
@@ -499,6 +566,7 @@ impl Http1 {
             };
 
             let exchange = Exchange::until(req_start + EXCHANGE_BOUND);
+            let exchange_deadline = exchange.deadline();
             match parsed {
                 ParsedFastHead::Download {
                     request,
@@ -518,7 +586,16 @@ impl Http1 {
                             }
                             Err(refusal) => {
                                 let wire = encode_h1_response(&refusal, true);
-                                let _ = timeout(EXCHANGE_BOUND, socket.write_all(&wire)).await;
+                                if matches!(
+                                    tokio::time::timeout_at(
+                                        exchange_deadline,
+                                        socket.write_all(&wire)
+                                    )
+                                    .await,
+                                    Ok(Ok(()))
+                                ) {
+                                    close_after_reply(&mut socket, false).await;
+                                }
                                 return;
                             }
                         };
@@ -618,7 +695,16 @@ impl Http1 {
                             Ok(upload) => upload,
                             Err(refusal) => {
                                 let wire = encode_h1_response(&refusal, true);
-                                let _ = timeout(EXCHANGE_BOUND, socket.write_all(&wire)).await;
+                                if matches!(
+                                    tokio::time::timeout_at(
+                                        exchange_deadline,
+                                        socket.write_all(&wire)
+                                    )
+                                    .await,
+                                    Ok(Ok(()))
+                                ) {
+                                    close_after_reply(&mut socket, true).await;
+                                }
                                 return;
                             }
                         };
@@ -736,13 +822,14 @@ impl Http1 {
                             .and_then(|v| v.to_str().ok())
                             .is_some_and(|v| v.eq_ignore_ascii_case("close"));
                     let wire = encode_h1_response(&answer, resp_close);
-                    if timeout(EXCHANGE_BOUND, socket.write_all(&wire))
-                        .await
-                        .is_err()
-                    {
+                    if !matches!(
+                        timeout(EXCHANGE_BOUND, socket.write_all(&wire)).await,
+                        Ok(Ok(()))
+                    ) {
                         return;
                     }
                     if resp_close {
+                        close_after_reply(&mut socket, remaining > 0).await;
                         return;
                     }
                 }
@@ -1488,5 +1575,73 @@ mod tests {
             );
             let _ = client.shutdown().await;
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fast_prefix_and_header_limits_are_enforced() {
+        assert!(is_fast_prefix(b"POST /upload "));
+        assert!(is_fast_prefix(b"POST /upload?id=1"));
+        assert!(is_fast_prefix(b"GET /download?bytes=1"));
+        assert!(!is_fast_prefix(b"POST /upload/checkpoint HTTP/1.1\r\n"));
+        assert!(!is_fast_prefix(b"GET /probe HTTP/1.1\r\n"));
+
+        let mut too_many = String::from(
+            "POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 131072\r\n",
+        );
+        for i in 0..99 {
+            too_many.push_str(&format!("X-H{i}: v\r\n"));
+        }
+        too_many.push_str("\r\n");
+        let raw = too_many.as_bytes();
+        let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        assert!(parse_fast_head(raw, split).is_none());
+
+        let reply = Response::builder()
+            .status(http::StatusCode::TOO_MANY_REQUESTS)
+            .body(Body::empty())
+            .unwrap();
+        let encoded = encode_h1_response(&reply, true);
+        let text = std::str::from_utf8(&encoded).unwrap();
+        assert!(text.contains("\r\ndate: "), "missing Date header: {text:?}");
+        assert!(text.contains("\r\nconnection: close\r\n"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn close_after_reply_delivers_upload_refusal_with_unread_body_queued() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut peek = [0u8; 256];
+            let _ = socket.read(&mut peek).await.unwrap();
+            let refusal = Response::builder()
+                .status(http::StatusCode::TOO_MANY_REQUESTS)
+                .header(http::header::RETRY_AFTER, "1")
+                .body(Body::empty())
+                .unwrap();
+            let wire = encode_h1_response(&refusal, true);
+            socket.write_all(&wire).await.unwrap();
+            close_after_reply(&mut socket, true).await;
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut req = Vec::from(
+            b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 131072\r\n\r\n"
+                .as_slice(),
+        );
+        req.resize(req.len() + (64 << 10), b'a');
+        client.write_all(&req).await.unwrap();
+        let mut reply = Vec::new();
+        client.read_to_end(&mut reply).await.unwrap();
+        server.await.unwrap();
+        let text = std::str::from_utf8(&reply).unwrap();
+        assert!(
+            text.starts_with("HTTP/1.1 429 Too Many Requests\r\n"),
+            "refusal should arrive intact without TCP RST loss, got: {text:?}"
+        );
     }
 }

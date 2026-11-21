@@ -86,7 +86,7 @@ fn legal() -> Result<u8, String> {
 
 fn serve(config: Config) -> Result<(), String> {
     let cpus = std::thread::available_parallelism().map_or(1, usize::from);
-    let explicit_workers = std::env::var_os("TOKIO_WORKER_THREADS").is_some();
+    let explicit_workers = std::env::var_os("TOKIO_WORKER_THREADS").is_some_and(|v| !v.is_empty());
     let mut runtime = tokio::runtime::Builder::new_multi_thread();
     if !explicit_workers {
         runtime.worker_threads(cpus.min(2));

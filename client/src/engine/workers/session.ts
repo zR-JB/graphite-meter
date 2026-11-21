@@ -252,10 +252,17 @@ class Session {
   async #writeStream(transport: WebTransport, block: Uint8Array<ArrayBuffer>): Promise<void> {
     try {
       const writer = (await transport.createUnidirectionalStream()).getWriter();
+      let yielded = performance.now();
+      let unclocked = 0;
       while (this.#state === "open") {
         await writer.ready;
         if (this.#state !== "open") break;
         writer.write(block).catch(this.#broken);
+        if (++unclocked < CLOCK_EVERY) continue;
+        unclocked = 0;
+        if (performance.now() - yielded < YIELD_MS) continue;
+        await taskTurn();
+        yielded = performance.now();
       }
       // A stop ends the stream with its FIN.
       await writer.close();

@@ -131,25 +131,13 @@ fn embed_with(
     browser.then(|| canonical(&assets)).transpose()
 }
 
-fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
-        }
-    }
-    !crc
-}
-
 /// Deterministic RFC 1952 gzip member (mtime = 0, OS = unknown) for a notice slice.
 pub(crate) fn gzip_member(plain: &[u8]) -> Vec<u8> {
     let raw = miniz_oxide::deflate::compress_to_vec(plain, 9);
     let mut out = Vec::with_capacity(10 + raw.len() + 8);
     out.extend_from_slice(&[0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x02, 0xff]);
     out.extend_from_slice(&raw);
-    out.extend_from_slice(&crc32(plain).to_le_bytes());
+    out.extend_from_slice(&crate::crc32(plain).to_le_bytes());
     out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
     out
 }

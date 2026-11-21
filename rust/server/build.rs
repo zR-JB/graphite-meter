@@ -32,14 +32,40 @@ fn embed() -> Result<(), String> {
             );
         }
         println!("cargo:rerun-if-changed={}", root.display());
+        const MAX_GZIP_INFLATE_BYTES: usize = 8 << 20;
         let scanned = scan::scan(&root, reviewed.is_some())?;
-        let gzipped: std::collections::HashSet<&str> = scanned
+        let by_name: std::collections::HashMap<&str, &[u8]> = scanned
             .iter()
-            .filter_map(|file| file.name.strip_suffix(".gz"))
+            .map(|file| (file.name.as_str(), file.bytes.as_slice()))
             .collect();
+        let mut elide_plain = std::collections::HashSet::new();
+        for file in &scanned {
+            let Some(base) = file.name.strip_suffix(".gz") else {
+                continue;
+            };
+            let inflated =
+                graphite_meter_legal::gunzip_single_member(&file.bytes, MAX_GZIP_INFLATE_BYTES)
+                    .ok_or_else(|| {
+                        format!(
+                            "invalid or oversized gzip browser asset (must be single-member RFC 1952 <= {MAX_GZIP_INFLATE_BYTES} B): {}",
+                            file.name
+                        )
+                    })?;
+            if let Some(plain) = by_name.get(base)
+                && inflated.as_slice() != *plain
+            {
+                return Err(format!(
+                    "gzip browser asset {} does not match sibling {base}",
+                    file.name
+                ));
+            }
+            if base != "index.html" {
+                elide_plain.insert(base);
+            }
+        }
         for (number, file) in scanned.iter().enumerate() {
-            // Skip uncompressed plain copies when a .gz copy exists (except index.html); server inflates .gz on demand.
-            if file.name != "index.html" && gzipped.contains(file.name.as_str()) {
+            // Skip validated uncompressed plain copies when a matching .gz copy exists (except index.html).
+            if elide_plain.contains(file.name.as_str()) {
                 continue;
             }
             // rustc includes this checked copy, never the source file.

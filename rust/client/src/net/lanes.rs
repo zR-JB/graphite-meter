@@ -29,8 +29,10 @@ use tokio::{runtime::Handle, sync::watch, task::JoinSet, time::timeout};
 use tokio_util::sync::CancellationToken;
 
 const STREAM_BYTES: u64 = 64 << 20;
-/// The block an upload repeats; an attempt that handed on more than one moved bytes.
+/// The block a direct upload repeats; 256 KiB cuts syscall overhead on fast links.
 const BLOCK_BYTES: usize = 256 << 10;
+/// An upload attempt that handed on more than this counts as having moved bytes when deciding retries.
+const MOVED_BYTES: u64 = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
 const CHUNKS_PER_READ: usize = 32;
 
@@ -304,7 +306,7 @@ impl Group {
             let (started, sent) = (Instant::now(), lane.sent.load(Ordering::Relaxed));
             lane.moved = false;
             let result = self.attempt(&mut lane, &tally).await;
-            let moved = lane.moved || lane.sent.load(Ordering::Relaxed) - sent > BLOCK_BYTES as u64;
+            let moved = lane.moved || lane.sent.load(Ordering::Relaxed) - sent > MOVED_BYTES;
             let fault = match result {
                 Ok(()) if moved => {
                     retry = Retry::default();
@@ -615,6 +617,7 @@ async fn read_h1_response_head<R: tokio::io::AsyncRead + Unpin>(
         let code = rest
             .split(' ')
             .next()
+            .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()))
             .and_then(|code| code.parse::<u16>().ok())
             .and_then(|code| StatusCode::from_u16(code).ok())
             .ok_or_else(|| Fault::Malformed("invalid HTTP status code".into()))?;
@@ -815,12 +818,30 @@ async fn drain_close_delimited(
 }
 
 #[cfg(target_os = "linux")]
-fn parse_content_length(value: &http::HeaderValue) -> Option<u64> {
-    let bytes = value.as_bytes();
-    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
-        return None;
+fn parse_content_length_headers(headers: &http::HeaderMap) -> Result<Option<u64>, ()> {
+    let mut values = headers.get_all(http::header::CONTENT_LENGTH).iter();
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    let mut parsed: Option<u64> = None;
+    for header in std::iter::once(first).chain(values) {
+        let text = header.to_str().map_err(|_| ())?;
+        for part in text.split(',') {
+            let trimmed = part.trim_matches(|c| matches!(c, ' ' | '\t'));
+            if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(());
+            }
+            let len = trimmed.parse::<u64>().map_err(|_| ())?;
+            if let Some(prev) = parsed {
+                if prev != len {
+                    return Err(());
+                }
+            } else {
+                parsed = Some(len);
+            }
+        }
     }
-    std::str::from_utf8(bytes).ok()?.parse::<u64>().ok()
+    Ok(parsed)
 }
 
 /// Zero-copy plain HTTP/1.1 download using `MSG_TRUNC` and adaptive `SO_RCVLOWAT`; returns `Ok(false)` to fall back.
@@ -875,23 +896,20 @@ async fn direct_download(
         }
         return Ok(false);
     }
-    let mut lengths = headers.get_all(header::CONTENT_LENGTH).iter();
-    let Some(first_raw) = lengths.next() else {
-        // Close-delimited HTTP/1.1 response: consume this first body directly, then stay on Hyper.
-        disable_direct.store(true, Ordering::Relaxed);
-        lane.announce(tally);
-        drain_close_delimited(&mut socket, trailing, lane, tally).await?;
-        return Ok(true);
+    let total = match parse_content_length_headers(&headers) {
+        Ok(Some(len)) => len,
+        Ok(None) => {
+            // Close-delimited HTTP/1.1 response: consume this first body directly, then stay on Hyper.
+            disable_direct.store(true, Ordering::Relaxed);
+            lane.announce(tally);
+            drain_close_delimited(&mut socket, trailing, lane, tally).await?;
+            return Ok(true);
+        }
+        Err(()) => {
+            disable_direct.store(true, Ordering::Relaxed);
+            return Ok(false);
+        }
     };
-    let Some(first_len) = parse_content_length(first_raw) else {
-        disable_direct.store(true, Ordering::Relaxed);
-        return Ok(false);
-    };
-    if lengths.any(|v| parse_content_length(v) != Some(first_len)) {
-        disable_direct.store(true, Ordering::Relaxed);
-        return Ok(false);
-    }
-    let total = first_len;
     lane.announce(tally);
     let initial = (trailing.len() as u64).min(total);
     if initial > 0 {
@@ -977,14 +995,18 @@ async fn direct_download(
                     }
                 }
                 if batched_lowat > 0 {
-                    if timeout(FALLBACK_WAIT, socket.readable()).await.is_err() {
-                        let _ = setsockopt(&socket, ReadLowWater, &1);
-                        batched_lowat = 0;
-                        sample_started = Instant::now();
-                        sample_bytes = 0;
-                        burst = 0;
-                        short_waits = 0;
-                        total_waits = 0;
+                    match timeout(FALLBACK_WAIT, socket.readable()).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => return Err(Fault::Lost),
+                        Err(_) => {
+                            let _ = setsockopt(&socket, ReadLowWater, &1);
+                            batched_lowat = 0;
+                            sample_started = Instant::now();
+                            sample_bytes = 0;
+                            burst = 0;
+                            short_waits = 0;
+                            total_waits = 0;
+                        }
                     }
                 } else {
                     socket.readable().await.map_err(|_| Fault::Lost)?;
@@ -1012,13 +1034,28 @@ async fn direct_upload(
     lane.announce(tally);
     let (mut reader, mut writer) = socket.split();
     let mut answer = std::pin::pin!(read_h1_response_head(&mut reader));
-    if writer.write_all(&wire).await.is_err() {
-        if let Ok(Ok((status, headers, _))) = timeout(Duration::from_secs(1), &mut answer).await
-            && let Some(fault) = client.refusal(request, status, &headers)
-        {
-            return Err(fault);
+    let head_sent = tokio::select! {
+        biased;
+        res = &mut answer => {
+            let (status, headers, _) = res?;
+            if let Some(fault) = client.refusal(request, status, &headers) {
+                return Err(fault);
+            }
+            return Ok(());
         }
-        return Err(Fault::Lost);
+        res = timeout(CONTROL_TIMEOUT, writer.write_all(&wire)) => res,
+    };
+    match head_sent {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            if let Ok(Ok((status, headers, _))) = timeout(Duration::from_secs(1), &mut answer).await
+                && let Some(fault) = client.refusal(request, status, &headers)
+            {
+                return Err(fault);
+            }
+            return Err(Fault::Lost);
+        }
+        Err(_) => return Err(Fault::TimedOut("upload answer")),
     }
     let mut remaining = TRANSFER_BYTES;
     let mut offset = 0usize;

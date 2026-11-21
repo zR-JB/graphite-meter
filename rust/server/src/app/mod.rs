@@ -219,10 +219,23 @@ impl App {
         exchange: Exchange,
     ) -> Result<FastUpload, Response<Body>> {
         let deadline = exchange.deadline();
+        let log_refusal = |method: &str, resp: &Response<Body>| {
+            if self.connection_log.is_some() {
+                let (peer, endpoint, status) =
+                    (connection.peer, connection.endpoint, resp.status().as_u16());
+                log!(
+                    Debug,
+                    "request",
+                    "{method} {} from {peer} on {endpoint:?}: {status}",
+                    request.uri().path()
+                );
+            }
+        };
         let (route, peer) = match self.gate(request, connection) {
             Ok(passed) => passed,
             Err(mut answer) => {
                 answer.body_mut().bound_by_default(deadline);
+                log_refusal("POST", &answer);
                 return Err(answer);
             }
         };
@@ -230,6 +243,7 @@ impl App {
         let fail = |mut resp: Response<Body>, access: Option<&finalize::Access>| {
             self.finalize(&mut resp, access);
             resp.body_mut().bound_by_default(deadline);
+            log_refusal("POST", &resp);
             resp
         };
         if route != Some(Route::Upload) || connection.endpoint.bootstrap() {
@@ -325,10 +339,23 @@ impl App {
             return Ok(None);
         };
         let deadline = exchange.deadline();
+        let log_refusal = |method: &str, resp: &Response<Body>| {
+            if self.connection_log.is_some() {
+                let (peer, endpoint, status) =
+                    (connection.peer, connection.endpoint, resp.status().as_u16());
+                log!(
+                    Debug,
+                    "request",
+                    "{method} {} from {peer} on {endpoint:?}: {status}",
+                    request.uri().path()
+                );
+            }
+        };
         let (route, peer) = match self.gate(request, connection) {
             Ok(passed) => passed,
             Err(mut answer) => {
                 answer.body_mut().bound_by_default(deadline);
+                log_refusal("GET", &answer);
                 return Err(answer);
             }
         };
@@ -336,6 +363,7 @@ impl App {
         let fail = |mut resp: Response<Body>, access: Option<&finalize::Access>| {
             self.finalize(&mut resp, access);
             resp.body_mut().bound_by_default(deadline);
+            log_refusal("GET", &resp);
             resp
         };
         if route != Some(Route::Download) || connection.endpoint.bootstrap() {
