@@ -245,23 +245,67 @@ enum ParsedFastHead {
 }
 
 #[cfg(target_os = "linux")]
+fn parse_content_length(bytes: &[u8]) -> Option<u64> {
+    // Match hyper's strict RFC 9110 `1*DIGIT` parsing and `DecodedLength::MAX_LEN` (`u64::MAX - 2`).
+    const MAX_LEN: u64 = u64::MAX - 2;
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut len = 0u64;
+    for &b in bytes {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        len = len.checked_mul(10)?.checked_add(u64::from(b - b'0'))?;
+    }
+    (len <= MAX_LEN).then_some(len)
+}
+
+#[cfg(target_os = "linux")]
 fn parse_fast_head(buf: &[u8], split: usize) -> Option<ParsedFastHead> {
     use http::{HeaderName, HeaderValue, Uri, Version, header};
 
     const MIN_FAST_UPLOAD: u64 = 64 << 10;
-    let head = std::str::from_utf8(&buf[..split]).ok()?;
-    let mut lines = head.split("\r\n");
-    let first = lines.next()?;
-    let (method, rest) = if let Some(rest) = first.strip_prefix("POST ") {
-        (Method::POST, rest)
-    } else {
-        (Method::GET, first.strip_prefix("GET ")?)
-    };
-    let (target, version) = rest.split_once(' ')?;
-    if version != "HTTP/1.1" {
+    const MAX_FAST_HEADERS: usize = 64;
+    const MAX_URI_LEN: usize = (u16::MAX - 1) as usize;
+
+    let raw = buf.get(..split + 4)?;
+    // Restrict the fast path to strict CRLF framing so hyper decides on any bare CR or LF.
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i] {
+            b'\r' => {
+                if raw.get(i + 1) != Some(&b'\n') {
+                    return None;
+                }
+                i += 2;
+            }
+            b'\n' => return None,
+            _ => i += 1,
+        }
+    }
+    let mut raw_headers = [httparse::EMPTY_HEADER; MAX_FAST_HEADERS];
+    let mut req = httparse::Request::new(&mut raw_headers);
+    match req.parse(raw) {
+        Ok(httparse::Status::Complete(parsed_len)) if parsed_len == raw.len() => {}
+        _ => return None,
+    }
+    if req.version != Some(1) {
         return None;
     }
-    let uri: Uri = target.parse().ok()?;
+    let method = match req.method? {
+        "POST" => Method::POST,
+        "GET" => Method::GET,
+        _ => return None,
+    };
+    let path = req.path?;
+    if path.len() > MAX_URI_LEN || !path.starts_with('/') {
+        return None;
+    }
+    let uri: Uri = path.parse().ok()?;
+    if uri.scheme().is_some() || uri.authority().is_some() {
+        return None;
+    }
     let is_upload = method == Method::POST && uri.path() == Route::Upload.path();
     let is_download = method == Method::GET && uri.path() == Route::Download.path();
     if !is_upload && !is_download {
@@ -273,14 +317,9 @@ fn parse_fast_head(buf: &[u8], split: usize) -> Option<ParsedFastHead> {
         .version(Version::HTTP_11);
     let mut content_length: Option<u64> = None;
     let mut close = false;
-    for line in lines {
-        if line.is_empty() {
-            continue;
-        }
-        let (name_raw, value_raw) = line.split_once(':')?;
-        let name = HeaderName::from_bytes(name_raw.trim().as_bytes()).ok()?;
-        let val_str = value_raw.trim();
-        let value = HeaderValue::from_bytes(val_str.as_bytes()).ok()?;
+    for header in req.headers {
+        let name = HeaderName::from_bytes(header.name.as_bytes()).ok()?;
+        let value = HeaderValue::from_bytes(header.value).ok()?;
         if name == header::TRANSFER_ENCODING || name == header::EXPECT || name == header::UPGRADE {
             return None;
         }
@@ -288,13 +327,15 @@ fn parse_fast_head(buf: &[u8], split: usize) -> Option<ParsedFastHead> {
             if content_length.is_some() {
                 return None;
             }
-            content_length = Some(val_str.parse::<u64>().ok()?);
-        } else if name == header::CONNECTION
-            && val_str
+            content_length = Some(parse_content_length(value.as_bytes())?);
+        } else if name == header::CONNECTION {
+            let conn = value.to_str().ok()?;
+            if conn
                 .split(',')
                 .any(|tok| tok.trim().eq_ignore_ascii_case("close"))
-        {
-            close = true;
+            {
+                close = true;
+            }
         }
         builder = builder.header(name, value);
     }
@@ -614,7 +655,7 @@ impl Http1 {
                             if bulk_read.is_batched() && remaining <= bulk_read.lowat() {
                                 let _ = bulk_read.finish(&socket);
                             }
-                            let cap = (remaining as usize).min(discard.capacity());
+                            let cap = remaining.min(discard.capacity() as u64) as usize;
                             let read = socket.try_io(Interest::READABLE, || {
                                 let (_, len) = recv(
                                     &socket,
@@ -1313,5 +1354,139 @@ mod tests {
         tokio::time::advance(EXCHANGE_BOUND).await;
         let expired = io.check(&mut cx).unwrap_err();
         assert_eq!(expired.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fast_head_parser_matches_hyper_strictness() {
+        let parse = |raw: &[u8]| {
+            let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            parse_fast_head(raw, split)
+        };
+
+        assert!(matches!(
+            parse(b"POST /upload?id=abc HTTP/1.1\r\nHost: example.test\r\nContent-Length: 131072\r\n\r\n"),
+            Some(ParsedFastHead::Upload {
+                content_length: 131072,
+                close: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(b"GET /download?bytes=65536 HTTP/1.1\r\nHost: example.test\r\nConnection: keep-alive, close\r\n\r\n"),
+            Some(ParsedFastHead::Download { close: true, .. })
+        ));
+        assert!(matches!(
+            parse(b"GET /download HTTP/1.1\r\nHost: example.test\r\nContent-Length: 0\r\n\r\n"),
+            Some(ParsedFastHead::Download { close: false, .. })
+        ));
+
+        let rejected: &[(&str, &[u8])] = &[
+            (
+                "space before colon",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length : 131072\r\n\r\n",
+            ),
+            (
+                "obs-fold leading space",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\n Content-Length: 131072\r\n\r\n",
+            ),
+            (
+                "obs-fold leading tab",
+                b"POST /upload HTTP/1.1\r\n\tHost: example.test\r\nContent-Length: 131072\r\n\r\n",
+            ),
+            (
+                "signed plus content-length",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: +131072\r\n\r\n",
+            ),
+            (
+                "duplicate content-length",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 131072\r\nContent-Length: 131072\r\n\r\n",
+            ),
+            (
+                "comma content-length",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 131072, 131072\r\n\r\n",
+            ),
+            (
+                "content-length above hyper max",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 18446744073709551615\r\n\r\n",
+            ),
+            (
+                "content-length equal to hyper chunked sentinel",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 18446744073709551614\r\n\r\n",
+            ),
+            (
+                "bare LF inside header",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\nContent-Length: 131072\r\n\r\n",
+            ),
+            (
+                "bare CR inside header",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\rContent-Length: 131072\r\n\r\n",
+            ),
+            (
+                "vertical tab in content-length",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: \x0b131072\r\n\r\n",
+            ),
+            (
+                "transfer-encoding with content-length",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\nContent-Length: 131072\r\n\r\n",
+            ),
+            (
+                "expect 100-continue",
+                b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nContent-Length: 131072\r\n\r\n",
+            ),
+            (
+                "absolute-form uri",
+                b"POST http://example.test/upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 131072\r\n\r\n",
+            ),
+            (
+                "http 1.0",
+                b"POST /upload HTTP/1.0\r\nHost: example.test\r\nContent-Length: 131072\r\n\r\n",
+            ),
+        ];
+        for (case, raw) in rejected {
+            assert!(
+                parse(raw).is_none(),
+                "expected parse_fast_head to fall back to hyper for: {case}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn malformed_fast_head_falls_back_to_hyper_400() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        for raw in [
+            b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length : 131072\r\n\r\n"
+                .as_slice(),
+            b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: +131072\r\n\r\n"
+                .as_slice(),
+        ] {
+            let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            assert!(parse_fast_head(raw, split).is_none());
+
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let prefix = raw.to_vec();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let service = service_fn(|_req: Request<Incoming>| async {
+                    Ok::<_, io::Error>(Response::new(http_body_util::Empty::<Bytes>::new()))
+                });
+                let _ = http1::Builder::new()
+                    .serve_connection(TokioIo::new(Prefixed::new(prefix, socket)), service)
+                    .await;
+            });
+            let mut client = TcpStream::connect(addr).await.unwrap();
+            let mut reply = Vec::new();
+            client.read_to_end(&mut reply).await.unwrap();
+            server.await.unwrap();
+            let head = std::str::from_utf8(&reply).unwrap();
+            assert!(
+                head.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+                "expected hyper 400 fallback, got: {head:?}"
+            );
+            let _ = client.shutdown().await;
+        }
     }
 }

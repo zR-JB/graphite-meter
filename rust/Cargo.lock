@@ -667,6 +667,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "httparse",
  "hyper",
  "hyper-util",
  "ipnet",
