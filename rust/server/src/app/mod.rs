@@ -278,20 +278,20 @@ impl App {
         })
     }
 
-    /// Builds and finalizes the response for a completed fast upload; `None` aborts the connection.
+    /// Builds and finalizes the response for a completed fast upload; `None` aborts the connection and logs status `0`.
     #[cfg(target_os = "linux")]
     pub(crate) fn finish_fast_upload(
         &self,
         upload: FastUpload,
         connection: &Connection,
-        ending: LaneEnding,
+        ending: Option<LaneEnding>,
     ) -> Option<Response<Body>> {
-        let mut answer = match (ending, ending.refusal()) {
-            (LaneEnding::Finished, _) => {
+        let mut answer = match ending.map(|ending| (ending, ending.refusal())) {
+            Some((LaneEnding::Finished, _)) => {
                 response::json(format!("{{\"bytes\":{}}}", upload.sink.bytes()))
             }
-            (_, Some(refusal)) => response::refusal(refusal),
-            (_, None) => {
+            Some((_, Some(refusal))) => response::refusal(refusal),
+            Some((_, None)) | None => {
                 if let Some(path) = upload.path {
                     let (peer, endpoint) = (connection.peer, connection.endpoint);
                     log!(

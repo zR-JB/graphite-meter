@@ -736,7 +736,7 @@ impl Http1 {
                         let mut ended = pin!(upload.lane.ended());
                         loop {
                             if remaining == 0 {
-                                break upload.lane.finish();
+                                break Some(upload.lane.finish());
                             }
                             if bulk_read.is_batched() && remaining <= bulk_read.lowat() {
                                 let _ = bulk_read.finish(&socket);
@@ -751,17 +751,14 @@ impl Http1 {
                                 Ok(len)
                             });
                             match read {
-                                Ok(0) => {
-                                    let _ = bulk_read.finish(&socket);
-                                    return;
-                                }
+                                Ok(0) => break None,
                                 Ok(n) => {
                                     let n = n.min(cap);
                                     upload.sink.record(n);
                                     remaining -= n as u64;
                                     bulk_read.on_read(n);
                                     if let Some(ending) = upload.lane.due() {
-                                        break ending;
+                                        break Some(ending);
                                     }
                                     since_yield += n as u64;
                                     if since_yield >= YIELD_BYTES {
@@ -777,33 +774,26 @@ impl Http1 {
                                     if bulk_read.is_batched() {
                                         let waited = tokio::select! {
                                             biased;
-                                            ending = &mut ended => break ending,
+                                            ending = &mut ended => break Some(ending),
                                             ready = timeout(BulkRead::WAIT, socket.readable()) => ready,
                                         };
                                         match waited {
                                             Ok(Ok(())) => {}
-                                            Ok(Err(_)) => {
-                                                let _ = bulk_read.finish(&socket);
-                                                return;
-                                            }
+                                            Ok(Err(_)) => break None,
                                             Err(_) => bulk_read.reset_after_timeout(&socket),
                                         }
                                     } else {
                                         let waited = tokio::select! {
                                             biased;
-                                            ending = &mut ended => break ending,
+                                            ending = &mut ended => break Some(ending),
                                             ready = socket.readable() => ready,
                                         };
                                         if waited.is_err() {
-                                            let _ = bulk_read.finish(&socket);
-                                            return;
+                                            break None;
                                         }
                                     }
                                 }
-                                Err(_) => {
-                                    let _ = bulk_read.finish(&socket);
-                                    return;
-                                }
+                                Err(_) => break None,
                             }
                         }
                     };
@@ -814,7 +804,7 @@ impl Http1 {
                         return;
                     };
                     let resp_close = close
-                        || ending != LaneEnding::Finished
+                        || ending != Some(LaneEnding::Finished)
                         || remaining > 0
                         || answer
                             .headers()
