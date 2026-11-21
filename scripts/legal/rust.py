@@ -212,7 +212,9 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
                         state.components + state.browser))
     if not build.development:
         image = notices(state.components + state.browser + scopes["container"]) + platform_section(state.platform)
-        write_changed(build.out / "IMAGE_NOTICES.txt", report(project, build.version, image, False))
+        image_bytes = report(project, build.version, image, False)
+        write_changed(build.out / "IMAGE_NOTICES.txt", image_bytes)
+        write_changed(build.out / "IMAGE_NOTICES.txt.gz", gzip.compress(image_bytes, compresslevel=9, mtime=0))
     return shared
 
 
@@ -280,12 +282,13 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
             raise LegalError("the linked executable's platform notices differ from the prepared ones")
     out_dir = next(message["out_dir"] for message in messages
                    if message.get("reason") == "build-script-executed" and message["package_id"] == root)
-    payload, binary = (Path(out_dir) / "legal.zlib").read_bytes(), executable.read_bytes()
-    if payload not in binary or zlib.decompress(payload) != (build.out / "LEGAL.txt").read_bytes():
+    payload, binary = (Path(out_dir) / "legal.gz").read_bytes(), executable.read_bytes()
+    decompressed = gzip.decompress(payload)
+    if payload not in binary or decompressed != (build.out / "LEGAL.txt").read_bytes():
         raise LegalError("the executable does not embed the prepared notices")
     if (DEVELOPMENT.encode() in binary) != build.development:
         raise LegalError(f"only a development build's executable may carry {DEVELOPMENT!r}")
-    if not build.development and f"{REVIEWED}{sha256(zlib.decompress(payload))}".encode() not in binary:
+    if not build.development and f"{REVIEWED}{sha256(decompressed)}".encode() not in binary:
         raise LegalError("the executable does not carry its notices' SHA-256")
     write_changed(build.out / "inventory.json", marshal({
         "schemaVersion": 1, "package": build.package, "target": state.target, "profile": build.profile,

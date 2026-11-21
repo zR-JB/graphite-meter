@@ -93,10 +93,64 @@ opt-level = 3
 opt-level = 3
 
 [profile.release]
-opt-level = 3
+opt-level = "s"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# Keep hot transport and crypto data-plane crates at opt-level 3 while cold control-plane/UI code builds for size.
+[profile.release.package.argon2]
+opt-level = 3
+[profile.release.package.blake2]
+opt-level = 3
+[profile.release.package.bytes]
+opt-level = 3
+[profile.release.package.graphite-meter-http3]
+opt-level = 3
+[profile.release.package.h2]
+opt-level = 3
+[profile.release.package.mio]
+opt-level = 3
+[profile.release.package.noq]
+opt-level = 3
+[profile.release.package.noq-proto]
+opt-level = 3
+[profile.release.package.noq-udp]
+opt-level = 3
+[profile.release.package.ring]
+opt-level = 3
+[profile.release.package.rustls]
+opt-level = 3
+[profile.release.package.tokio]
+opt-level = 3
+[profile.release.package.tokio-rustls]
+opt-level = 3
+
+# Optimize cold control-plane/UI/parsing dependencies aggressively for size.
+[profile.release.package.crossterm]
+opt-level = "z"
+[profile.release.package.jiff]
+opt-level = "z"
+[profile.release.package.jiff-tzdb]
+opt-level = "z"
+[profile.release.package.miniz_oxide]
+opt-level = "z"
+[profile.release.package.ratatui-core]
+opt-level = "z"
+[profile.release.package.ratatui-crossterm]
+opt-level = "z"
+[profile.release.package.rcgen]
+opt-level = "z"
+[profile.release.package.rustls-webpki]
+opt-level = "z"
+[profile.release.package.serde]
+opt-level = "z"
+[profile.release.package.serde_json]
+opt-level = "z"
+[profile.release.package.tungstenite]
+opt-level = "z"
+[profile.release.package.tokio-tungstenite]
+opt-level = "z"
 
 [profile.ci]
 inherits = "release"

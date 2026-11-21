@@ -23,6 +23,7 @@ hyper = { workspace = true, features = ["client", "http1", "server"] }
 hyper-util.workspace = true
 ipnet.workspace = true
 jiff.workspace = true
+miniz_oxide.workspace = true
 noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
 percent-encoding.workspace = true
 ring.workspace = true
@@ -47,12 +48,11 @@ nix.workspace = true
 rustfs-mimalloc.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["net", "termios"] }
+rustix = { workspace = true, features = ["fs", "net", "termios"] }
 
 [dev-dependencies]
 graphite-meter-testkit.workspace = true
 http-body-util.workspace = true
-miniz_oxide.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

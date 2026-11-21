@@ -85,12 +85,22 @@ fn legal() -> Result<u8, String> {
 }
 
 fn serve(config: Config) -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    let explicit_workers = std::env::var_os("TOKIO_WORKER_THREADS").is_some();
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    if !explicit_workers {
+        runtime.worker_threads(cpus.min(2));
+    }
+    let runtime = runtime
         .enable_all()
         .build()
         .map_err(|error| format!("could not start the runtime: {error}"))?;
-    let pool = Pool::beside(runtime.handle())
-        .map_err(|error| format!("could not start the runtime threads: {error}"))?;
+    let pool = if explicit_workers {
+        Pool::beside(runtime.handle())
+    } else {
+        Pool::beside_workers(runtime.handle(), cpus)
+    }
+    .map_err(|error| format!("could not start the runtime threads: {error}"))?;
     runtime.block_on(async {
         let stop = runtime::stop_signal()
             .map_err(|error| format!("could not watch for stop signals: {error}"))?;

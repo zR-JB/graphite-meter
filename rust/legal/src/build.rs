@@ -113,14 +113,45 @@ fn embed_with(
             hex(profile.into_encoded_bytes(), "GM_PGO_SHA256")?
         );
     }
-    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&report, 9);
-    write(&output.join("legal.zlib"), &compressed)?;
+    let (compressed, browser_spec) = match start {
+        Some(offset) => {
+            let mut combined = gzip_member(&report[..offset]);
+            let browser_gz_offset = combined.len();
+            combined.extend_from_slice(&gzip_member(&report[offset..]));
+            (combined, Some((browser_gz_offset, report.len() - offset)))
+        }
+        None => (gzip_member(&report), None),
+    };
+    write(&output.join("legal.gz"), &compressed)?;
     let payload = format!(
-        "Some((include_bytes!(concat!(env!(\"OUT_DIR\"), \"/legal.zlib\")), {}))",
+        "Some((include_bytes!(concat!(env!(\"OUT_DIR\"), \"/legal.gz\")), {}))",
         report.len()
     );
-    generate(output, &payload, start, &marker)?;
+    generate(output, &payload, browser_spec, &marker)?;
     browser.then(|| canonical(&assets)).transpose()
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Deterministic RFC 1952 gzip member (mtime = 0, OS = unknown) for a notice slice.
+pub(crate) fn gzip_member(plain: &[u8]) -> Vec<u8> {
+    let raw = miniz_oxide::deflate::compress_to_vec(plain, 9);
+    let mut out = Vec::with_capacity(10 + raw.len() + 8);
+    out.extend_from_slice(&[0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x02, 0xff]);
+    out.extend_from_slice(&raw);
+    out.extend_from_slice(&crc32(plain).to_le_bytes());
+    out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+    out
 }
 
 /// Checks that every input the notices were prepared from still matches its snapshot.
@@ -157,7 +188,7 @@ fn hex(digest: Vec<u8>, name: &str) -> Result<String, String> {
 fn generate(
     output: &Path,
     payload: &str,
-    browser: Option<usize>,
+    browser: Option<(usize, usize)>,
     marker: &str,
 ) -> Result<(), String> {
     let source = format!(
@@ -260,9 +291,12 @@ mod tests {
             run(&root, &[], true),
             Ok(Some(root.join("legal/browser-assets")))
         );
-        let start = REPORT.len() - "browser notice\n".len();
+        let compressed = fs::read(root.join("out/legal.gz")).unwrap();
+        let browser_len = "browser notice\n".len();
+        let prefix_len = REPORT.len() - browser_len;
+        let browser_gz_offset = gzip_member(&REPORT.as_bytes()[..prefix_len]).len();
         let expected = format!(
-            "/legal.zlib\")), {})), Some({start}), \"UNREVIEWED DEVELOPMENT BUILD\");\n",
+            "/legal.gz\")), {})), Some(({browser_gz_offset}, {browser_len})), \"UNREVIEWED DEVELOPMENT BUILD\");\n",
             REPORT.len()
         );
         assert!(
@@ -270,9 +304,18 @@ mod tests {
             "{}",
             generated(&root)
         );
-        let compressed = fs::read(root.join("out/legal.zlib")).unwrap();
-        let report = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap();
-        assert_eq!(report, REPORT.as_bytes());
+        let static_gz: &'static [u8] = Box::leak(compressed.into_boxed_slice());
+        let notices = crate::Notices::new(
+            Some((static_gz, REPORT.len())),
+            Some((browser_gz_offset, browser_len)),
+            "",
+        );
+        assert_eq!(notices.report().unwrap(), REPORT.as_bytes());
+        assert_eq!(notices.browser().unwrap(), b"browser notice\n");
+        assert_eq!(
+            notices.browser_gzip().unwrap(),
+            gzip_member(b"browser notice\n").as_slice()
+        );
         assert_eq!(run(&root, &[], false), Ok(None));
         assert!(generated(&root).ends_with(&format!(
             "{})), None, \"UNREVIEWED DEVELOPMENT BUILD\");\n",

@@ -78,7 +78,8 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
    `rustc-path.txt`, and `inputs.txt` with copies of those inputs under `inputs/`. For the server it also stages the
    browser build in `browser-assets/` with its `legal/` files (the license, the notices and `about.json`, whose
    components link their source, upstream and changes) and, for a reviewed build, writes the image's
-   `IMAGE_NOTICES.txt`.
+   `IMAGE_NOTICES.txt` and deterministic gzip copy `IMAGE_NOTICES.txt.gz` (shipped in the container image as
+   `/usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz`).
 2. Build and verify. One `cargo rustc` build embeds the notices; the build script refuses a directory prepared for
    another package, target or compiler, or whose input copies differ. The collector then requires that the build
    compiled only prepared crates with unchanged legal files, linked only the record's native inputs (on Windows

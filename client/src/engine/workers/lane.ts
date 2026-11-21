@@ -183,12 +183,16 @@ async function upload(
       post({ type: "posted", bytes, elapsedMs });
       if (!(elapsedMs > 0)) continue;
       turnaround = Math.min(turnaround, elapsedMs);
-      // The rate counts each POST's turnaround as time, so a POST sized to its send time plus one turnaround sends for the send time.
-      rate = rate ? 0.3 * ((bytes * 1000) / elapsedMs) + 0.7 * rate : (bytes * 1000) / elapsedMs;
+      // Estimate wire send speed without turnaround overhead so small initial POSTs on long RTT paths ramp promptly.
+      const sendTimeMs = Math.max(elapsedMs - turnaround, elapsedMs * 0.25);
+      const instant = (bytes * 1000) / sendTimeMs;
+      const weight = bytes < largest && elapsedMs < TARGET_POST_MS / 2 ? 0.5 : 0.3;
+      rate = rate ? weight * instant + (1 - weight) * rate : instant;
       const sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
-      const want = (rate * (sendMs + turnaround)) / 1000;
+      const want = (rate * sendMs) / 1000;
+      const grow = elapsedMs < sendMs / 2 ? bytes * 4 : bytes * 2;
       bytes = Math.floor(
-        Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))),
+        Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(grow, want))),
       );
     } catch (error) {
       return { type: "broken", detail: String(error) };

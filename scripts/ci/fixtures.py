@@ -80,7 +80,10 @@ def descriptor(os_name: str, arch: str, digest: str, attests: str | None = None)
 
 
 RUNNABLE = (descriptor("linux", "amd64", AMD), descriptor("linux", "arm64", ARM))
-IMAGE_FILES = {"graphite-meter": b"server", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt": b"notices"}
+IMAGE_FILES = {
+    "graphite-meter": b"server",
+    "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz": gzip.compress(b"notices", mtime=0),
+}
 ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
             descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
 

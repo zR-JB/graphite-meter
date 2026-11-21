@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from scripts.legal.artifacts import about, copyright_notice
+from scripts.legal.artifacts import about, copyright_notice, notices
 from scripts.legal.discovery import discover_browser, package_license, package_root, repository_url
 from scripts.legal.model import (
     Component, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, array, read_json, sha256,
@@ -246,6 +246,25 @@ class LegalTests(unittest.TestCase):
             })
             # The review identity stays as reviewed.
             self.assertEqual(listed[0]["source"], "registry+https://github.com/rust-lang/crates.io-index")
+
+    def test_notices_deduplicates_repeated_identical_license_texts_while_keeping_notices_inline(self) -> None:
+        shared_body = "Apache License Version 2.0\n" * 40
+        unique_body = "Unique Copyright 2026 Author\n" * 30
+        notice_body = "Copyright 2026 Project\n" * 30
+        components = [
+            Component("alpha", "1.0", "cargo", "src-a", selectedLicenseExpression="Apache-2.0",
+                      legalTexts=[LegalFile("LICENSE-APACHE", sha256(shared_body.encode()), shared_body, "license")],
+                      notices=[LegalFile("NOTICE", sha256(notice_body.encode()), notice_body, "notice")]),
+            Component("beta", "2.0", "cargo", "src-b", selectedLicenseExpression="Apache-2.0",
+                      legalTexts=[LegalFile("LICENSE-APACHE", sha256(shared_body.encode()), shared_body, "license"),
+                                  LegalFile("LICENSE-UNIQUE", sha256(unique_body.encode()), unique_body, "license")],
+                      notices=[LegalFile("NOTICE", sha256(notice_body.encode()), notice_body, "notice")]),
+        ]
+        rendered = notices(components)
+        self.assertEqual(rendered.count(shared_body), 1)
+        self.assertEqual(rendered.count("SHARED LICENSE TEXT #1"), 3)  # 2 refs + 1 appendix header
+        self.assertEqual(rendered.count(unique_body), 1)
+        self.assertEqual(rendered.count(notice_body), 2)  # notices are never deduplicated
 
 
 if __name__ == "__main__":

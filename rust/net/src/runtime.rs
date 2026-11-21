@@ -9,6 +9,7 @@ use tokio::{
 };
 
 /// A pool runs its pinned threads this many nice steps below the caller's threads on Linux.
+#[cfg(target_os = "linux")]
 const PINNED_NICE: i32 = 5;
 
 /// Pinned current-thread runtimes for bulk transfers, niced on Linux so the caller's threads and latency runtime preempt them.
@@ -23,22 +24,31 @@ pub struct Pool {
 impl Pool {
     /// Spawns one pinned runtime per worker of `runtime`, none for one worker, and refuses a current-thread runtime.
     pub fn beside(runtime: &Handle) -> io::Result<Self> {
-        Self::spawn(runtime, false)
+        Self::spawn(runtime, runtime.metrics().num_workers(), false)
+    }
+
+    /// Spawns `workers` pinned runtimes (none for `<= 1`), independent of `runtime`'s own worker count.
+    pub fn beside_workers(runtime: &Handle, workers: usize) -> io::Result<Self> {
+        Self::spawn(runtime, workers, false)
     }
 
     /// Spawns what `beside` does, plus a runtime of its own for latency probes and their channels.
     pub fn probing(runtime: &Handle) -> io::Result<Self> {
-        Self::spawn(runtime, true)
+        Self::spawn(runtime, runtime.metrics().num_workers(), true)
     }
 
-    fn spawn(runtime: &Handle, probing: bool) -> io::Result<Self> {
+    /// Spawns `workers` pinned runtimes (none for `<= 1`) plus a dedicated latency runtime.
+    pub fn probing_workers(runtime: &Handle, workers: usize) -> io::Result<Self> {
+        Self::spawn(runtime, workers, true)
+    }
+
+    fn spawn(runtime: &Handle, workers: usize, probing: bool) -> io::Result<Self> {
         if runtime.runtime_flavor() == RuntimeFlavor::CurrentThread {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "pinned runtimes need a multi-thread runtime",
             ));
         }
-        let workers = runtime.metrics().num_workers();
         let (running, ended) = watch::channel(());
         let thread = |name: String, niced: bool| -> io::Result<Handle> {
             let runtime = tokio::runtime::Builder::new_current_thread()

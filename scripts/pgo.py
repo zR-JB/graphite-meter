@@ -26,7 +26,7 @@ RUST = ROOT / "rust"
 SECONDS = 8
 ATTEMPTS = 3
 # Every listener in both directions; a last HTTP/3 download adds a reply-driven WebTransport bus.
-TRAINING = [(listener, direction) for listener in ("http3", "http2", "http1-tls") for direction in ("download", "upload")]
+TRAINING = [(listener, direction) for listener in ("http3", "http2", "http1-tls", "http1") for direction in ("download", "upload")]
 
 
 def instrumented(target: str, profile: str, raw: Path) -> dict[str, Path]:

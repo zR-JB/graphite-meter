@@ -568,6 +568,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "nix",
  "noq",
  "ratatui-core",
  "ratatui-crossterm",

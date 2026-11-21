@@ -254,7 +254,8 @@ class Session {
       const writer = (await transport.createUnidirectionalStream()).getWriter();
       while (this.#state === "open") {
         await writer.ready;
-        await writer.write(block);
+        if (this.#state !== "open") break;
+        writer.write(block).catch(this.#broken);
       }
       // A stop ends the stream with its FIN.
       await writer.close();

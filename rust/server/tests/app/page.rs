@@ -31,12 +31,34 @@ static FILES: &[Asset] = &[
 
 const REPORT: &str = "project\nrust crates\nbrowser notice\n";
 
+fn gzip_member(plain: &[u8]) -> Vec<u8> {
+    let raw = miniz_oxide::deflate::compress_to_vec(plain, 9);
+    let mut crc = !0u32;
+    for &byte in plain {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    let mut out = Vec::with_capacity(10 + raw.len() + 8);
+    out.extend_from_slice(&[0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x02, 0xff]);
+    out.extend_from_slice(&raw);
+    out.extend_from_slice(&(!crc).to_le_bytes());
+    out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+    out
+}
+
 fn notices() -> &'static Notices {
-    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(REPORT.as_bytes(), 9).leak();
-    let browser = REPORT.len() - "browser notice\n".len();
+    let browser_len = "browser notice\n".len();
+    let prefix_len = REPORT.len() - browser_len;
+    let mut compressed = gzip_member(&REPORT.as_bytes()[..prefix_len]);
+    let browser_gz_offset = compressed.len();
+    compressed.extend_from_slice(&gzip_member(&REPORT.as_bytes()[prefix_len..]));
+    let compressed: &'static [u8] = compressed.leak();
     Box::leak(Box::new(Notices::new(
         Some((compressed, REPORT.len())),
-        Some(browser),
+        Some((browser_gz_offset, browser_len)),
         "",
     )))
 }
@@ -251,6 +273,30 @@ async fn a_client_gets_the_copy_it_accepts_and_revalidates_by_tag() {
         assert_eq!(header(&index, name), None, "{name}");
     }
     assert!(text(index).await.contains("content=\"false\"></head>"));
+
+    // Browser notices serve precompressed gzip directly with representation-specific ETags and Vary.
+    let notice_gz = get(
+        &app,
+        "GET",
+        "/legal/THIRD_PARTY_NOTICES.txt",
+        &[("accept-encoding", "gzip")],
+    )
+    .await;
+    assert_eq!(header(&notice_gz, "content-encoding"), Some("gzip"));
+    assert_eq!(header(&notice_gz, "vary"), Some("Accept-Encoding"));
+    let notice_gz_etag = header(&notice_gz, "etag").unwrap().to_owned();
+    let gz_body = notice_gz.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        gz_body.as_ref(),
+        gzip_member(b"browser notice\n").as_slice()
+    );
+
+    let notice_plain = get(&app, "GET", "/legal/THIRD_PARTY_NOTICES.txt", &[]).await;
+    assert_eq!(header(&notice_plain, "content-encoding"), None);
+    assert_eq!(header(&notice_plain, "vary"), Some("Accept-Encoding"));
+    let notice_plain_etag = header(&notice_plain, "etag").unwrap().to_owned();
+    assert_ne!(notice_gz_etag, notice_plain_etag);
+    assert_eq!(text(notice_plain).await, "browser notice\n");
 }
 
 #[tokio::test]

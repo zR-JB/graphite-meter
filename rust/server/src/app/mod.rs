@@ -111,6 +111,23 @@ impl Connection {
 
 type Admitted = Result<Outcome, Response<Body>>;
 
+#[cfg(target_os = "linux")]
+pub(crate) struct FastUpload {
+    pub(crate) lane: Lane,
+    pub(crate) sink: crate::engine::UploadSink,
+    access: Option<finalize::Access>,
+    path: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) struct FastDownload {
+    pub(crate) lane: Lane,
+    pub(crate) bytes: u64,
+    pub(crate) sendfile: crate::engine::download::Sendfile,
+    pub(crate) transfer: Option<Arc<crate::engine::Transfer>>,
+    pub(crate) response: Response<Body>,
+}
+
 pub enum Outcome {
     Response(Response<Body>),
     /// Writes the `101`, then carries the WebSocket that the lane bounds.
@@ -186,6 +203,179 @@ impl App {
 
     pub fn auth(&self) -> &Auth {
         &self.auth
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn download_sendfile(&self) -> Option<crate::engine::download::Sendfile> {
+        self.block.sendfile()
+    }
+
+    /// Runs the full gate, auth, admission, and upload-aggregate join for a plain HTTP/1.1 zero-copy upload.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn admit_fast_upload(
+        &self,
+        request: &Request<Body>,
+        connection: &Connection,
+        exchange: Exchange,
+    ) -> Result<FastUpload, Response<Body>> {
+        let deadline = exchange.deadline();
+        let (route, peer) = match self.gate(request, connection) {
+            Ok(passed) => passed,
+            Err(mut answer) => {
+                answer.body_mut().bound_by_default(deadline);
+                return Err(answer);
+            }
+        };
+        let access = self.auth.access(route, peer.auth(), request.headers());
+        let fail = |mut resp: Response<Body>, access: Option<&finalize::Access>| {
+            self.finalize(&mut resp, access);
+            resp.body_mut().bound_by_default(deadline);
+            resp
+        };
+        if route != Some(Route::Upload) || connection.endpoint.bootstrap() {
+            let resp = if connection.endpoint.bootstrap() {
+                response::refusal(Refusal::WrongProtocol)
+            } else {
+                response::status(StatusCode::NOT_FOUND)
+            };
+            return Err(fail(resp, access.as_ref()));
+        }
+        let lane = match self.admit(&peer, connection, exchange, false) {
+            Ok(lane) => lane,
+            Err(resp) => return Err(fail(resp, access.as_ref())),
+        };
+        let id = query::get(request.uri().query(), "id").unwrap_or_default();
+        let transfer = self.uploads.meter().open();
+        let sink = match self
+            .uploads
+            .begin(&id, peer.owner().as_ref(), lane.clone(), transfer)
+        {
+            Ok(sink) => sink,
+            Err(refusal) => return Err(fail(response::refusal(refusal), access.as_ref())),
+        };
+        Ok(FastUpload {
+            lane,
+            sink,
+            access,
+            path: self
+                .connection_log
+                .is_some()
+                .then(|| request.uri().path().to_owned()),
+        })
+    }
+
+    /// Builds and finalizes the response for a completed fast upload; `None` aborts the connection.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn finish_fast_upload(
+        &self,
+        upload: FastUpload,
+        connection: &Connection,
+        ending: LaneEnding,
+    ) -> Option<Response<Body>> {
+        let mut answer = match (ending, ending.refusal()) {
+            (LaneEnding::Finished, _) => {
+                response::json(format!("{{\"bytes\":{}}}", upload.sink.bytes()))
+            }
+            (_, Some(refusal)) => response::refusal(refusal),
+            (_, None) => {
+                if let Some(path) = upload.path {
+                    let (peer, endpoint) = (connection.peer, connection.endpoint);
+                    log!(
+                        Debug,
+                        "request",
+                        "POST {path} from {peer} on {endpoint:?}: 0"
+                    );
+                }
+                return None;
+            }
+        };
+        self.finalize(&mut answer, upload.access.as_ref());
+        if let Some(path) = upload.path {
+            let (peer, endpoint, status) = (
+                connection.peer,
+                connection.endpoint,
+                answer.status().as_u16(),
+            );
+            log!(
+                Debug,
+                "request",
+                "POST {path} from {peer} on {endpoint:?}: {status}"
+            );
+        }
+        Some(answer)
+    }
+
+    /// Runs gate, auth, admission, and finalize for a plain HTTP/1.1 fixed-length zero-copy download.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn admit_fast_download(
+        &self,
+        request: &Request<Body>,
+        connection: &Connection,
+        exchange: Exchange,
+    ) -> Result<Option<FastDownload>, Response<Body>> {
+        let query = request.uri().query();
+        if query::transfer_ms(query).is_some() || query::flag(query, "last") {
+            return Ok(None);
+        }
+        let bytes = query::transfer_bytes(query);
+        if bytes < (64 << 10) {
+            return Ok(None);
+        }
+        let Some(sendfile) = self.block.sendfile() else {
+            return Ok(None);
+        };
+        let deadline = exchange.deadline();
+        let (route, peer) = match self.gate(request, connection) {
+            Ok(passed) => passed,
+            Err(mut answer) => {
+                answer.body_mut().bound_by_default(deadline);
+                return Err(answer);
+            }
+        };
+        let access = self.auth.access(route, peer.auth(), request.headers());
+        let fail = |mut resp: Response<Body>, access: Option<&finalize::Access>| {
+            self.finalize(&mut resp, access);
+            resp.body_mut().bound_by_default(deadline);
+            resp
+        };
+        if route != Some(Route::Download) || connection.endpoint.bootstrap() {
+            let resp = if connection.endpoint.bootstrap() {
+                response::refusal(Refusal::WrongProtocol)
+            } else {
+                response::status(StatusCode::NOT_FOUND)
+            };
+            return Err(fail(resp, access.as_ref()));
+        }
+        let lane = match self.admit(&peer, connection, exchange, false) {
+            Ok(lane) => lane,
+            Err(resp) => return Err(fail(resp, access.as_ref())),
+        };
+        let mut response = Response::new(Body::empty());
+        let headers = response.headers_mut();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes));
+        self.finalize(&mut response, access.as_ref());
+        if self.connection_log.is_some() {
+            let (peer, endpoint) = (connection.peer, connection.endpoint);
+            log!(
+                Debug,
+                "request",
+                "GET {} from {peer} on {endpoint:?}: 200",
+                request.uri().path()
+            );
+        }
+        let transfer = self.block.meter().open();
+        Ok(Some(FastDownload {
+            lane,
+            bytes,
+            sendfile,
+            transfer,
+            response,
+        }))
     }
 
     /// The verbose throughput lines for the `window` since the last, for each direction that moved or runs.

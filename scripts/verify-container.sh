@@ -56,9 +56,10 @@ etc/ssl/certs/ca-certificates.crt
 usr/share/licenses/ca-certificates/COPYRIGHT
 usr/share/licenses/graphite-meter/LICENSE GNU AFFERO GENERAL PUBLIC LICENSE
 usr/share/licenses/graphite-meter/COPYRIGHT Graphite Meter
-usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt THIRD-PARTY SOFTWARE NOTICES
 usr/share/licenses/graphite-meter/SOURCE.txt https://github.com/zR-JB/graphite-meter
 EOF
+tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz \
+    | gzip -dc | grep -F -- 'THIRD-PARTY SOFTWARE NOTICES' >/dev/null
 # One static binary, the CA roots and the notices; no libc, shell or package manager. The engine adds only its
 # runtime files.
 tar -tvf "$tmp/rootfs.tar" | awk '$1 !~ /^d/ { print $6 }' \
@@ -70,10 +71,10 @@ usr/share/licenses/ca-certificates/COPYRIGHT
 usr/share/licenses/graphite-meter/COPYRIGHT
 usr/share/licenses/graphite-meter/LICENSE
 usr/share/licenses/graphite-meter/SOURCE.txt
-usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
+usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz
 FILES
 # An unreviewed development build's notices and executable carry this marker; no image may ship one.
-if tar -xOf "$tmp/rootfs.tar" graphite-meter usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt \
+if { tar -xOf "$tmp/rootfs.tar" graphite-meter; tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz | gzip -dc; } \
     | grep -aF 'UNREVIEWED DEVELOPMENT BUILD' >/dev/null; then
     echo "the image ships an unreviewed development build" >&2
     exit 1

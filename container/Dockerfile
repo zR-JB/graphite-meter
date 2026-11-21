@@ -173,8 +173,8 @@ COPY --from=server-build /src/rust/target/server-notices/*_third-party-source.ta
 FROM scratch AS server
 COPY --from=server-build /graphite-meter /graphite-meter
 COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
-# The binary's notices followed by the image's own additions.
-COPY --from=server-build /src/rust/target/server-notices/IMAGE_NOTICES.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
+# The binary's notices followed by the image's own additions (gzip-compressed to save ~2.7 MB unpacked).
+COPY --from=server-build /src/rust/target/server-notices/IMAGE_NOTICES.txt.gz /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz
 COPY --from=server-build /src/rust/target/server-notices/SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
 COPY --from=rust-amd64 /usr/share/doc/ca-certificates/copyright /usr/share/licenses/ca-certificates/COPYRIGHT
 # Outbound OIDC discovery, token exchange, UserInfo and JWKS requests need the public CA roots.
