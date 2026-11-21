@@ -32,15 +32,21 @@ fn embed() -> Result<(), String> {
             );
         }
         println!("cargo:rerun-if-changed={}", root.display());
-        for (number, file) in scan::scan(&root, reviewed.is_some())?
-            .into_iter()
-            .enumerate()
-        {
+        let scanned = scan::scan(&root, reviewed.is_some())?;
+        let gzipped: std::collections::HashSet<&str> = scanned
+            .iter()
+            .filter_map(|file| file.name.strip_suffix(".gz"))
+            .collect();
+        for (number, file) in scanned.iter().enumerate() {
+            // Skip uncompressed plain copies when a .gz copy exists (except index.html); server inflates .gz on demand.
+            if file.name != "index.html" && gzipped.contains(file.name.as_str()) {
+                continue;
+            }
             // rustc includes this checked copy, never the source file.
             let snapshot = format!("browser-asset-{number}");
             fs::write(output.join(&snapshot), &file.bytes)
                 .map_err(|error| format!("{snapshot}: {error}"))?;
-            let (name, content_type) = (file.name, file.content_type);
+            let (name, content_type) = (&file.name, file.content_type);
             manifest.push_str(&format!(
                 "    Asset {{ path: {name:?}, content_type: {content_type:?}, \
                  bytes: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{snapshot}\")) }},\n"

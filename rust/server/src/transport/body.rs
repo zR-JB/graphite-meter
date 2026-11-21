@@ -104,6 +104,13 @@ impl Body {
         matches!(self.content, Content::Feed(_))
     }
 
+    pub(crate) fn full_bytes(&self) -> Option<&[u8]> {
+        match &self.content {
+            Content::Full(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
     pub(crate) fn bound_by_default(&mut self, deadline: Instant) {
         self.bound.get_or_insert(Bound::Until(deadline));
     }

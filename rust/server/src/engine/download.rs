@@ -3,6 +3,8 @@
 use super::{Meter, Transfer};
 use crate::limits::{Budget, Lease};
 use bytes::Bytes;
+#[cfg(target_os = "linux")]
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -10,10 +12,60 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 /// The block is this large, as is the largest chunk a source hands out.
 pub const BLOCK_BYTES: usize = 256 << 10;
 
+/// Sealed read-only memfd copy of the download block for zero-copy `sendfile` on plain TCP sockets.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+pub(crate) struct Sendfile {
+    start: usize,
+    len: usize,
+    file: Arc<OwnedFd>,
+}
+
+#[cfg(target_os = "linux")]
+impl Sendfile {
+    /// Returns the memfd and byte offset when `slice` points into the shared download block.
+    pub fn locate(&self, slice: &[u8]) -> Option<(&OwnedFd, u64)> {
+        if slice.is_empty() {
+            return None;
+        }
+        let offset = (slice.as_ptr() as usize).checked_sub(self.start)?;
+        (offset.checked_add(slice.len())? <= self.len).then_some((&self.file, offset as u64))
+    }
+
+    pub fn fd(&self) -> &OwnedFd {
+        &self.file
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn create_memfd(bytes: &[u8]) -> Option<Arc<OwnedFd>> {
+    use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, memfd_create};
+    use std::{fs::File, io::Write};
+    let fd = memfd_create(
+        c"gm-download",
+        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+    )
+    .ok()?;
+    let mut file = File::from(fd);
+    file.write_all(bytes).ok()?;
+    let fd = OwnedFd::from(file);
+    let _ = fcntl_add_seals(
+        &fd,
+        SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE | SealFlags::SEAL,
+    );
+    Some(Arc::new(fd))
+}
+
 /// The shared payload block is charged to the budget once for the server's lifetime.
 #[derive(Debug)]
 pub struct Block {
     bytes: Bytes,
+    #[cfg(target_os = "linux")]
+    sendfile: Option<Sendfile>,
     meter: Meter,
     _lease: Lease,
 }
@@ -26,11 +78,25 @@ impl Block {
             .ok_or("the buffer budget cannot cover the download block")?;
         let mut bytes = vec![0; BLOCK_BYTES];
         getrandom::fill(&mut bytes).map_err(|error| format!("download block: {error}"))?;
+        let bytes: Bytes = bytes.into();
+        #[cfg(target_os = "linux")]
+        let sendfile = create_memfd(&bytes).map(|file| Sendfile {
+            start: bytes.as_ptr() as usize,
+            len: bytes.len(),
+            file,
+        });
         Ok(Self {
-            bytes: bytes.into(),
+            bytes,
+            #[cfg(target_os = "linux")]
+            sendfile,
             meter,
             _lease: lease,
         })
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn sendfile(&self) -> Option<Sendfile> {
+        self.sendfile.clone()
     }
 
     /// Opens a source of `bytes` payload bytes, one running transfer of the meter while any of its clones lives.

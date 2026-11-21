@@ -53,8 +53,8 @@ const MAX_CONCURRENT_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.
 const FRAME_BYTES: usize = 64 << 10;
 const PREFACE_BOUND: Duration = Duration::from_secs(10);
-/// Unsent downloads wait in h2's scheduler, where control replies interleave.
-const NOTSENT_LOWAT: u32 = 64 << 10;
+/// Unsent downloads wait in h2's scheduler while still allowing full 16 KiB TLS records without per-ACK wakeups.
+const NOTSENT_LOWAT: u32 = 256 << 10;
 
 #[derive(Clone)]
 pub struct Http2 {
@@ -103,7 +103,7 @@ impl Http2 {
             .max_frame_size(FRAME_BYTES as u32)
             .max_header_list_size(MAX_HEAD_BYTES as u32)
             .max_concurrent_streams(MAX_CONCURRENT_STREAMS)
-            .max_send_buffer_size(4 * FRAME_BYTES)
+            .max_send_buffer_size(8 * FRAME_BYTES)
             .data_frame_budget(STATE_BYTES)
             .shared_budget(self.app.budget().h2(), STATE_BYTES);
         let Ok(Ok(mut h2)) = timeout(PREFACE_BOUND, builder.handshake::<_, Bytes>(stream)).await

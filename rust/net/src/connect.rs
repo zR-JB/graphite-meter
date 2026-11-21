@@ -111,6 +111,14 @@ impl Connector {
         Self { proxy, verify }
     }
 
+    /// Connects directly to a plain HTTP target when no proxy applies; returns `None` for HTTPS or proxied targets.
+    pub async fn connect_plain(&self, target: &Origin) -> Result<Option<TcpStream>, ConnectError> {
+        if target.scheme != Scheme::Http || self.proxy.route(target)?.is_some() {
+            return Ok(None);
+        }
+        Ok(Some(reach(&target.host, target.port).await?))
+    }
+
     pub async fn connect(
         &self,
         target: &Origin,

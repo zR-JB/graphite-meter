@@ -166,6 +166,43 @@ async fn discovery_names_the_bound_port_of_a_listener_configured_with_port_zero(
 }
 
 #[tokio::test]
+async fn a_bulk_upload_accepts_a_short_tail_and_keeps_its_connection() {
+    let server = start(&[]).await;
+    let id = server.upload_id().await;
+    let mut upload = server.connect().await;
+    let mut control = server.connect().await;
+    let prefix = "x".repeat(1 << 20);
+    let size = prefix.len() + 1;
+    upload
+        .send(&format!(
+            "POST /upload?id={id} HTTP/1.1\r\nHost: test\r\nContent-Length: {size}\r\n\r\n"
+        ))
+        .await;
+    upload.send(&prefix).await;
+    let checkpoint = format!("POST /upload/checkpoint?id={id}");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let reply = control.request(&checkpoint, "").await;
+            let counters: graphite_meter_proto::upload::Counters =
+                serde_json::from_slice(&reply.body).unwrap();
+            if counters.bytes() >= prefix.len() as u64 {
+                break;
+            }
+        }
+        upload.send("x").await;
+        let reply = upload.answer().await.unwrap();
+        assert_eq!(reply.status, 200);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&reply.body).unwrap(),
+            serde_json::json!({"bytes": size})
+        );
+        assert_eq!(upload.request("GET /probe", "").await.status, 200);
+    })
+    .await
+    .expect("the final byte and next request are read");
+}
+
+#[tokio::test]
 async fn a_feed_the_peer_stops_reading_holds_no_backlog_of_stale_records() {
     let server = start(&[]).await;
     let id = server.upload_id().await;

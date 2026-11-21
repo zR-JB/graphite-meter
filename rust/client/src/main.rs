@@ -65,10 +65,18 @@ fn fail(error: &str) -> ExitCode {
 
 /// The interface when `interactive`, else one run of `config` and its report; `kept` is the remembered server.
 fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<ExitCode> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let pool = Arc::new(Pool::probing(runtime.handle())?);
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    let explicit_workers = std::env::var_os("TOKIO_WORKER_THREADS").is_some();
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    if !explicit_workers {
+        runtime.worker_threads(cpus.min(2));
+    }
+    let runtime = runtime.enable_all().build()?;
+    let pool = Arc::new(if explicit_workers {
+        Pool::probing(runtime.handle())?
+    } else {
+        Pool::probing_workers(runtime.handle(), cpus)?
+    });
     runtime.block_on(async {
         let terminal = io::stdout().is_terminal();
         let signals = signals(!interactive)?;

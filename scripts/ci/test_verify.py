@@ -1,3 +1,4 @@
+import gzip
 import json
 import os
 import re
@@ -194,26 +195,29 @@ class OCITests(unittest.TestCase):
                     self.verify(error)
 
     def test_each_image_ships_the_server_and_notices_of_a_reviewed_build(self) -> None:
-        server, notices = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
+        server, notices = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz"
         marked = b"\0UNREVIEWED DEVELOPMENT BUILD\0"
+        ok_notices = gzip.compress(b"notices", mtime=0)
+        dev_notices = gzip.compress(b"UNREVIEWED DEVELOPMENT BUILD\n\nnotices", mtime=0)
         licenses = "usr/share/licenses/graphite-meter"
         for files, extra, error in (
-            ({server: b"server", notices: b"notices"}, {f"{licenses}/LICENSE": b"license"}, None),
-            ({server: b"server", notices: b"notices"}, {"usr/share/licenses/ca-certificates/COPYRIGHT": b"ca"},
+            ({server: b"server", notices: ok_notices}, {f"{licenses}/LICENSE": b"license"}, None),
+            ({server: b"server", notices: ok_notices}, {"usr/share/licenses/ca-certificates/COPYRIGHT": b"ca"},
              "'usr/share/licenses/ca-certificates/COPYRIGHT' is not a can"),
-            ({server: b"server", notices: b"notices"}, {"usr/share": b"file"}, "'usr/share' is not a can"),
-            ({server: b"server", notices: b"notices", "bin/../graphite-meter": marked}, None, "'bin/..' is not a can"),
-            ({server: b"server", notices: b"notices", f"{licenses}/./THIRD_PARTY_NOTICES.txt": marked}, None,
+            ({server: b"server", notices: ok_notices}, {"usr/share": b"file"}, "'usr/share' is not a can"),
+            ({server: b"server", notices: ok_notices, "bin/../graphite-meter": marked}, None, "'bin/..' is not a can"),
+            ({server: b"server", notices: ok_notices, f"{licenses}/./THIRD_PARTY_NOTICES.txt.gz": marked}, None,
              "is not a canonical"),
-            ({server: b"server", notices: b"notices", ".wh..wh..opq": b""}, None, "'.wh..wh..opq' is not a can"),
-            ({notices: b"notices", "bin/server": b"server", server: "bin/server"}, None,
+            ({server: b"server", notices: ok_notices, ".wh..wh..opq": b""}, None, "'.wh..wh..opq' is not a can"),
+            ({notices: ok_notices, "bin/server": b"server", server: "bin/server"}, None,
              "'graphite-meter' is not a canonical, unique file"),
-            ({server: b"server", notices: b"notices"}, {server: b"other server"}, "'graphite-meter' is not a can"),
-            ({server: bytes(33), notices: b"notices"}, None, "graphite-meter beyond 32 bytes"),
+            ({server: b"server", notices: ok_notices}, {server: b"other server"}, "'graphite-meter' is not a can"),
+            ({server: bytes(33), notices: ok_notices}, None, "graphite-meter beyond 32 bytes"),
             ({server: b"server"}, None, r"lacks \['usr/share"),
-            ({notices: b"notices", "bin/graphite-meter": b"server"}, None, r"lacks \['graphite-meter'\]"),
-            ({server: marked, notices: b"notices"}, None, "development build's graphite-meter"),
-            ({server: b"server", notices: b"UNREVIEWED DEVELOPMENT BUILD\n\nnotices"}, None, "development build's usr"),
+            ({notices: ok_notices, "bin/graphite-meter": b"server"}, None, r"lacks \['graphite-meter'\]"),
+            ({server: marked, notices: ok_notices}, None, "development build's graphite-meter"),
+            ({server: b"server", notices: dev_notices}, None, "development build's usr"),
+            ({server: b"server", notices: b"not gzip"}, None, "invalid gzip"),
         ):
             with self.subTest(files=list(files), error=error):
                 write_oci(self.archive, "example/repo", "f" * 40, remote=False, files=files, extra_layer=extra)

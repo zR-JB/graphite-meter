@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Verify the release image's OCI archive as data: every blob, the platforms, provenance, notices and labels."""
 
+import gzip
 import hashlib
 import io
 import posixpath
 import re
 import tarfile
+import zlib
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
@@ -43,7 +45,7 @@ FIELDS = {
 SLSA = "https://slsa.dev/provenance/v1"
 BLOB_LIMIT = 4 * 1024 * 1024
 LAYER_LIMIT = 256 * 1024 * 1024
-SERVER, NOTICES = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
+SERVER, NOTICES = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt.gz"
 SOURCE = "usr/share/licenses/graphite-meter/SOURCE.txt"
 FILE_LIMITS = {SERVER: LAYER_LIMIT, NOTICES: LAYER_LIMIT, SOURCE: BLOB_LIMIT}
 # Opens an unreviewed development build's notices; its executable carries it too (rust/legal/src/lib.rs).
@@ -155,7 +157,17 @@ def check_image_files(archive: tarfile.TarFile, manifest: JsonObject, image: str
                 if name in FILE_LIMITS and (handle := files.extractfile(entry)) is not None:
                     if len(data := handle.read(FILE_LIMITS[name] + 1)) > FILE_LIMITS[name]:
                         fail(f"image {image} ships {name} beyond {FILE_LIMITS[name]} bytes")
-                    if name != SOURCE and DEVELOPMENT.encode() in data:
+                    if name == NOTICES:
+                        try:
+                            with gzip.GzipFile(fileobj=io.BytesIO(data)) as unpacked:
+                                plain = unpacked.read(LAYER_LIMIT + 1)
+                        except (OSError, EOFError, zlib.error) as exc:
+                            fail(f"image {image} ships invalid gzip {name}: {exc}")
+                        if len(plain) > LAYER_LIMIT:
+                            fail(f"image {image} ships {name} expanding beyond {LAYER_LIMIT} bytes")
+                        if DEVELOPMENT.encode() in plain:
+                            fail(f"image {image} ships an unreviewed development build's {name}")
+                    elif name != SOURCE and DEVELOPMENT.encode() in data:
                         fail(f"image {image} ships an unreviewed development build's {name}")
                 shipped[name] = data
     if missing := sorted({SERVER, NOTICES} - shipped.keys()):

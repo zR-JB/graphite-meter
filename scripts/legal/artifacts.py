@@ -7,16 +7,43 @@ import zipfile
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
-from .model import Component, Json, LegalError, Project, array, marshal, obj, read_json, text
+from .model import Component, Json, LegalError, Project, array, marshal, obj, read_json, sha256, text
+
+SHARED_LICENSE_MIN_BYTES = 512
+
 
 def notices(components: list[Component]) -> str:
+    counts: dict[str, int] = {}
+    for component in components:
+        for item in component.legalTexts:
+            if len(item.text.encode()) >= SHARED_LICENSE_MIN_BYTES:
+                counts[item.text] = counts.get(item.text, 0) + 1
+    shared_index: dict[str, tuple[int, str]] = {}
+    shared_texts: list[tuple[int, str, str]] = []
     output = ["THIRD-PARTY SOFTWARE NOTICES\n\nGraphite Meter includes third-party software described below.\n\n"]
     for component in components:
         modified = "yes" if component.modified else "no"
         output.append(f'Component: {component.name}\nVersion: {component.version}\nSource: {component.source}\n'
                       f'License: {component.selectedLicenseExpression}\nModified by Graphite Meter: {modified}\n\n')
-        output.extend(f'--- {item.name} ---\n\n{item.text}\n' for item in component.legalTexts + component.notices)
+        for item in component.legalTexts:
+            if counts.get(item.text, 0) >= 2:
+                if item.text not in shared_index:
+                    digest = sha256(item.text.encode())
+                    number = len(shared_texts) + 1
+                    shared_index[item.text] = (number, digest)
+                    shared_texts.append((number, digest, item.text))
+                number, digest = shared_index[item.text]
+                output.append(f'--- {item.name} ---\n\n'
+                              f'[Identical text shared below as SHARED LICENSE TEXT #{number} (sha256:{digest[:12]})]\n\n')
+            else:
+                output.append(f'--- {item.name} ---\n\n{item.text}\n')
+        output.extend(f'--- {item.name} ---\n\n{item.text}\n' for item in component.notices)
         output.append("============================================================\n\n")
+    if shared_texts:
+        output.append("SHARED LICENSE TEXTS\n\nThe following verbatim license texts are shared by multiple components above.\n\n")
+        for number, digest, body in shared_texts:
+            output.append(f'--- SHARED LICENSE TEXT #{number} (sha256:{digest}) ---\n\n{body}\n'
+                          "============================================================\n\n")
     return "".join(output)
 
 

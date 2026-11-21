@@ -33,16 +33,19 @@ struct Tagged {
     tag: HeaderValue,
 }
 
-/// A served name's file and the build's brotli and gzip copies of it, in that preference.
+/// A served name's optional uncompressed copy and its precompressed brotli/gzip copies, in preference order.
 struct File {
-    plain: Tagged,
+    content_type: &'static str,
+    plain: Option<Tagged>,
     encoded: Vec<(&'static str, Tagged)>,
+    inflated: OnceLock<Option<(Bytes, HeaderValue)>>,
 }
 
 pub struct Assets {
     files: HashMap<&'static str, File>,
     notices: &'static Notices,
     notice_tag: OnceLock<HeaderValue>,
+    notice_gzip_tag: OnceLock<HeaderValue>,
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
     inline: [String; 2],
@@ -92,25 +95,37 @@ impl Assets {
             asset,
             tag: tag(asset.bytes),
         };
-        let copy = |path: String| files.iter().find(|file| file.path == path).map(tagged);
-        let files = files
-            .iter()
-            .filter(|file| {
-                !matches!(file.path.rsplit_once('.'), Some((_, "br" | "gz")))
-                    && file.path != "index.html"
-            })
-            .map(|file| {
+        let copy = |path: &str| files.iter().find(|file| file.path == path).map(tagged);
+        let mut names: Vec<(&'static str, &'static str)> = Vec::new();
+        for file in files {
+            if file.path == "index.html" {
+                continue;
+            }
+            let base = file
+                .path
+                .strip_suffix(".br")
+                .or_else(|| file.path.strip_suffix(".gz"))
+                .unwrap_or(file.path);
+            if !names.iter().any(|(existing, _)| *existing == base) {
+                names.push((base, file.content_type));
+            }
+        }
+        let files = names
+            .into_iter()
+            .map(|(base, content_type)| {
                 let encoded = [("br", ".br"), ("gzip", ".gz")]
                     .into_iter()
                     .filter_map(|(coding, suffix)| {
-                        Some((coding, copy(format!("{}{suffix}", file.path))?))
+                        Some((coding, copy(&format!("{base}{suffix}"))?))
                     })
                     .collect();
                 (
-                    file.path,
+                    base,
                     File {
-                        plain: tagged(file),
+                        content_type,
+                        plain: copy(base),
                         encoded,
+                        inflated: OnceLock::new(),
                     },
                 )
             })
@@ -119,6 +134,7 @@ impl Assets {
             files,
             notices,
             notice_tag: OnceLock::new(),
+            notice_gzip_tag: OnceLock::new(),
             index,
             inline,
             trusted_types,
@@ -142,13 +158,25 @@ impl Assets {
                 None,
             )
         } else if path.strip_prefix('/') == Some(BROWSER_NOTICE) {
-            let bytes = self.notices.browser()?;
-            (
-                "text/plain; charset=utf-8",
-                "no-cache",
-                Bytes::from_static(bytes),
-                Some(self.notice_tag.get_or_init(|| tag(bytes))),
-            )
+            let gz = self.notices.browser_gzip()?;
+            headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+            if accepts(text(header::ACCEPT_ENCODING), "gzip") {
+                headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+                (
+                    "text/plain; charset=utf-8",
+                    "no-cache",
+                    Bytes::from_static(gz),
+                    Some(self.notice_gzip_tag.get_or_init(|| tag(gz))),
+                )
+            } else {
+                let bytes = self.notices.browser()?;
+                (
+                    "text/plain; charset=utf-8",
+                    "no-cache",
+                    Bytes::from_static(bytes),
+                    Some(self.notice_tag.get_or_init(|| tag(bytes))),
+                )
+            }
         } else {
             let name = path.strip_prefix('/')?;
             let file = self.files.get(name)?;
@@ -162,24 +190,37 @@ impl Assets {
                 headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
             }
             let accept = text(header::ACCEPT_ENCODING);
-            let served = match file
+            if let Some((coding, copy)) = file
                 .encoded
                 .iter()
                 .find(|(coding, _)| accepts(accept, coding))
             {
-                Some((coding, copy)) => {
-                    headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(coding));
-                    copy
-                }
-                None => &file.plain,
-            };
-            let Tagged { asset, tag } = served;
-            (
-                asset.content_type,
-                cache,
-                Bytes::from_static(asset.bytes),
-                Some(tag),
-            )
+                headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(coding));
+                (
+                    copy.asset.content_type,
+                    cache,
+                    Bytes::from_static(copy.asset.bytes),
+                    Some(&copy.tag),
+                )
+            } else if let Some(plain) = &file.plain {
+                (
+                    plain.asset.content_type,
+                    cache,
+                    Bytes::from_static(plain.asset.bytes),
+                    Some(&plain.tag),
+                )
+            } else {
+                let (bytes, tag) = file
+                    .inflated
+                    .get_or_init(|| {
+                        let (_, gz) = file.encoded.iter().find(|(c, _)| *c == "gzip")?;
+                        let raw = gunzip(gz.asset.bytes)?;
+                        let etag = tag(&raw);
+                        Some((Bytes::from(raw), etag))
+                    })
+                    .as_ref()?;
+                (file.content_type, cache, bytes.clone(), Some(tag))
+            }
         };
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
         if let Some(tag) = tag {
@@ -247,6 +288,33 @@ fn trusted_types_policy(html: &[u8]) -> Option<&str> {
     let (name, _) = marker.split_once('"')?;
     let valid = |byte: u8| byte.is_ascii_alphanumeric() || b"-_".contains(&byte);
     (!name.is_empty() && name.bytes().all(valid)).then_some(name)
+}
+
+/// Inflates a standard gzip stream (RFC 1952) for the rare client that requests an uncompressed asset.
+fn gunzip(gz: &[u8]) -> Option<Vec<u8>> {
+    if gz.len() < 18 || gz[0] != 0x1f || gz[1] != 0x8b || gz[2] != 8 {
+        return None;
+    }
+    let flags = gz[3];
+    let mut pos = 10usize;
+    if flags & 0x04 != 0 {
+        let xlen = u16::from_le_bytes([*gz.get(pos)?, *gz.get(pos + 1)?]) as usize;
+        pos = pos.checked_add(2 + xlen)?;
+    }
+    if flags & 0x08 != 0 {
+        pos = gz.get(pos..)?.iter().position(|&b| b == 0)? + pos + 1;
+    }
+    if flags & 0x10 != 0 {
+        pos = gz.get(pos..)?.iter().position(|&b| b == 0)? + pos + 1;
+    }
+    if flags & 0x02 != 0 {
+        pos = pos.checked_add(2)?;
+    }
+    let end = gz.len().checked_sub(8)?;
+    if pos > end {
+        return None;
+    }
+    miniz_oxide::inflate::decompress_to_vec_with_limit(&gz[pos..end], 8 << 20).ok()
 }
 
 /// The quoted base64 of the first 12 bytes of the SHA-256 of `bytes`.
@@ -326,5 +394,49 @@ mod tests {
             );
         }
         assert_eq!(trusted_types_policy(b"<head></head>"), None);
+    }
+
+    #[test]
+    fn gzip_only_asset_inflates_when_client_declines_encoding() {
+        const PLAIN: &[u8] = b"console.log('graphite-meter');\n";
+        let mut gz = vec![0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 0xff];
+        gz.extend_from_slice(&miniz_oxide::deflate::compress_to_vec(PLAIN, 6));
+        gz.extend_from_slice(&[0; 8]); // CRC32 + ISIZE trailer
+        let gz: &'static [u8] = Box::leak(gz.into_boxed_slice());
+        let files: &'static [Asset] = Box::leak(Box::new([Asset {
+            path: "assets/app.js.gz",
+            content_type: "text/javascript; charset=utf-8",
+            bytes: gz,
+        }]));
+        let assets = Assets::new(files, &NOTICES, false, false);
+
+        // Client accepting gzip gets the precompressed static bytes.
+        let mut accept_gz = HeaderMap::new();
+        accept_gz.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip"));
+        let served_gz = assets
+            .get("/assets/app.js", &accept_gz)
+            .expect("gzip served");
+        assert_eq!(served_gz.status, StatusCode::OK);
+        assert_eq!(
+            served_gz.headers.get(header::CONTENT_ENCODING).unwrap(),
+            "gzip"
+        );
+        assert_eq!(served_gz.bytes.as_ref(), gz);
+
+        // Client without Accept-Encoding gets inflated bytes and a stable ETag (304 on revalidate).
+        let empty = HeaderMap::new();
+        let served_plain = assets
+            .get("/assets/app.js", &empty)
+            .expect("plain inflated");
+        assert_eq!(served_plain.status, StatusCode::OK);
+        assert!(served_plain.headers.get(header::CONTENT_ENCODING).is_none());
+        assert_eq!(served_plain.bytes.as_ref(), PLAIN);
+        let etag = served_plain.headers.get(header::ETAG).unwrap().clone();
+
+        let mut revalidate = HeaderMap::new();
+        revalidate.insert(header::IF_NONE_MATCH, etag);
+        let not_modified = assets.get("/assets/app.js", &revalidate).expect("304");
+        assert_eq!(not_modified.status, StatusCode::NOT_MODIFIED);
+        assert!(not_modified.bytes.is_empty());
     }
 }

@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import io
 import json
@@ -5,7 +6,6 @@ import os
 import subprocess
 import tarfile
 import unittest
-import zlib
 from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory, gettempdir
@@ -201,8 +201,8 @@ class BuildVerifyTests(Scratch):
         super().setUp()
         self.out = self.root / "notices"
         self.report = self.write("notices/LEGAL.txt", "UNREVIEWED DEVELOPMENT BUILD\nnotices\n").read_bytes()
-        self.payload = zlib.compress(self.report)
-        self.write("build/legal.zlib", self.payload)
+        self.payload = gzip.compress(self.report, mtime=0)
+        self.write("build/legal.gz", self.payload)
         self.binary = self.write("bin/app", b"code" + self.payload + b"UNREVIEWED DEVELOPMENT BUILD")
         manifest = self.write("dependency/Cargo.toml", "")
         self.write("dependency/LICENSE", "license\n")
@@ -320,8 +320,8 @@ class BuildVerifyTests(Scratch):
 
     def test_a_reviewed_executable_carries_its_notices_sha_256_beside_them(self) -> None:
         report = self.write("notices/LEGAL.txt", "notices\n").read_bytes()
-        payload = zlib.compress(report)
-        self.write("build/legal.zlib", payload)
+        payload = gzip.compress(report, mtime=0)
+        self.write("build/legal.gz", payload)
         marker = f"{REVIEWED}{sha256(report)}".encode()
         for binary, error in ((b"code" + payload + marker, None), (b"code" + payload, "SHA-256"),
                               (b"code" + payload + f"{REVIEWED}{sha256(b'other')}".encode(), "SHA-256")):
