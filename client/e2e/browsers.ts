@@ -222,7 +222,7 @@ function launchFirefox(): Promise<Bidi> {
         "",
       ].join("\n"),
     );
-    // Firefox speaks QUIC only to a root it trusts, so the network group's profile trusts the run's CA.
+    // Firefox speaks QUIC only to a root it trusts, so the profile trusts the run's CA.
     if (ca)
       for (const args of [
         ["-N", "--empty-password"],

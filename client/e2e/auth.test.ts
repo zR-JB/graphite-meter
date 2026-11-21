@@ -59,32 +59,30 @@ test("sign-in uses the shared surface and control radii in both themes", async (
   }
 });
 
-test.chrome(
-  "a signed-in protected home runs automatic, HTTP/3 and WebTransport paths",
-  async (page) => {
-    await open(page, `${locked.url}/login`, {
-      servers: [{ id: "self", url: locked.url }],
-    });
-    await signIn(page);
-    for (const [path, kind, protocol] of [
-      [/^Automatic/, "fetch-stream", "http/1.1"],
-      [/^HTTP\/3/, "fetch-stream", "h3"],
-      [/^WebTransport/, "webtransport", "h3"],
-    ] as const) {
-      const settings = await openSettings(page);
-      await choosePath(settings, "Throughput path", path);
-      await closeSettings(page);
-      await ready(page);
-      const saved = await run(page);
-      expect(saved.result.multiServer.participants).toEqual(["self"]);
-      expect(saved.result.multiServer.failures).toEqual([]);
-      expect(saved.result.multiServer.servers[0]!.throughput.transport).toBe(kind);
-      const [self] = saved.result.multiServer.servers;
-      expect(self!.throughput?.browserProtocol).toBe(protocol);
-      expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-    }
-  },
-);
+test("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths", async (page) => {
+  await open(page, `${locked.url}/login`, {
+    servers: [{ id: "self", url: locked.url }],
+  });
+  await signIn(page);
+  for (const [path, kind, protocol] of [
+    [/^Automatic/, "fetch-stream", "http/1.1"],
+    [/^HTTP\/3/, "fetch-stream", "h3"],
+    [/^WebTransport/, "webtransport", "h3"],
+  ] as const) {
+    const settings = await openSettings(page);
+    await choosePath(settings, "Throughput path", path);
+    await closeSettings(page);
+    await ready(page);
+    const saved = await run(page);
+    expect(saved.result.multiServer.participants).toEqual(["self"]);
+    expect(saved.result.multiServer.failures).toEqual([]);
+    expect(saved.result.multiServer.servers[0]!.throughput.transport).toBe(kind);
+    const [self] = saved.result.multiServer.servers;
+    expect(self!.throughput?.browserProtocol).toBe(kind === "fetch-stream" ? protocol : undefined);
+    expect(self!.throughput?.protocol).toBe(protocol === "h3" ? "http3" : "http1");
+    expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+  }
+});
 
 const feedback = (page: Page, name: string) =>
   page.locator('[aria-label="Settings"] .server-feedback', { hasText: name });

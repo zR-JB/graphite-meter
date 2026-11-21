@@ -42,7 +42,7 @@ same toolchain. Only main's CI runs write caches; a pull request restores main's
 by prefix. The E2E server job carries its Cargo target directory the same way; its build copies it in from
 `.server-target`. The mise toolchain caches are keyed by `mise.lock` and the installed tools, so a task edit in
 `mise.toml` keeps them. The target checks' Ubuntu cross compilers install from `.deb`s cached per runner image
-(`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold cache; the Firefox network jobs take
+(`scripts/ci/apt-cached.sh`), so a stalled Ubuntu mirror matters only on a cold cache; the Firefox jobs take
 the image's own `certutil`.
 Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with `--no-self-update`, and refuses it
 unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins as `rust_manifest_sha256`.

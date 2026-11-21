@@ -1836,8 +1836,10 @@ export class Run {
       throughput: {
         origin: throughput.target.origin,
         transport: throughput.target.transport,
-        protocol: throughput.fetch.protocol,
-        ...(throughput.browserProtocol ? { browserProtocol: throughput.browserProtocol } : {}),
+        protocol: throughput.target.protocol,
+        ...(throughput.target.transport === "fetch-stream" && throughput.browserProtocol
+          ? { browserProtocol: throughput.browserProtocol }
+          : {}),
         clientIpVersion: throughput.probe.clientIpVersion,
       },
       latencyTarget: prepared.latency
