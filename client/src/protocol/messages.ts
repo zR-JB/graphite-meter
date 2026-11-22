@@ -78,9 +78,12 @@ export type LaneCommand =
       sharing: number;
       /** The server's idle round trip, which sizes POSTs around their turnaround, or null when unknown. */
       rttMs: number | null;
+      /** Zero-based lane index used to deterministically stagger steady POST sizes across parallel lanes. */
+      lane?: number;
     }
   | { type: "measure"; epoch: number; at: number }
   | { type: "flush"; at: number }
+  | { type: "park" }
   | { type: "stop" };
 
 /** `posted` is one completed upload POST timed on the worker clock, as presentation evidence, never a measurement. */
@@ -88,6 +91,7 @@ export type LaneReport =
   | BytesReport
   | { type: "posted"; bytes: number; elapsedMs: number }
   | EndReport
+  | { type: "parked" }
   | { type: "stopped" }
   | Flushed;
 

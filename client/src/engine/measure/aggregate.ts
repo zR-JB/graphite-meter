@@ -304,15 +304,21 @@ export class Aggregate {
       return this.observe(boundary);
     }
     if (sample) {
-      const ms = boundary.atMs - last.atMs;
       for (const dir of dirs) {
         const rate = rateOf(sample, dir)!;
+        const components = sample[dir]!;
         // A step no server moved is quiet on its evidence's clock: the client's, or the shortest receiver's.
-        if (!rate) open.quiet[dir] += Math.min(...sample[dir]!.map((c) => c.durationMs));
+        if (!rate) open.quiet[dir] += Math.min(...components.map((c) => c.durationMs));
         // Download rates come from the exact edges instead: counts reported between ticks alias into a spread.
         if (dir === "down") continue;
-        open.total[dir].observe((rate * ms) / 1000, ms);
-        for (const component of sample[dir]!)
+        // Weight the combined upload series on the receiver clock, not client tick arrival time.
+        if (components.length === 1)
+          open.total[dir].observe(components[0]!.bytes, components[0]!.durationMs);
+        else {
+          const rxMs = Math.min(...components.map((c) => c.durationMs));
+          open.total[dir].observe((rate * rxMs) / 1000, rxMs);
+        }
+        for (const component of components)
           open.servers.get(component.serverId)![dir].observe(component.bytes, component.durationMs);
       }
       open.last = boundary;
