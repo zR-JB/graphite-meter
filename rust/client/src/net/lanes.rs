@@ -905,6 +905,7 @@ async fn direct_download(
         BulkRead::Ordinary
     };
     let mut since_yield: u64 = 0;
+    let mut wait_sleep = std::pin::pin!(tokio::time::sleep(BulkRead::WAIT));
     while remaining > 0 {
         if bulk_read.is_batched() && remaining <= bulk_read.lowat() {
             let _ = bulk_read.finish(&socket);
@@ -941,13 +942,18 @@ async fn direct_download(
                     bulk_read.on_would_block(&socket, remaining);
                 }
                 if bulk_read.is_batched() {
-                    match timeout(BulkRead::WAIT, socket.readable()).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(_)) => {
-                            let _ = bulk_read.finish(&socket);
-                            return Err(Fault::Lost);
+                    wait_sleep
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + BulkRead::WAIT);
+                    tokio::select! {
+                        biased;
+                        ready = socket.readable() => {
+                            if ready.is_err() {
+                                let _ = bulk_read.finish(&socket);
+                                return Err(Fault::Lost);
+                            }
                         }
-                        Err(_) => bulk_read.reset_after_timeout(&socket),
+                        () = &mut wait_sleep => bulk_read.reset_after_timeout(&socket),
                     }
                 } else if socket.readable().await.is_err() {
                     let _ = bulk_read.finish(&socket);

@@ -1,6 +1,9 @@
 //! Adaptive `SO_RCVLOWAT` batching shared by plain HTTP/1.1 bulk receive paths on Linux.
 
-use nix::{libc, setsockopt_impl, sockopt_impl, sys::socket::setsockopt};
+use nix::{
+    libc, setsockopt_impl, sockopt_impl,
+    sys::socket::{getsockopt, setsockopt, sockopt::RcvBuf},
+};
 use std::{future::Future, io, pin::Pin, task::Context, time::Duration};
 use tokio::{
     net::TcpStream,
@@ -16,17 +19,19 @@ sockopt_impl!(
 );
 
 pub const READ_LOWAT_MIN: u64 = 4 << 10;
-pub const READ_LOWAT_MAX: u64 = 16 << 10;
+pub const READ_LOWAT_MAX: u64 = 48 << 10;
+/// Only senders delivering small bursts (such as Chromium's 16 KiB HTTP/1.1 body buffer) benefit from `SO_RCVLOWAT`;
+/// larger bursts already amortize wakeups and lose throughput if delayed behind a higher water mark.
+const SMALL_BURST_MAX: u64 = 18 << 10;
 
-/// Adaptive Linux `SO_RCVLOWAT` state machine: stays at 1 B unless steady small wakeups justify batching.
+/// Adaptive Linux `SO_RCVLOWAT` state machine: stays at 1 B unless steady sub-target wakeups justify batching.
 #[derive(Default)]
 pub enum BulkRead {
     Sampling {
         started: Instant,
         bytes: u64,
         burst: u64,
-        short_waits: u8,
-        total_waits: u32,
+        waits: u8,
     },
     Batch {
         last: Instant,
@@ -37,10 +42,9 @@ pub enum BulkRead {
 }
 
 impl BulkRead {
-    const SMALL_BURST_BYTES: u64 = 4 << 10;
     const SAMPLE_BYTES: u64 = 32 << 10;
     const SAMPLE_WAITS: u8 = 12;
-    const SAMPLE_TIME: Duration = Duration::from_millis(25);
+    const SAMPLE_TIME: Duration = Duration::from_millis(50);
     /// Target kernel batching interval: well below `WAIT` so steady transfers stay batched without adding delay.
     const TARGET_WAIT_US: u128 = 2_000;
     /// A short burst of data must not stall the sender or progress checkpoints.
@@ -51,8 +55,7 @@ impl BulkRead {
             started: Instant::now(),
             bytes: 0,
             burst: 0,
-            short_waits: 0,
-            total_waits: 0,
+            waits: 0,
         }
     }
 
@@ -76,13 +79,9 @@ impl BulkRead {
     }
 
     pub fn on_read(&mut self, moved: usize) {
-        match self {
-            Self::Sampling { bytes, burst, .. } => {
-                *bytes += moved as u64;
-                *burst += moved as u64;
-            }
-            Self::Batch { last, .. } => *last = Instant::now(),
-            Self::Ordinary => {}
+        if let Self::Sampling { bytes, burst, .. } = self {
+            *bytes += moved as u64;
+            *burst += moved as u64;
         }
     }
 
@@ -91,25 +90,29 @@ impl BulkRead {
             started,
             bytes,
             burst,
-            short_waits,
-            total_waits,
+            waits,
         } = self
         {
-            *total_waits = total_waits.saturating_add(1);
-            if (1..=Self::SMALL_BURST_BYTES).contains(&std::mem::take(burst)) {
-                *short_waits = short_waits.saturating_add(1);
+            if std::mem::take(burst) == 0 {
+                return;
             }
-            if *bytes >= Self::SAMPLE_BYTES {
+            *waits = waits.saturating_add(1);
+            if *waits >= Self::SAMPLE_WAITS && *bytes >= Self::SAMPLE_BYTES {
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(*started);
-                let avg_small = *bytes <= u64::from(*total_waits) * Self::SMALL_BURST_BYTES;
-                if *short_waits >= Self::SAMPLE_WAITS && avg_small && elapsed <= Self::SAMPLE_TIME {
+                if elapsed <= Self::SAMPLE_TIME {
                     let elapsed_us = elapsed.as_micros().max(1);
                     let target = ((*bytes as u128 * Self::TARGET_WAIT_US) / elapsed_us)
                         .min(READ_LOWAT_MAX as u128) as u64;
-                    let cap = remaining.saturating_sub(1).min(READ_LOWAT_MAX);
+                    let avg_burst = *bytes / u64::from(*waits);
+                    // On Linux `SO_RCVBUF` reports 2x the usable receive buffer; clamp to <= 1/8 so flow control never stalls.
+                    let buf_cap = getsockopt(socket, RcvBuf)
+                        .map_or(16 << 10, |sz| (sz as u64 / 8).max(READ_LOWAT_MIN));
+                    let cap = remaining.saturating_sub(1).min(READ_LOWAT_MAX).min(buf_cap);
                     let lowat = target.min(cap);
                     if lowat >= READ_LOWAT_MIN
+                        && avg_burst <= SMALL_BURST_MAX
+                        && avg_burst * 2 <= lowat
                         && remaining > lowat
                         && setsockopt(socket, ReadLowWater, &(lowat as libc::c_int)).is_ok()
                     {
@@ -119,8 +122,7 @@ impl BulkRead {
                 }
                 *started = now;
                 *bytes = 0;
-                *short_waits = 0;
-                *total_waits = 0;
+                *waits = 0;
             }
         }
     }
