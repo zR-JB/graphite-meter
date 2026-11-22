@@ -220,26 +220,29 @@ export class Prober {
       this.#backupAt = Infinity;
     } else if (now < this.#sentAt + intervalMs) return;
     if (this.#state !== "open" || this.#pending.size >= maxInFlight) return;
-    this.#send(now);
-    if (intervalMs === null) this.#backupAt = now + this.#backupMs();
+    const sentAt = this.#send();
+    if (intervalMs === null) this.#backupAt = sentAt + this.#backupMs();
   }
 
-  #send(now: number): void {
+  #send(): number {
     const id = this.#nextId;
     // The window is tiny next to 2^32, so a wrapped id never matches a pending one.
     this.#nextId = (id + 1) >>> 0;
     this.#head = id;
-    this.#sentAt = now;
+    const text = ping(id);
+    // Stamp immediately before sending so prior sweep/flush/parse work is excluded from RTT.
+    const sentAt = this.clock.now();
+    this.#sentAt = sentAt;
     const probe: Probe = {
-      sentAt: now,
-      deadline: now + this.#rtt.deadlineMs(),
+      sentAt,
+      deadline: sentAt + this.#rtt.deadlineMs(),
       confirmed: false,
       measured: this.#measuring,
       cutoff: Infinity,
     };
     this.#pending.set(id, probe);
     try {
-      const sent = this.io.send(ping(id));
+      const sent = this.io.send(text);
       if (!sent) probe.confirmed = true;
       else
         sent.then(
@@ -249,6 +252,7 @@ export class Prober {
     } catch {
       this.#failed(id, probe);
     }
+    return sentAt;
   }
 
   #confirmed(id: number, probe: Probe): void {

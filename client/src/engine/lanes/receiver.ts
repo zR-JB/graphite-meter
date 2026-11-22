@@ -46,6 +46,8 @@ export interface ReceiverHost {
   /** Settles the feed's ending; true when it should reconnect, after `delayMs`. */
   ended(ending: Ending, broken: boolean, delayMs: number, signal: AbortSignal): Promise<boolean>;
   signIn(): void;
+  /** Called if an ordinary HTTP checkpoint waits past its fast threshold, so a yieldable 6th lane can free a slot. */
+  onSlowCheckpoint?(): void;
 }
 
 export class Receiver {
@@ -136,7 +138,17 @@ export class Receiver {
   /** An ordinary checkpoint joins the one in flight; a final one asks afresh and retries a miss within its bound. */
   checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
     if (final) return this.#final(AbortSignal.any([signal, AbortSignal.timeout(CHECKPOINT_MS)]));
-    this.#inFlight ??= this.#request().finally(() => (this.#inFlight = null));
+    if (!this.#inFlight) {
+      const done = new AbortController();
+      if (this.#host.onSlowCheckpoint)
+        void delay(400, AbortSignal.any([this.#closed.signal, done.signal])).then(() => {
+          if (!done.signal.aborted && !this.#closed.signal.aborted) this.#host.onSlowCheckpoint?.();
+        });
+      this.#inFlight = this.#request().finally(() => {
+        done.abort();
+        this.#inFlight = null;
+      });
+    }
     return abortable(this.#inFlight, signal);
   }
 

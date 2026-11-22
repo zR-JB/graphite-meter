@@ -1,7 +1,7 @@
 // One server's resources for one stage; a failure or ended sign-in reaches the run once.
 import type { LaneCommand, SessionCommand } from "../../protocol/messages";
 import { ROUTES } from "../../protocol/routes";
-import { feedSocket, needsPings } from "../net/streams";
+import { BROWSER_POOL, feedSocket, needsPings } from "../net/streams";
 import {
   CADENCE_MS,
   SignInRequired,
@@ -97,7 +97,10 @@ class Stage implements StageResources {
         Promise.all([
           this.#down && this.#until(() => this.#down!.ready, budget),
           transfer.includes("up") &&
-            this.#prepareUpload(budget).then((receiver) => receiver.accepted(budget)),
+            this.#prepareUpload(budget).then(async (receiver) => {
+              await receiver.accepted(budget);
+              this.#up?.promote();
+            }),
         ]),
       ]);
       // Loaded latency never holds throughput back. Its channel reports its own stall.
@@ -140,7 +143,10 @@ class Stage implements StageResources {
 
   async checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
     signal.throwIfAborted();
-    return this.#receiver ? this.#receiver.checkpoint(signal, final) : null;
+    if (!this.#receiver) return null;
+    // Free the yieldable 6th HTTP/1.1 upload lane before the final boundary checkpoint so it never queues behind POSTs.
+    if (final && this.#yieldable("up")) await this.#up?.parkLast();
+    return this.#receiver.checkpoint(signal, final);
   }
 
   async countAt(at: number): Promise<number | null> {
@@ -234,6 +240,8 @@ class Stage implements StageResources {
       interrupted: (count, reason) => events.probesInterrupted(count, reason),
       stalled: (detail, stopped) => {
         this.#probesReady = false;
+        if (this.#yieldable("down")) void this.#down?.parkLast();
+        if (this.#yieldable("up")) void this.#up?.parkLast();
         if (stopped) return this.#fail("server-stopped", `Latency bus failed: ${detail}`);
         events.latencyStalled(detail);
       },
@@ -282,6 +290,18 @@ class Stage implements StageResources {
     return receiver;
   }
 
+  /** Whether `direction` uses all BROWSER_POOL HTTP/1.1 connections on this origin and must yield its 6th lane to control. */
+  #yieldable(direction: Direction): boolean {
+    const { server, streams } = this.#setup;
+    const { target, fetch } = server.throughput;
+    return (
+      target.transport === "fetch-stream" &&
+      fetch.protocol !== "http2" &&
+      fetch.protocol !== "http3" &&
+      streams[direction] >= BROWSER_POOL
+    );
+  }
+
   /** Opens one direction's carrier and its lanes now, or none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
     if (this.#throughputEnded) return null;
@@ -298,13 +318,22 @@ class Stage implements StageResources {
         lanes: count,
         gating: direction === "down" ? count : 0,
         session: false,
-        open: (_, epoch) =>
+        deferredLast: direction === "up" && this.#yieldable("up"),
+        open: (lane, epoch) =>
           this.#signedIn((): LaneCommand => {
             if (direction === "up") {
               const url = `${fetch.origin}${ROUTES.upload}?${upload}`;
               const rttMs = server.latency?.rttMs ?? null;
               const request = auth.request(url, "POST");
-              return { type: "upload", url, request, streams: count, sharing: uploadLanes, rttMs };
+              return {
+                type: "upload",
+                url,
+                request,
+                streams: count,
+                sharing: uploadLanes,
+                rttMs,
+                lane,
+              };
             }
             const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}`;
             return {
@@ -392,9 +421,14 @@ class Stage implements StageResources {
       else this.#setup.events.warmupReceiver(checkpoint);
       if (grew) this.#progress("up");
     },
-    ended: (ending, broken, delayMs, signal) =>
-      this.#reopen("up", "upload progress", ending, broken, delayMs, signal),
+    ended: (ending, broken, delayMs, signal) => {
+      if (this.#yieldable("up")) void this.#up?.parkLast();
+      return this.#reopen("up", "upload progress", ending, broken, delayMs, signal);
+    },
     signIn: () => this.#signIn("throughput"),
+    onSlowCheckpoint: () => {
+      if (this.#yieldable("up")) void this.#up?.parkLast();
+    },
   };
 
   /** Settles a lane's or feed's ending: one reopen once the server answers over HTTP; sign-in checks may outlast the silence rule. */

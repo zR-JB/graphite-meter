@@ -205,3 +205,41 @@ test("a final boundary in the last tick's time closes the window with what the l
   up.observe({ atMs: 1_000, ...at(1_500, 1e9 + 1) }, true);
   expect(up.intervals[0]!.full?.upBytesPerSec).toBe(1_000);
 });
+
+test("upload steady-window rates use receiver duration rather than delayed client arrival time", () => {
+  // Single-server: constant 100 MB/s on the receiver's clock, while checkpoints arrive with +/- 50 ms jitter.
+  const single = new Aggregate();
+  single.begin("upload", ["a"], 0);
+  const jitter = [0, 45, -35, 50, -40, 30, -25, 40, -30, 20, -15, 35, -20, 25, -10, 0];
+  for (let i = 0; i < jitter.length; i++) {
+    const rxMs = i * 250;
+    const atMs = rxMs + jitter[i]!;
+    single.observe({
+      atMs,
+      down: {},
+      up: { a: { id: "u", bytes: rxMs * 100_000, nanos: rxMs * 1e6 + 1, receivedAtMs: atMs } },
+    });
+    if (i >= 1) single.trackStable(single.confidence().score);
+  }
+  expect(single.confidence().score).toBeGreaterThan(0.99);
+  expect(single.steadyError.relative).toBeLessThan(1e-9);
+
+  // Multi-server: each server runs at 50 MB/s on its own clock; sum stays steady despite skewed arrival times.
+  const multi = new Aggregate();
+  multi.begin("upload", ["a", "b"], 0);
+  for (let i = 0; i < jitter.length; i++) {
+    const rxMs = i * 250;
+    const atMs = rxMs + jitter[i]!;
+    multi.observe({
+      atMs,
+      down: {},
+      up: {
+        a: { id: "ua", bytes: rxMs * 50_000, nanos: rxMs * 1e6 + 1, receivedAtMs: atMs },
+        b: { id: "ub", bytes: rxMs * 50_000, nanos: rxMs * 1e6 + 1, receivedAtMs: atMs },
+      },
+    });
+    if (i >= 1) multi.trackStable(multi.confidence().score);
+  }
+  expect(multi.confidence().score).toBeGreaterThan(0.99);
+  expect(multi.steadyError.relative).toBeLessThan(1e-9);
+});

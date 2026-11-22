@@ -50,6 +50,8 @@ export interface CarrierPlan {
   /** Lanes that must deliver before the carrier is ready. */
   gating: number;
   session: boolean;
+  /** Holds back the highest-index lane until `promote()` so upload readiness polling keeps an open HTTP/1.1 slot. */
+  deferredLast?: boolean;
   /** Builds a (re)opening's command with credentials read afresh, or null once they ended. */
   open(lane: number, epoch: number): LaneCommand | SessionCommand | null;
 }
@@ -57,6 +59,8 @@ export interface CarrierPlan {
 interface Lane {
   index: number;
   worker: Worker;
+  opened: boolean;
+  parked: boolean;
   delivered: boolean;
   /** It delivered since the carrier opened, so a redial that does not open lost it rather than failing its path. */
   proven: boolean;
@@ -72,6 +76,7 @@ interface Lane {
   edges: Edges | null;
   /** A session's WebTransport dial is out, so ending the worker now abandons it, which Chrome counts as a failure. */
   dialing: boolean;
+  parkedDone: PromiseWithResolvers<void>;
   stopped: PromiseWithResolvers<boolean>;
 }
 
@@ -95,6 +100,8 @@ export class Carrier {
       const lane: Lane = {
         index,
         worker: plan.pool.take(plan.worker),
+        opened: false,
+        parked: false,
         delivered: false,
         proven: false,
         counted: 0,
@@ -103,6 +110,7 @@ export class Carrier {
         cut: false,
         edges: null,
         dialing: false,
+        parkedDone: Promise.withResolvers(),
         stopped: Promise.withResolvers(),
       };
       lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) =>
@@ -110,6 +118,7 @@ export class Carrier {
       // Our workers report every ending they can, so an error event means one cannot run at all.
       lane.worker.onerror = ({ message }) => {
         // A worker that cannot run cannot acknowledge a stop either.
+        lane.parkedDone.resolve();
         lane.stopped.resolve(false);
         void this.#ended(lane, {
           reason: "connection-lost",
@@ -118,9 +127,33 @@ export class Carrier {
         });
       };
       this.#lanes.push(lane);
+      const defer = plan.deferredLast && plan.lanes > 1 && index === plan.lanes - 1;
+      if (defer) continue;
       if (index) void delay(index * stagger, this.#done.signal).then(() => this.#open(lane));
       else this.#open(lane);
     }
+  }
+
+  /** Opens a deferred yieldable lane once readiness completes. */
+  promote(): void {
+    if (this.#done.signal.aborted || !this.#plan.deferredLast || this.#lanes.length <= 1) return;
+    const last = this.#lanes.at(-1)!;
+    if (!last.opened && !last.parked) this.#open(last);
+  }
+
+  /** Parks the highest-index lane to free its HTTP/1.1 connection slot for control/checkpoints without disturbing the stage. */
+  async parkLast(): Promise<void> {
+    if (this.#plan.session || this.#done.signal.aborted || this.#lanes.length <= 1) return;
+    const last = this.#lanes.at(-1)!;
+    if (last.parked) return last.parkedDone.promise;
+    last.parked = true;
+    if (!last.opened) {
+      last.parkedDone.resolve();
+      return;
+    }
+    last.worker.postMessage({ type: "park" } satisfies LaneCommand);
+    await Promise.race([last.parkedDone.promise, delay(CLOSE_GRACE_MS, this.#done.signal)]);
+    this.#flushEdges();
   }
 
   get ready(): boolean {
@@ -253,9 +286,10 @@ export class Carrier {
   }
 
   #open(lane: Lane): void {
-    if (this.#done.signal.aborted) return;
+    if (this.#done.signal.aborted || lane.parked) return;
     const command = this.#plan.open(lane.index, this.#epoch);
     if (!command) return;
+    lane.opened = true;
     lane.dialing = this.#plan.session;
     lane.worker.postMessage(command);
     // A lane opened in the window takes its edges from the window's opening.
@@ -264,6 +298,11 @@ export class Carrier {
 
   #report(lane: Lane, report: LaneReport | SessionReport): void {
     if (report.type === "stopped") return lane.stopped.resolve(true);
+    if (report.type === "parked") {
+      lane.parkedDone.resolve();
+      this.#flushEdges();
+      return;
+    }
     if (report.type === "handshake") {
       lane.dialing = false;
       return void (report.opened || handshakes.failed());
@@ -286,26 +325,38 @@ export class Carrier {
       case "flushed":
         return lane.asked.shift()?.(report);
       case "ended":
+        if (lane.parked) return;
         return void this.#ended(lane, report.ending);
       case "broken":
+        if (lane.parked) return;
         return void this.#ended(lane, lost(report.detail), true);
     }
   }
 
-  /** Passes on each edge once every lane reported its total there. */
+  /** Passes on each edge once every active lane reported its total there; parked lanes contribute their frozen total. */
   #edges(lane: Lane, edges: Edges): void {
     if (lane.edges) lane.edges.totals.push(...edges.totals);
     else lane.edges = { first: edges.first, totals: [...edges.totals] };
+    this.#flushEdges();
+  }
+
+  #flushEdges(): void {
     const lanes = this.#lanes;
-    // A stopping carrier has no lanes left to join.
-    if (!lanes.length || !lanes.every((each) => each.edges)) return;
-    const from = Math.min(...lanes.map((each) => each.edges!.first));
-    const to = Math.min(...lanes.map((each) => each.edges!.first + each.edges!.totals.length - 1));
+    const active = lanes.filter((each) => !each.parked);
+    // A stopping carrier has no active lanes left to join.
+    if (!active.length || !active.every((each) => each.edges && each.edges.totals.length > 0))
+      return;
+    const from = Math.min(...active.map((each) => each.edges!.first));
+    const to = Math.min(...active.map((each) => each.edges!.first + each.edges!.totals.length - 1));
     for (let index = from; index <= to; index++) {
       let total = 0;
       for (const each of lanes) {
-        total += each.edges!.totals.shift()!;
-        each.edges!.first++;
+        if (each.edges && each.edges.first === index && each.edges.totals.length > 0) {
+          total += each.edges.totals.shift()!;
+          each.edges.first++;
+        } else if (each.parked) {
+          total += each.counted;
+        }
       }
       this.#host.edge(index, this.#opened! + index * EDGE_MS, total);
     }

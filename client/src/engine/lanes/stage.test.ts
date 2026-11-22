@@ -880,3 +880,140 @@ test("a stage discarded while its bus is stalled parks it with the server, whose
   idle.resources.discard(true);
   expect(probe!.terminated).toBe(true);
 });
+
+test("a 6-lane HTTP/1.1 download parks its 6th lane on a WebSocket latency stall while keeping exact edge totals", async () => {
+  const HTTP1: FetchTarget = { ...FETCH, protocol: "http1" };
+  const events: [keyof StageEvents, ...unknown[]][] = [];
+  const spawned = FakeWorker.spawned.length;
+  const resources = openStage({
+    server: {
+      server: { id: "peer", url: ORIGIN, name: "Peer" },
+      auth: {
+        kind: "grant",
+        left: () => Infinity,
+        request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
+        fetch: async () => new Response(null),
+        socket: (url: string) => url,
+        ended: async () => false,
+      },
+      throughput: { target: HTTP1, fetch: HTTP1 },
+      latency: { target: LATENCY },
+      discovery: DISCOVERY,
+      link: testLink(),
+    } as unknown as PreparedServer,
+    activity: { stage: "download", transfer: ["down"], loadedLatency: true },
+    streams: { down: 6, up: 0 },
+    uploadLanes: 0,
+    cadence: "fast",
+    events: new Proxy({} as StageEvents, {
+      get:
+        (_, type: keyof StageEvents) =>
+        (...args: unknown[]) =>
+          events.push([type, ...args]),
+    }),
+    now: () => performance.now(),
+    endsIn: () => 6_000,
+    uploadId: Promise.resolve(null),
+  });
+  const workers = (url: string) => FakeWorker.spawned.slice(spawned).filter((w) => w.url === url);
+  const prepared = outcome(resources.prepare(new AbortController().signal));
+  await elapse(500);
+  const lanes = workers("lane");
+  expect(lanes).toHaveLength(6);
+  for (const lane of lanes) bytes(lane, 0);
+  await elapse(5);
+  expect(prepared.error).toBeUndefined();
+
+  resources.measure(1_000);
+  // All 6 lanes report edge 1 with 1,000 bytes each (6,000 total).
+  for (const lane of lanes)
+    lane.report({ type: "bytes", bytes: 1_000, epoch: 1, edges: { first: 1, totals: [1_000] } });
+  expect(events.filter(([t]) => t === "edge").at(-1)).toEqual(["edge", 1, 1_250, 6_000]);
+
+  // WS latency stalls -> 6th lane gets a "park" command (no throughput "stalled" event!).
+  const [probe] = workers("probe");
+  probe!.report({ type: "stalled", detail: "websocket closed" });
+  expect(lanes[5]!.commands.at(-1)).toEqual({ type: "park" });
+  lanes[5]!.report({ type: "parked" });
+  expect(events.some(([t]) => t === "stalled")).toBe(false);
+
+  // Remaining 5 lanes report edge 2 with 2,000 bytes each -> parked lane contributes its frozen 1,000 -> 11,000 total!
+  for (const lane of lanes.slice(0, 5))
+    lane.report({ type: "bytes", bytes: 1_000, epoch: 1, edges: { first: 2, totals: [2_000] } });
+  expect(events.filter(([t]) => t === "edge").at(-1)).toEqual(["edge", 2, 1_500, 11_000]);
+  resources.discard();
+});
+
+test("a 6-lane HTTP/1.1 upload defers lane 6 until accepted and parks it before the final checkpoint", async () => {
+  const HTTP1: FetchTarget = { ...FETCH, protocol: "http1" };
+  const RealWebSocket = globalThis.WebSocket;
+  let ws!: { onopen?: () => void; onmessage?: (e: { data: string }) => void; close(): void };
+  let checkpointCalls = 0;
+  try {
+    Object.assign(globalThis, {
+      WebSocket: class {
+        onopen?: () => void;
+        onmessage?: (e: { data: string }) => void;
+        constructor() {
+          ws = this;
+        }
+        close() {}
+      },
+    });
+    const spawned = FakeWorker.spawned.length;
+    const resources = openStage({
+      server: {
+        server: { id: "peer", url: ORIGIN, name: "Peer" },
+        auth: {
+          kind: "grant",
+          left: () => Infinity,
+          request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
+          fetch: async (url: string) => {
+            if (url.includes("/upload/checkpoint")) {
+              checkpointCalls++;
+              return new Response(JSON.stringify({ bytes: 500, nanos: 100_000_000 }), {
+                headers: { "content-type": "application/json" },
+              });
+            }
+            return new Response(null);
+          },
+          socket: (url: string) => url,
+          ended: async () => false,
+        },
+        throughput: { target: HTTP1, fetch: HTTP1 },
+        latency: { target: LATENCY },
+        discovery: DISCOVERY,
+        link: testLink(),
+      } as unknown as PreparedServer,
+      activity: { stage: "upload", transfer: ["up"], loadedLatency: false },
+      streams: { down: 0, up: 6 },
+      uploadLanes: 6,
+      cadence: "fast",
+      events: new Proxy({} as StageEvents, { get: () => () => {} }),
+      now: () => performance.now(),
+      endsIn: () => 6_000,
+      uploadId: Promise.resolve("u1"),
+    });
+    const lanes = () => FakeWorker.spawned.slice(spawned).filter((w) => w.url === "lane");
+    const prepared = outcome(resources.prepare(new AbortController().signal));
+    await elapse(0);
+    // Attach WS progress feed so upload carrier opens with 5 active lanes + 1 deferred.
+    ws.onmessage?.({ data: '{"type":"ready"}' });
+    await elapse(500);
+    expect(lanes()).toHaveLength(6);
+    // After accepted() resolves via checkpoint, lane 6 is promoted and receives its upload command.
+    expect(prepared.error).toBeUndefined();
+    expect(lanes()[5]!.commands.some((c) => c.type === "upload")).toBe(true);
+
+    // Final checkpoint parks lane 6 first, then runs the final checkpoint.
+    const before = checkpointCalls;
+    const fin = resources.checkpoint(new AbortController().signal, true);
+    expect(lanes()[5]!.commands.at(-1)).toEqual({ type: "park" });
+    lanes()[5]!.report({ type: "parked" });
+    await fin;
+    expect(checkpointCalls).toBe(before + 1);
+    resources.discard();
+  } finally {
+    Object.assign(globalThis, { WebSocket: RealWebSocket });
+  }
+});

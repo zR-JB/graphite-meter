@@ -52,12 +52,12 @@ test("a forced stream count beyond the browser's connections is held to them, sa
     timeout: 15_000,
   });
   await expect(settings).toContainText(
-    /HTTP\/1\.1 allows at most 5 measurement connections to .+ in this browser; 5 will be used\./,
+    /HTTP\/1\.1 allows at most 6 measurement connections to .+ in this browser; 6 will be used\./,
   );
   await closeSettings(page);
   await page.getByRole("button", { name: "Details" }).click();
   await expect(page.locator(".infra")).toContainText(
-    /Exact\s*5 per direction \(capped from 12 by the browser\)/,
+    /Exact\s*6 per direction \(capped from 12 by the browser\)/,
   );
   await page.press("Escape");
   const saved = await run(page);

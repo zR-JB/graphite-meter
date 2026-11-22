@@ -46,8 +46,8 @@ export interface Lanes {
 type StreamPlan = Map<string, Record<Direction, Lanes>>;
 
 interface OriginBudget {
-  /** One connection stays free for leases, checkpoints and sign-in checks; WebSockets hold none. */
-  control: boolean;
+  /** Servers on this origin whose stages need HTTP control/recovery; WebSockets hold none. */
+  controls: number;
   /** HTTP progress feeds, each holding a connection for the whole stage. */
   feeds: number;
   /** The lanes sharing what the reservations leave, in dealing order. */
@@ -99,7 +99,7 @@ export function planStreams(
   const pools = new Map<string, OriginBudget>();
   const pool = (origin: string) => {
     let budget = pools.get(origin);
-    if (!budget) pools.set(origin, (budget = { control: false, feeds: 0, lanes: [] }));
+    if (!budget) pools.set(origin, (budget = { controls: 0, feeds: 0, lanes: [] }));
     return budget;
   };
   for (const { server, discovery, throughput } of servers) {
@@ -128,13 +128,16 @@ export function planStreams(
       http1?.lanes.push({ name: server.name, lanes: lanes[direction] });
     }
     const control = pool(discovery.origin);
-    if (needsPings(activity) || uploads) control.control = true;
+    if (needsPings(activity) || uploads) control.controls++;
     if (!session && uploads && !controlMultiplexed(discovery) && !feedSocket(discovery))
       control.feeds++;
   }
-  for (const { control, feeds, lanes } of pools.values()) {
+  for (const { controls, feeds, lanes } of pools.values()) {
     if (!lanes.length) continue;
-    const available = BROWSER_POOL - feeds - (control ? 1 : 0);
+    // A single-server, single-direction HTTP/1.1 stage with no HTTP progress feed can use all 6 slots because its 6th
+    // lane yields on demand whenever rare WS-stall recovery or an upload checkpoint needs an HTTP slot.
+    const yieldable = controls === 1 && feeds === 0 && lanes.length === 1;
+    const available = BROWSER_POOL - feeds - (controls > 0 && !yieldable ? 1 : 0);
     if (available < lanes.length)
       throw new Error(
         `${[...new Set(lanes.map(({ name }) => name))].join(", ")} share one HTTP/1 origin without enough connections for this stage`,

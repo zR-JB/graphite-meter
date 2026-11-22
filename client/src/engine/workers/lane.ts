@@ -13,8 +13,10 @@ import { downloadRefused, lost, refused } from "../lanes/endings";
 
 /** A POST sends for at least this long: each answer idles its lane for a turnaround the other lanes cannot fully cover. */
 const TARGET_POST_MS = 2_000;
-/** Round trips a POST sends for, as each answer idles its lane for about one: the lane stays 90 % busy. */
-const TURNAROUNDS = 9;
+/** Longest POST target on high-RTT links: bounds ramp & stop latency while keeping turnaround overhead under 5%. */
+const MAX_POST_MS = 5_000;
+/** Round trips a POST sends for, as each answer idles its lane for about one: keeps high-RTT lanes ≥ 96% busy. */
+const TURNAROUNDS = 25;
 /** The first and smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
 /** An upload's answer is a short record; a peer that sends more is not kept waiting for. */
@@ -31,9 +33,13 @@ const ignore = () => {};
 let lane = new AbortController();
 let running: Promise<unknown> = Promise.resolve();
 let stopping = false;
-const post = (report: LaneReport) => stopping || postMessage(report);
+let parking = false;
+const post = (report: LaneReport) => stopping || parking || postMessage(report);
 const counter = () =>
-  new ByteReports((bytes, epoch, edges) => post({ type: "bytes", bytes, epoch, edges }));
+  new ByteReports(
+    (bytes, epoch, edges) =>
+      stopping || postMessage({ type: "bytes", bytes, epoch, edges } satisfies LaneReport),
+  );
 let reports = counter();
 let body = new Blob();
 let partSize = 0;
@@ -47,8 +53,9 @@ self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
     reports.measure(data.epoch, data.at - performance.timeOrigin);
     return reports.edgesFrom(data.at - performance.timeOrigin);
   }
-  if (data.type === "flush") return post(reports.flushed(data.at));
+  if (data.type === "flush") return postMessage(reports.flushed(data.at));
   if (data.type === "until") return void (until = data.until);
+  if (data.type === "park") return void (stopping || parking || park());
   if (data.type === "stop") return void (stopping ? lane.abort() : stop());
   const { signal } = lane;
   // A rejection in a worker never reaches the owner's error handler, so it ends the lane as a break.
@@ -57,6 +64,18 @@ self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
     (error) => post({ type: "broken", detail: String(error) }),
   );
 };
+
+/** Aborts the active request to free its HTTP/1.1 connection slot for control traffic while keeping the epoch's byte ledger intact. */
+async function park(): Promise<void> {
+  parking = true;
+  lane.abort();
+  await running;
+  reports.flush();
+  lane = new AbortController();
+  bodyEnd = null;
+  parking = false;
+  if (!stopping) postMessage({ type: "parked" } satisfies LaneReport);
+}
 
 /** A timed body ending soon ends on the server's clock, which keeps its connection; any other request is cut. */
 async function stop(): Promise<void> {
@@ -69,6 +88,7 @@ async function stop(): Promise<void> {
   partSize = 0;
   until = null;
   stopping = false;
+  parking = false;
   postMessage({ type: "stopped" } satisfies LaneReport);
 }
 
@@ -113,7 +133,7 @@ async function bodies(
         reports.count(bytes);
       });
       reports.flush();
-      if (stopping) return { type: "stopped" };
+      if (stopping || parking) return { type: parking ? "parked" : "stopped" };
       // Fetching again at once would spin as fast as the short answers come; the owner paces a reopen.
       if (performance.now() - sentAt < ms && read < MIN_DOWNLOAD_BYTES)
         return { type: "ended", ending: lost("the download ended early") };
@@ -143,8 +163,11 @@ async function drained(response: Response): Promise<boolean> {
 const repeated = (part: Blob) =>
   new Blob(Array.from({ length: Math.ceil(MAX_POST_BYTES / part.size) }, () => part));
 
+/** Deterministic per-lane POST duration multipliers so parallel lanes do not synchronize their inter-POST turnarounds. */
+const LANE_SPREAD = [1.0, 1.08, 0.94, 1.14, 0.98, 1.04] as const;
+
 async function upload(
-  { url, request, streams, sharing, rttMs }: Extract<LaneCommand, { type: "upload" }>,
+  { url, request, streams, sharing, rttMs, lane }: Extract<LaneCommand, { type: "upload" }>,
   signal: AbortSignal,
 ): Promise<LaneReport> {
   const largest = largestPost(
@@ -162,6 +185,7 @@ async function upload(
       .blob()
       .then((file) => size === partSize && (body = repeated(file)), ignore);
   }
+  const spread = streams > 1 && lane !== undefined ? LANE_SPREAD[lane % LANE_SPREAD.length]! : 1;
   let bytes = MIN_POST_BYTES;
   let rate = 0;
   // Subtract turnaround only when a measured RTT exists; otherwise an unknown RTT would treat POST #1's transfer time as RTT.
@@ -188,12 +212,12 @@ async function upload(
         turnaround = Math.min(turnaround, elapsedMs);
         // Estimate wire send speed without turnaround overhead so small initial POSTs on long RTT paths ramp promptly.
         sendTimeMs = Math.max(elapsedMs - turnaround, elapsedMs * 0.25);
-        sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
+        sendMs = Math.min(MAX_POST_MS, Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround));
       }
       const instant = (bytes * 1000) / sendTimeMs;
       const weight = bytes < largest && elapsedMs < TARGET_POST_MS / 2 ? 0.5 : 0.3;
       rate = rate ? weight * instant + (1 - weight) * rate : instant;
-      const want = (rate * sendMs) / 1000;
+      const want = (rate * sendMs * spread) / 1000;
       const grow = elapsedMs < sendMs / 2 ? bytes * 4 : bytes * 2;
       bytes = Math.floor(
         Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(grow, want))),

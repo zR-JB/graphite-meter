@@ -64,11 +64,18 @@ test("one server's lanes: HTTP/1.1 keeps a control connection while it probes or
       { down: 6, up: 0 },
     ],
     [
-      "an upload keeps one for its checkpoints",
+      "a single-server upload with a WebSocket progress feed uses all six slots (6th yields for checkpoints)",
       [server("A", "http1")],
       stage(["up"], false),
       auto(6),
-      { down: 0, up: 5 },
+      { down: 0, up: 6 },
+    ],
+    [
+      "a single-server download with loaded latency uses all six slots (6th yields on WS stall)",
+      [server("A", "http1")],
+      stage(["down"], true),
+      auto(6),
+      { down: 6, up: 0 },
     ],
     [
       "an upload without a WebSocket on its origin also keeps one for its HTTP feed",
@@ -167,10 +174,10 @@ test("an exact count says what holds it back: the browser's HTTP/1.1 connections
   const config = { ...DEFAULT_CONFIG, transferStreams: forced(12) };
   const http1 = server("S1", "http1");
   expect(streamNotes(config, [http1])).toEqual([
-    "HTTP/1.1 allows at most 5 measurement connections to S1 in this browser; 5 will be used.",
+    "HTTP/1.1 allows at most 6 measurement connections to S1 in this browser; 6 will be used.",
   ]);
   expect(describeStreams(config.transferStreams, activities(config), http1).aside).toBe(
-    "5 per direction (capped from 12 by the browser)",
+    "6 per direction (capped from 12 by the browser)",
   );
   expect(streamNotes(config, [server("S2", "http2", { maxMeasurements: 8 })])).toEqual([
     "S2 admits 8 measurements at once for this address or sign-in; as few as 6 streams per direction will be used.",
