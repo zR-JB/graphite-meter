@@ -263,3 +263,20 @@ async fn a_download_that_ends_on_the_server_s_clock_leaves_its_connection_for_th
     );
     assert_eq!(client.request("GET /probe", "").await.status, 200);
 }
+
+#[tokio::test]
+async fn a_keep_alive_connection_returns_to_plain_bulk_serving_after_control_requests() {
+    let server = start(&[]).await;
+    let id = server.upload_id().await;
+    let mut client = server.connect().await;
+    // Non-bulk request served by hyper first, then fixed-length download, fast upload (>= 64 KiB), and control again.
+    assert_eq!(client.request("GET /probe", "").await.status, 200);
+    let dl = client.request("GET /download?bytes=131072", "").await;
+    assert_eq!((dl.status, dl.body.len()), (200, 131_072));
+    let payload = "a".repeat(131_072);
+    let ul = client
+        .request(&format!("POST /upload?id={id}"), &payload)
+        .await;
+    assert_eq!(ul.status, 200);
+    assert_eq!(client.request("GET /probe", "").await.status, 200);
+}

@@ -510,34 +510,50 @@ impl Http1 {
 
             let split = loop {
                 if !buf.is_empty() && !is_fast_prefix(&buf) {
-                    return self
-                        .serve(
-                            Prefixed::new(buf, socket),
-                            connection,
-                            request_started.unwrap_or_else(Instant::now),
-                        )
-                        .await;
+                    let req_start = request_started.unwrap_or_else(Instant::now);
+                    let Some((next_socket, next_buf)) = self
+                        .serve_one_plain(Prefixed::new(buf, socket), connection.clone(), req_start)
+                        .await
+                    else {
+                        return;
+                    };
+                    socket = next_socket;
+                    buf = next_buf;
+                    request_started = (!buf.is_empty()).then(Instant::now);
+                    continue;
                 }
                 if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
                     if pos + 4 > MAX_PEEK {
-                        return self
-                            .serve(
+                        let req_start = request_started.unwrap_or_else(Instant::now);
+                        let Some((next_socket, next_buf)) = self
+                            .serve_one_plain(
                                 Prefixed::new(buf, socket),
-                                connection,
-                                request_started.unwrap_or_else(Instant::now),
+                                connection.clone(),
+                                req_start,
                             )
-                            .await;
+                            .await
+                        else {
+                            return;
+                        };
+                        socket = next_socket;
+                        buf = next_buf;
+                        request_started = (!buf.is_empty()).then(Instant::now);
+                        continue;
                     }
                     break pos;
                 }
                 if buf.len() >= MAX_PEEK {
-                    return self
-                        .serve(
-                            Prefixed::new(buf, socket),
-                            connection,
-                            request_started.unwrap_or_else(Instant::now),
-                        )
-                        .await;
+                    let req_start = request_started.unwrap_or_else(Instant::now);
+                    let Some((next_socket, next_buf)) = self
+                        .serve_one_plain(Prefixed::new(buf, socket), connection.clone(), req_start)
+                        .await
+                    else {
+                        return;
+                    };
+                    socket = next_socket;
+                    buf = next_buf;
+                    request_started = (!buf.is_empty()).then(Instant::now);
+                    continue;
                 }
                 let deadline = request_started.map_or(wait_deadline, |s| s + EXCHANGE_BOUND);
                 let mut chunk = [0u8; 4096];
@@ -560,9 +576,15 @@ impl Http1 {
 
             let req_start = request_started.unwrap_or_else(Instant::now);
             let Some(parsed) = parse_fast_head(&buf, split) else {
-                return self
-                    .serve(Prefixed::new(buf, socket), connection, req_start)
-                    .await;
+                let Some((next_socket, next_buf)) = self
+                    .serve_one_plain(Prefixed::new(buf, socket), connection.clone(), req_start)
+                    .await
+                else {
+                    return;
+                };
+                socket = next_socket;
+                buf = next_buf;
+                continue;
             };
 
             let exchange = Exchange::until(req_start + EXCHANGE_BOUND);
@@ -580,9 +602,19 @@ impl Http1 {
                         {
                             Ok(Some(download)) => download,
                             Ok(None) => {
-                                return self
-                                    .serve(Prefixed::new(buf, socket), connection, req_start)
-                                    .await;
+                                let Some((next_socket, next_buf)) = self
+                                    .serve_one_plain(
+                                        Prefixed::new(buf, socket),
+                                        connection.clone(),
+                                        req_start,
+                                    )
+                                    .await
+                                else {
+                                    return;
+                                };
+                                socket = next_socket;
+                                buf = next_buf;
+                                continue;
                             }
                             Err(refusal) => {
                                 let wire = encode_h1_response(&refusal, true);
@@ -651,21 +683,27 @@ impl Http1 {
                             Ok(n) => {
                                 remaining -= n as u64;
                                 offset = (offset + n as u64) % block_len;
-                                download.lane.moved();
                                 if let Some(transfer) = &download.transfer {
                                     transfer.record(n);
-                                }
-                                if download.lane.due().is_some() {
-                                    return;
                                 }
                                 since_yield += n as u64;
                                 if since_yield >= YIELD_BYTES {
                                     since_yield = 0;
+                                    download.lane.moved();
+                                    if download.lane.due().is_some() {
+                                        return;
+                                    }
                                     tokio::task::yield_now().await;
                                 }
                             }
                             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                                since_yield = 0;
+                                if since_yield > 0 {
+                                    download.lane.moved();
+                                    since_yield = 0;
+                                }
+                                if download.lane.due().is_some() {
+                                    return;
+                                }
                                 let ready = tokio::select! {
                                     biased;
                                     _ = &mut ended => return,
@@ -734,6 +772,7 @@ impl Http1 {
                     let mut since_yield: u64 = 0;
                     let ending = {
                         let mut ended = pin!(upload.lane.ended());
+                        let mut wait_sleep = pin!(tokio::time::sleep(BulkRead::WAIT));
                         loop {
                             if remaining == 0 {
                                 break Some(upload.lane.finish());
@@ -772,15 +811,16 @@ impl Http1 {
                                         bulk_read.on_would_block(&socket, remaining);
                                     }
                                     if bulk_read.is_batched() {
-                                        let waited = tokio::select! {
+                                        wait_sleep.as_mut().reset(Instant::now() + BulkRead::WAIT);
+                                        tokio::select! {
                                             biased;
                                             ending = &mut ended => break Some(ending),
-                                            ready = timeout(BulkRead::WAIT, socket.readable()) => ready,
-                                        };
-                                        match waited {
-                                            Ok(Ok(())) => {}
-                                            Ok(Err(_)) => break None,
-                                            Err(_) => bulk_read.reset_after_timeout(&socket),
+                                            ready = socket.readable() => {
+                                                if ready.is_err() {
+                                                    break None;
+                                                }
+                                            }
+                                            () = &mut wait_sleep => bulk_read.reset_after_timeout(&socket),
                                         }
                                     } else {
                                         let waited = tokio::select! {
@@ -826,6 +866,110 @@ impl Http1 {
             }
         }
     }
+
+    /// Serves non-bulk plain HTTP/1.1 requests through hyper, returning an idle keep-alive socket back to `serve_plain`.
+    async fn serve_one_plain(
+        &self,
+        stream: Prefixed,
+        connection: Connection,
+        start: Instant,
+    ) -> Option<(TcpStream, Vec<u8>)> {
+        use std::future::poll_fn;
+        use tokio::io::AsyncWriteExt;
+
+        let shared = Arc::new(Shared {
+            return_on_idle: true,
+            ..Shared::default()
+        });
+        let io = Io::new(
+            stream,
+            shared.clone(),
+            start + EXCHANGE_BOUND,
+            self.app.download_sendfile(),
+        );
+        let bus = Bus::default();
+        let service = {
+            let (app, bus, shared, connection) = (
+                self.app.clone(),
+                bus.clone(),
+                shared.clone(),
+                connection.clone(),
+            );
+            service_fn(move |request| {
+                Box::pin(respond(
+                    app.clone(),
+                    request,
+                    connection.clone(),
+                    shared.clone(),
+                    bus.clone(),
+                ))
+            })
+        };
+        let mut conn = http1::Builder::new()
+            .max_buf_size(BUFFER_BYTES)
+            .header_read_timeout(None)
+            .serve_connection(TokioIo::new(io), service);
+        let shutdown = self.app.shutdown().child_token();
+        let mut returned_idle = false;
+        let ok = {
+            let mut cancelled = pin!(shutdown.cancelled());
+            poll_fn(|cx| {
+                if !returned_idle && cancelled.as_mut().poll(cx).is_ready() {
+                    Pin::new(&mut conn).graceful_shutdown();
+                }
+                loop {
+                    match conn.poll_without_shutdown(cx) {
+                        Poll::Ready(res) => return Poll::Ready(res.is_ok()),
+                        Poll::Pending => {
+                            if !returned_idle && shared.idle.load(Ordering::Acquire) {
+                                returned_idle = true;
+                                Pin::new(&mut conn).graceful_shutdown();
+                                continue;
+                            }
+                            return Poll::Pending;
+                        }
+                    }
+                }
+            })
+            .await
+        };
+
+        let parts = conn.into_parts();
+        let prefixed = parts.io.into_inner().inner;
+        let mut leftover = Vec::new();
+        if prefixed.offset < prefixed.prefix.len() {
+            leftover.extend_from_slice(&prefixed.prefix[prefixed.offset..]);
+        }
+        if !parts.read_buf.is_empty() {
+            leftover.extend_from_slice(&parts.read_buf);
+        }
+        let mut socket = prefixed.inner;
+
+        let upgraded = lock(&bus).take();
+        if ok && let Some((_, ws_socket)) = upgraded {
+            let mut tasks = JoinSet::new();
+            tasks.spawn_on(
+                run_bus_direct(socket, Bytes::from(leftover), ws_socket),
+                &self.buses,
+            );
+            tasks.join_next().await;
+            return None;
+        }
+        if ok && returned_idle && !shutdown.is_cancelled() {
+            return Some((socket, leftover));
+        }
+        let _ = socket.shutdown().await;
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn run_bus_direct(mut stream: TcpStream, read_buf: Bytes, socket: Socket) {
+    let _ = stream.rehome();
+    match socket {
+        Socket::Feed(..) => websocket::serve(Feed::new(stream), read_buf, socket).await,
+        _ => websocket::serve(stream, read_buf, socket).await,
+    }
 }
 
 /// Runs a WebSocket on the calling runtime, its socket moved there, until its lane ends or the peer leaves.
@@ -854,6 +998,18 @@ where
     }
 }
 
+fn has_close(headers: &http::HeaderMap) -> bool {
+    headers
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .any(|value| {
+            value.to_str().is_ok_and(|text| {
+                text.split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("close"))
+            })
+        })
+}
+
 /// Answers one request; an error closes the connection unanswered.
 async fn respond(
     app: Arc<App>,
@@ -863,6 +1019,8 @@ async fn respond(
     bus: Bus,
 ) -> io::Result<Response<H1Reply>> {
     let head = request.method() == Method::HEAD;
+    let req_keep_alive =
+        request.version() == http::Version::HTTP_11 && !has_close(request.headers());
     let bulk = if cfg!(target_os = "linux")
         && request.method() == Method::POST
         && request.uri().path() == Route::Upload.path()
@@ -876,8 +1034,15 @@ async fn respond(
     let upgrade = hyper::upgrade::on(&mut request);
     let exchange = shared.exchange(bulk);
     match app.handle(request, &connection, exchange).await {
-        Outcome::Response(response) => Ok(shared.reply(response, head)),
+        Outcome::Response(response) => {
+            shared.keep_alive.store(
+                req_keep_alive && !has_close(response.headers()),
+                Ordering::Release,
+            );
+            Ok(shared.reply(response, head))
+        }
         Outcome::WebSocket(response, socket) => {
+            shared.keep_alive.store(false, Ordering::Release);
             *lock(&bus) = Some((upgrade, socket));
             shared.post(State::Open);
             Ok(response.map(|body| H1Reply { body, shared }))
@@ -897,6 +1062,10 @@ struct Shared {
     unflushed: AtomicBool,
     flushed: AtomicWaker,
     feed: AtomicBool,
+    /// Plain HTTP/1.1 connections hand back to `serve_plain` once Hyper finishes flushing a keep-alive reply.
+    return_on_idle: bool,
+    keep_alive: AtomicBool,
+    idle: AtomicBool,
 }
 
 impl Shared {
@@ -907,6 +1076,7 @@ impl Shared {
 
     /// The exchange of a request whose head was just parsed, which bounds the connection until admitted.
     fn exchange(&self, bulk: Option<u64>) -> Exchange {
+        self.idle.store(false, Ordering::Release);
         let started = lock(&self.started).take();
         let exchange = Exchange::until(started.unwrap_or_else(|| Instant::now() + EXCHANGE_BOUND));
         self.post(State::Exchange(Some(exchange.watch()), started.and(bulk)));
@@ -1113,6 +1283,9 @@ impl<S> Io<S> {
             .as_mut()
             .reset(Instant::now() + CONNECTION_IDLE);
         self.state = State::Waiting;
+        if self.shared.return_on_idle && self.shared.keep_alive.load(Ordering::Acquire) {
+            self.shared.idle.store(true, Ordering::Release);
+        }
         Ok(())
     }
 }
@@ -1124,6 +1297,9 @@ impl<S: AsyncRead + Rehome + Unpin> AsyncRead for Io<S> {
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = &mut *self;
+        if this.shared.return_on_idle && this.shared.idle.load(Ordering::Acquire) {
+            return Poll::Pending;
+        }
         this.check(cx)?;
         ready!(this.burst.poll_turn(cx));
         let filled = buffer.filled().len();

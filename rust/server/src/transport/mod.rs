@@ -68,6 +68,12 @@ pub(crate) fn bound_unsent(socket: &TcpStream, bytes: u32) {
     let _ = socket2::SockRef::from(socket).set_tcp_notsent_lowat(bytes);
 }
 
+/// Re-arms Linux `TCP_QUICKACK` on latency-sensitive bus reads to avoid 40 ms delayed-ACK spikes under loss or splits.
+pub(crate) fn quickack(socket: &TcpStream) {
+    #[cfg(target_os = "linux")]
+    let _ = rustix::net::sockopt::set_tcp_quickack(socket, true);
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) mod lowat {
     pub(crate) use graphite_meter_net::lowat::{BulkRead, READ_LOWAT_MIN as UPLOAD_READ_MIN};
@@ -179,6 +185,14 @@ pub(crate) trait Rehome {
         copy.set_nonblocking(true)?;
         *socket = TcpStream::from_std(copy)?;
         Ok(())
+    }
+}
+
+impl<S: Rehome> Rehome for Feed<S> {
+    const PLAIN: bool = S::PLAIN;
+
+    fn socket(&mut self) -> &mut TcpStream {
+        self.0.socket()
     }
 }
 

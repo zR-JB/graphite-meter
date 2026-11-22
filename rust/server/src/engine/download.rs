@@ -11,15 +11,19 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 
 /// The block is this large, as is the largest chunk a source hands out.
 pub const BLOCK_BYTES: usize = 256 << 10;
+/// Sealed memfd tiles `BLOCK_BYTES` to this extent so plain HTTP/1.1 `sendfile` moves up to 1 MiB per syscall.
+#[cfg(target_os = "linux")]
+const SENDFILE_BYTES: usize = 1 << 20;
 
 /// Sealed read-only memfd copy of the download block for zero-copy `sendfile` on plain TCP sockets.
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 pub(crate) struct Sendfile {
-    /// Retains the shared block allocation so `start..start + len` remains live as long as `Sendfile` exists.
+    /// Retains the shared block allocation so `start..start + block_len` remains live as long as `Sendfile` exists.
     _backing: Bytes,
     start: usize,
-    len: usize,
+    block_len: usize,
+    file_len: usize,
     file: Arc<OwnedFd>,
 }
 
@@ -31,7 +35,7 @@ impl Sendfile {
             return None;
         }
         let offset = (slice.as_ptr() as usize).checked_sub(self.start)?;
-        (offset.checked_add(slice.len())? <= self.len).then_some((&self.file, offset as u64))
+        (offset.checked_add(slice.len())? <= self.block_len).then_some((&self.file, offset as u64))
     }
 
     pub fn fd(&self) -> &OwnedFd {
@@ -39,12 +43,12 @@ impl Sendfile {
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        self.file_len
     }
 }
 
 #[cfg(target_os = "linux")]
-fn create_memfd(bytes: &[u8]) -> Option<Arc<OwnedFd>> {
+fn create_memfd(bytes: &[u8]) -> Option<(Arc<OwnedFd>, usize)> {
     use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, memfd_create};
     use std::{fs::File, io::Write};
     let fd = memfd_create(
@@ -53,13 +57,16 @@ fn create_memfd(bytes: &[u8]) -> Option<Arc<OwnedFd>> {
     )
     .ok()?;
     let mut file = File::from(fd);
-    file.write_all(bytes).ok()?;
+    let repeats = (SENDFILE_BYTES / bytes.len()).max(1);
+    for _ in 0..repeats {
+        file.write_all(bytes).ok()?;
+    }
     let fd = OwnedFd::from(file);
     let _ = fcntl_add_seals(
         &fd,
         SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE | SealFlags::SEAL,
     );
-    Some(Arc::new(fd))
+    Some((Arc::new(fd), bytes.len() * repeats))
 }
 
 /// The shared payload block is charged to the budget once for the server's lifetime.
@@ -82,10 +89,11 @@ impl Block {
         getrandom::fill(&mut bytes).map_err(|error| format!("download block: {error}"))?;
         let bytes: Bytes = bytes.into();
         #[cfg(target_os = "linux")]
-        let sendfile = create_memfd(&bytes).map(|file| Sendfile {
+        let sendfile = create_memfd(&bytes).map(|(file, file_len)| Sendfile {
             _backing: bytes.clone(),
             start: bytes.as_ptr() as usize,
-            len: bytes.len(),
+            block_len: bytes.len(),
+            file_len,
             file,
         });
         Ok(Self {

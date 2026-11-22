@@ -1,6 +1,6 @@
 //! Runs a WebSocket over a lane until it ends: the latency bus answering PINGs, or an upload's progress feed.
 
-use super::body::Body;
+use super::{Rehome, body::Body};
 use crate::{
     engine::{ProgressFeed, reflect},
     lane::Lane,
@@ -112,7 +112,11 @@ impl Socket {
 }
 
 /// Runs `socket` over an upgraded `stream`, after the bytes the handshake `read` past its head.
-pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, socket: Socket) {
+pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Rehome + Unpin>(
+    stream: S,
+    read: Bytes,
+    socket: Socket,
+) {
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(0)
@@ -200,12 +204,13 @@ async fn send<S: AsyncRead + AsyncWrite + Unpin>(
     socket.send(Message::Text(record.try_into()?)).await
 }
 
-async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
+async fn exchange<S: AsyncRead + AsyncWrite + Rehome + Unpin>(
     socket: &mut WebSocketStream<S>,
     lane: &Lane,
 ) -> Result<(), Error> {
     while let Some(message) = socket.next().await {
         let received = std::time::Instant::now();
+        super::quickack(socket.get_mut().socket());
         match message? {
             message @ (Message::Text(_) | Message::Binary(_)) => {
                 lane.moved();
